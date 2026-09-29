@@ -5,3 +5,5 @@ __pycache__/
 Thumbs.db
 *.qgz~
 *.qgs~
+landxml_road_terrain*-test.zip
+tests/fixtures/openroads/private/

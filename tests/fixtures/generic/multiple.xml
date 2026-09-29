@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.1" version="1.1">
+  <Units><Imperial linearUnit="foot"/></Units>
+  <Surfaces>
+    <Surface name="One"><Definition><Pnts><P id="1">0 0 1</P><P id="2">1 0 1</P><P id="3">0 1 1</P></Pnts><Faces><F>1 2 3</F></Faces></Definition></Surface>
+    <Surface name="Two"><Definition><Pnts><P id="4">2 2 2</P><P id="5">3 2 2</P><P id="6">2 3 2</P></Pnts><Faces><F>4 5 6</F></Faces></Definition></Surface>
+  </Surfaces>
+  <Alignments>
+    <Alignment name="First" staStart="0"><CoordGeom><Line><Start>0 0</Start><End>1 0</End></Line></CoordGeom></Alignment>
+    <Alignment name="Second" staStart="10"><CoordGeom><Line><Start>2 2</Start><End>3 2</End></Line></CoordGeom></Alignment>
+  </Alignments>
+</LandXML>

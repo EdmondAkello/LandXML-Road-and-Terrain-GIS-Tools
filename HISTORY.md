@@ -57,3 +57,13 @@ Following user testing in QGIS 3.44, output CRS selection was made a first-class
 
 ### 1.4.5 — Processing parameter audit
 Reviewed each algorithm for missing or non-functional controls. Added selection filters, sampling controls, station endpoint behavior, DEM NoData, and complete-export inclusion toggles. Also corrected two XML/geometry robustness issues discovered during the audit.
+
+### 1.5.0 — QGIS 4 port and LandXML source inspection
+
+The Processing provider was ported and exercised under QGIS 4.2.2. A small Qt compatibility layer replaces `QVariant` field definitions, while the shared LandXML parser handles namespaces, source metadata, units, surfaces, alignments, profiles, cross sections and named line features without duplicating XML traversal in each algorithm. The subsequent parser and Processing suite passed under a Windows QGIS 3.44.3 runtime.
+
+OpenRoads Designer terrain exports informed the handling of TIN points, faces and breaklines. Their relevant structure is reproduced in a synthetic regression fixture; project files are not distributed. One private OpenRoads alignment/profile export was later exercised in QGIS 3.44.3, producing a partial 3D centerline, interval-aligned station points and labeled profile controls. This was a runtime check rather than a survey-control validation; corridor exports remain untested.
+
+The new Inspect LandXML tool reports source entities, declared units and CRS, coordinate and elevation bounds, and unresolved ambiguities before import. Import algorithms require explicit CRS choices, distinguish US survey feet from international feet and meters, retain source attributes where available, and report unsupported geometry rather than creating misleading output. Parser and QGIS Processing tests were added. No release was published as part of this development work.
+
+Follow-up QGIS 3.44 work guarded provider unload when QGIS had already deleted it, kept the profile-covered part of a 3D centerline, and aligned station points to whole interval multiples. Extract LandXML Profiles gained loaded-layer labels, VPC/VPI/VPT controls, tangent grades, K values, vertical exaggeration and optional schematic profile layers beside mapped alignments. The updated branch subsequently passed 31 parser and headless Processing tests under macOS QGIS 4.2.2, and the developer reported a successful QGIS 4 desktop regression check. Survey-control and custom-CRS validation remain separate tasks.

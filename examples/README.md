@@ -1,30 +1,22 @@
-# Example data
+# Example LandXML data
 
-Two real Civil 3D LandXML exports were used to validate this plugin. They're
-not bundled in this repository (see sizes below) — keep them in a sibling
-folder, e.g. `Sample Landxml/`, when testing:
+The repository's committed examples are synthetic fixtures under `tests/fixtures/`. They exercise standard LandXML structures without redistributing engineering project data:
 
-- **Sample bridge realignment.xml** (~45 MB) — 1 alignment
-  (2,687.782 m, 8 clothoid spirals, 4 circular curves, 5 tangents), 1 vertical
-  profile (1,995 station/elevation pairs), and a TIN surface with 275,175
-  points and 550,206 faces. Referenced in `README.md` under "Sample
-  alignment validation".
-- **Sample corridor design.xml** (~59 MB) — a multi-surface TIN
-  (`BOTTOM`, `TOP`, and an intermediate design surface) plus a ~16.7 km
-  design alignment.
+- `tests/fixtures/openroads/terrain_minimal.xml` reproduces an OpenRoads-style TIN and breakline structure with US survey foot horizontal units.
+- `tests/fixtures/civil3d/road_minimal.xml` exercises alignment, vertical profile, cross-section and terrain parsing with meter units.
+- `tests/fixtures/generic/multiple.xml` exercises multiple alignments and surfaces with an unidentified exporter.
 
-Both are under GitHub's 100 MB hard limit, but large enough to bloat the
-repository's history, which is why they're kept out of it.
+These coordinates are invented. A CRS selected while testing them only checks the Processing workflow and unit safeguards; it does not establish a real-world location.
 
-## Suggested workflow
+The updated branch passed all 31 parser and headless Processing tests with QGIS 4.2.2, including the road and terrain fixtures below. The developer also reported a successful QGIS 4 desktop regression check. Repeat the steps below on your own installation and use known control for project data.
 
-1. QGIS > Processing Toolbox > **LandXML TIN > LandXML TIN to GeoTIFF**.
-   Point it at one of the sample files, leave "Coordinate interpretation" at
-   "Use stored coordinates" (both samples use real, already-correct
-   EPSG:21037 coordinates — see the LandXML-declared CRS reported in the
-   algorithm's log), and set the output CRS to EPSG:21037.
-2. **Vector extraction > Extract LandXML Alignments to Lines** on the same
-   file to pull out the horizontal alignment as a GIS line layer.
-3. For the full picture, run **Export Complete Road Design to GeoPackage**,
-   which produces alignments, profiles, 3D centerlines, station points,
-   cross-sections, a TIN-derived DEM, and contours in one pass.
+## Suggested manual workflow
+
+1. Run **Inspect LandXML** on a fixture. Review the vendor evidence, units, entities, coordinate bounds and warnings.
+2. Run **LandXML TIN to GeoTIFF** on the terrain fixture with an explicitly selected output CRS whose horizontal units match the declared units. Check the raster extent, NoData and elevations.
+3. Run **Extract LandXML Breaklines** on the terrain fixture and inspect the 3D line and source attributes.
+4. Run the alignment, profile and cross-section tools on the road fixture. In **Extract LandXML Profiles**, select both graph and control-point outputs and set vertical exaggeration to 4. The graph uses station X and plotted elevation Y, with no map CRS. Its final plotted Y is 8 while the source elevation remains 2. The control layer has five labeled VPC/VPI/VPT points; the curve VPI reports K 3.75. These numbers exercise the synthetic fixture, not survey control.
+5. Run **Create Alignment Station Points** at interval 20. Its point stations are multiples of 20; the optional off-interval alignment endpoint is disabled by default.
+6. For a real export, inspect first, choose the CRS and any coordinate operation from verified project metadata, and compare output with known control. If vertical units are undeclared, verify the profile grades and K values before using them for design.
+
+Real Civil 3D and OpenRoads project exports used during development are not bundled. Keep project data outside Git unless it is cleared for redistribution. See the main [README](../README.md) for installation, test commands and current limitations.

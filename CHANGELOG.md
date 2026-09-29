@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.0 — unreleased
+
+- Ported Processing field creation to `QMetaType`, removed fixed EPSG defaults, required explicit CRS choices, and verified provider and algorithm execution under QGIS 4.2.2 and the headless QGIS 3.44.3 runtime.
+- Added shared, namespace-tolerant LandXML parsing, conservative application/vendor detection, unit/CRS inspection and source-backed breakline/cross-section/profile handling.
+- Examined private OpenRoads Designer terrain exports and added a synthetic fixture reproducing the relevant structure without project data. Exercised one private OpenRoads alignment/profile export in QGIS 3.44.3; survey-control validation remains outstanding.
+- Added **Inspect LandXML** with JSON output and explicit axis-order, CRS and vertical-unit uncertainty. Preserved breakline `Feature@code`, `brkType`, IDs and surface attribution.
+- Added engineering attributes, per-element alignment output, profile controls, multiple-surface handling in Complete Road Design, and safeguards against fabricated Z values or disconnected alignment geometry.
+- Added parser and QGIS Processing tests plus installation, example-data, development-history and engineering cautions in the Markdown documentation. No release was published.
+- Fixed provider unload when QGIS has already deleted its C++ object, and clipped 3D centerlines to the station range with profile elevations in both individual and Complete Road Design exports.
+- Aligned station points to whole station interval multiples in both export paths; the individual tool now omits an off-interval alignment endpoint by default.
+- Added profile-name labels to loaded profile graph lines and station/elevation labels to the optional profile control point output.
+- Added optional vertical exaggeration to profile graph coordinates and expanded parabolic controls into labeled VPC, VPI and VPT points with tangent grade and K attributes.
+- Added optional georeferenced schematic profile lines and control points beside the corresponding horizontal alignment, with explicit coordinate interpretation, CRS, lateral offset, and station-range clipping. The original station/elevation graph remains unchanged.
+- Reran the updated branch's 31 parser and Processing tests under macOS QGIS 4.2.2; all passed. The developer also reported that the updated desktop workflow worked in QGIS 4.2.2. These checks do not establish survey-control accuracy or validate OpenRoads corridor exports.
+
 ## 1.4.11 — 2026-08-23
 
 ### Security

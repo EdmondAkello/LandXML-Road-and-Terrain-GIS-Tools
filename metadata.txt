@@ -1,14 +1,14 @@
 [general]
 name=LandXML Road & Terrain GIS Tools
-qgisMinimumVersion=3.28
-qgisMaximumVersion=3.99
-description=QGIS Processing provider that converts Civil 3D/LandXML terrain and road-design data into native GIS layers: TIN surfaces to GeoTIFF, horizontal alignments, vertical profiles, 3D centerlines, cross-sections, station points, TIN boundaries, feature lines and breaklines, plus a one-click Complete Road Design export to GeoPackage.
-version=1.4.11
+qgisMinimumVersion=3.44
+qgisMaximumVersion=4.99
+description=QGIS Processing provider for LandXML terrain and road data from Civil 3D, OpenRoads Designer and generic exporters. Includes TIN GeoTIFF, road geometry, engineering attributes, inspection and GeoPackage export.
+version=1.5.0
 author=Edmond Akello
 email=francenicklaus@gmail.com
-about=Converts LandXML TIN surfaces to GeoTIFF and extracts alignments, vertical profiles, 3D centerlines, cross-sections, station points, TIN boundaries, feature lines and breaklines. Includes a one-click Complete Road Design to GeoPackage export.
+about=Inspects and imports LandXML TIN surfaces, alignments, profiles, cross-sections, station points, boundaries, feature lines and breaklines. Profiles can be plotted with vertical exaggeration and labeled VPC/VPI/VPT controls, tangent grades and K values; optional schematic map profile layers appear beside the alignment using an explicitly selected CRS. OpenRoads Designer terrain structures were examined in private exports and reproduced in a synthetic regression fixture; one private OpenRoads alignment/profile export was exercised in QGIS 3.44 without redistribution or survey-control validation. Includes a Complete Road Design GeoPackage export.
 
-    Coordinate interpretation and transformation (stored coordinates, axis swap, offset, 2-D Helmert, or reprojection) are explicit and controlled by the user on every algorithm; the LandXML-declared CRS is shown for reference only and is never trusted automatically. Validated against Civil 3D LandXML exports containing clothoid spirals, circular curves, tangents, vertical profiles and large TIN surfaces (500,000+ faces).
+    Coordinate interpretation and transformation (stored coordinates, axis swap, offset, 2-D Helmert, or reprojection) are explicit and controlled by the user. LandXML-declared CRS is shown for reference only. US survey feet, international feet and meters remain distinct.
 
     Licensed under the GNU General Public License version 2 or later.
 repository=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
@@ -17,6 +17,6 @@ homepage=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 changelog=See CHANGELOG.md
 experimental=False
 deprecated=False
-tags=LandXML,TIN,DTM,DEM,GeoTIFF,Civil 3D,road design,alignment,profile,cross-section,feature line,breakline,GeoPackage,QGIS,Processing
+tags=LandXML,TIN,DTM,DEM,GeoTIFF,Civil 3D,OpenRoads Designer,road design,alignment,profile,cross-section,feature line,breakline,GeoPackage,QGIS,Processing
 category=Vector
 icon=icon.png

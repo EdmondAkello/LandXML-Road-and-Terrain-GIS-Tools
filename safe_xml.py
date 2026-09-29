@@ -52,6 +52,7 @@ well-tested path-query engine instead of hand-rolling a subset-XPath parser,
 so the exact ``.//prefix:Tag``-style lookups this plugin's algorithms use
 keep the same tested semantics real ``ElementTree`` would give them.
 """
+
 from __future__ import annotations
 
 import xml.parsers.expat as expat
@@ -228,9 +229,8 @@ def _forbid_external_ref(context, base, sysid, pubid):
 
 
 def _new_parser():
-    # Namespace separator "}" produces the same Clark notation
-    # ("{uri}local") the rest of this plugin's l: XPath lookups (e.g.
-    # root.findall(".//l:Surfaces/l:Surface", NS)) already rely on.
+    # Namespace separator "}" produces Clark notation ("{uri}local"),
+    # which the shared LandXML parser reads without a fixed version URI.
     parser = expat.ParserCreate(None, "}")
     parser.buffer_text = True
     parser.ordered_attributes = True

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Imperial linearUnit="USSurveyFoot" areaUnit="squareFoot"/></Units>
+  <Application name="OpenRoads Designer" manufacturer="Bentley Systems, Inc."/>
+  <Surfaces>
+    <Surface name="Synthetic terrain">
+      <SourceData><Breaklines>
+        <Breakline brkType="standard">
+          <PntList3D>100 200 10 110 200 11 110 210 12</PntList3D>
+          <Feature code="Breakline"><Property label="id" value="1"/><Property label="UsrID" value="42"/></Feature>
+        </Breakline>
+      </Breaklines></SourceData>
+      <Definition surfType="TIN">
+        <Pnts><P id="1">100 200 10</P><P id="2">110 200 11</P><P id="3">110 210 12</P></Pnts>
+        <Faces><F>1 2 3</F></Faces>
+      </Definition>
+    </Surface>
+  </Surfaces>
+</LandXML>

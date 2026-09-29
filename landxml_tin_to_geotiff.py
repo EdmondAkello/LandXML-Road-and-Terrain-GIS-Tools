@@ -1,3 +1,4 @@
+from qgis.PyQt import sip
 from qgis.core import QgsApplication
 
 from .provider import LandXMLTinToGeoTIFFProvider
@@ -9,10 +10,12 @@ class LandXMLTinToGeoTIFFPlugin:
         self.provider = None
 
     def initGui(self):
-        self.provider = LandXMLTinToGeoTIFFProvider()
-        QgsApplication.processingRegistry().addProvider(self.provider)
+        provider = LandXMLTinToGeoTIFFProvider()
+        if QgsApplication.processingRegistry().addProvider(provider):
+            self.provider = provider
 
     def unload(self):
-        if self.provider is not None:
-            QgsApplication.processingRegistry().removeProvider(self.provider)
-            self.provider = None
+        provider = self.provider
+        self.provider = None
+        if provider is not None and not sip.isdeleted(provider):
+            QgsApplication.processingRegistry().removeProvider(provider)

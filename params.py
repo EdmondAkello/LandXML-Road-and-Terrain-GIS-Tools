@@ -9,14 +9,23 @@ QgsProcessingParameterDefinition.setMetadata(), using the
 algorithm dialog reads to configure the numeric spin box. This helper keeps
 that two-step dance in one place instead of repeating it at every call site.
 """
+
 from qgis.core import QgsProcessingParameterNumber
 
 
-def number_param(name, description, default_value, min_value, max_value,
-                  decimals=None, optional=False,
-                  param_type=QgsProcessingParameterNumber.Type.Double):
+def number_param(
+    name,
+    description,
+    default_value,
+    min_value,
+    max_value,
+    decimals=None,
+    optional=False,
+    param_type=QgsProcessingParameterNumber.Type.Double,
+):
     p = QgsProcessingParameterNumber(
-        name, description,
+        name,
+        description,
         type=param_type,
         defaultValue=default_value,
         optional=optional,
@@ -24,5 +33,5 @@ def number_param(name, description, default_value, min_value, max_value,
         maxValue=max_value,
     )
     if decimals is not None:
-        p.setMetadata({'widget_wrapper': {'decimals': decimals}})
+        p.setMetadata({"widget_wrapper": {"decimals": decimals}})
     return p

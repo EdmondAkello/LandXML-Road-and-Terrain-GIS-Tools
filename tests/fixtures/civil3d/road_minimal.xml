@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Metric linearUnit="meter" areaUnit="squareMeter"/></Units>
+  <Application name="Autodesk Civil 3D" manufacturer="Autodesk"/>
+  <Surfaces><Surface name="Existing ground" desc="Synthetic surface">
+    <Definition surfType="TIN"><Pnts><P id="1">0 0 1</P><P id="2">10 0 2</P><P id="3">0 10 3</P></Pnts><Faces><F>1 2 3</F></Faces></Definition>
+  </Surface></Surfaces>
+  <Alignments><Alignment name="Road A" desc="Synthetic road" staStart="100" length="33.56">
+    <CoordGeom>
+      <Line length="10"><Start>0 0</Start><End>10 0</End></Line>
+      <Curve radius="10" length="15.7079632679" rot="cw"><Start>10 0</Start><Center>10 10</Center><End>20 10</End></Curve>
+      <Spiral spiType="clothoid" length="7.85" radiusStart="INF" radiusEnd="50" rot="cw"><Start>20 10</Start><PI>25 10</PI><End>27.84 10.205</End></Spiral>
+    </CoordGeom>
+    <Profile><ProfAlign name="Design"><PVI>100 0</PVI><ParaCurve length="10">115 1</ParaCurve><PVI>140 2</PVI></ProfAlign></Profile>
+    <CrossSects><CrossSect sta="110"><CrossSectSurf name="Pavement"><PntList3D>1 1 1 2 2 2</PntList3D></CrossSectSurf></CrossSect></CrossSects>
+  </Alignment></Alignments>
+</LandXML>
