@@ -12,6 +12,9 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +40,7 @@ from qgis.PyQt import sip
 
 from landxml_plugin.landxml_tin_to_geotiff import LandXMLTinToGeoTIFFPlugin
 from landxml_plugin.provider import LandXMLTinToGeoTIFFProvider
+from landxml_plugin.core import rasterize_tin
 
 
 OPENROADS = str(ROOT / "tests" / "fixtures" / "openroads" / "terrain_minimal.xml")
@@ -343,6 +347,20 @@ class QgisProcessingTests(unittest.TestCase):
                 [120, 140, 160],
             )
             package = None
+
+    def test_tin_rasterization_has_no_default_cell_limit(self):
+        vertices = np.array([[0, 0, 1], [24660, 0, 1], [0, 11283, 1]])
+        faces = np.array([[0, 1, 2]])
+        # Stop at allocation so the regression does not require a gigabyte of RAM.
+        with patch(
+            "landxml_plugin.core.np.full", side_effect=MemoryError("allocation reached")
+        ) as allocate:
+            with self.assertRaisesRegex(MemoryError, "allocation reached"):
+                rasterize_tin(vertices, faces, 1)
+            self.assertEqual(allocate.call_args.args[0], (11283, 24660))
+
+        with self.assertRaisesRegex(ValueError, "exceeding the safety limit"):
+            rasterize_tin(vertices, faces, 1, max_cells=250_000_000)
 
     def test_tin_geotiff_and_complete_export(self):
         with tempfile.TemporaryDirectory() as directory:

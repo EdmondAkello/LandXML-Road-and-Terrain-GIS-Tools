@@ -2,6 +2,7 @@
 
 ## 1.5.0 — unreleased
 
+- Removed the default 250-million-cell cap from TIN rasterization for both TIN to GeoTIFF and Complete Road Design exports, allowing the requested pixel size on larger surfaces.
 - Ported Processing field creation to `QMetaType`, removed fixed EPSG defaults, required explicit CRS choices, and verified provider and algorithm execution under QGIS 4.2.2 and the headless QGIS 3.44.3 runtime.
 - Added shared, namespace-tolerant LandXML parsing, conservative application/vendor detection, unit/CRS inspection and source-backed breakline/cross-section/profile handling.
 - Examined private OpenRoads Designer terrain exports and added a synthetic fixture reproducing the relevant structure without project data. Exercised one private OpenRoads alignment/profile export in QGIS 3.44.3; survey-control validation remains outstanding.

@@ -210,7 +210,7 @@ def rasterize_tin(
     nodata=-9999.0,
     progress=None,
     cancel=None,
-    max_cells=250_000_000,
+    max_cells=None,
 ):
     if resolution <= 0:
         raise ValueError("Resolution must be greater than zero.")
@@ -227,7 +227,7 @@ def rasterize_tin(
     if cols <= 0 or rows <= 0:
         raise ValueError("Computed raster dimensions are invalid.")
     cells = rows * cols
-    if cells > max_cells:
+    if max_cells is not None and cells > max_cells:
         raise ValueError(
             f"Requested resolution produces {cells:,} cells ({cols:,} × {rows:,}), exceeding the safety limit of {max_cells:,}. Increase the pixel size."
         )
