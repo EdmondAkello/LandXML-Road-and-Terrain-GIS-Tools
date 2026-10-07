@@ -73,7 +73,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 16)
+        self.assertEqual(len(self.algorithms), 17)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_plugin_unload_after_provider_is_deleted(self):
@@ -685,6 +685,38 @@ class QgisProcessingTests(unittest.TestCase):
             text = Path(output).read_text(encoding="utf-8")
             for heading in ("Plan", "Curvature diagram", "Gradient diagram", "Long-section", "Horizontal elements"):
                 self.assertIn(heading, text)
+
+    def test_design_review_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(CORRIDOR, "EPSG:32637")
+            params.update(
+                DESIGN_SPEED=60,
+                OUTPUT="memory:",
+                MAP_OUTPUT="memory:",
+                REPORT=str(Path(directory) / "review.html"),
+                PROFILE_TXT=str(Path(directory) / "profile.txt"),
+                PROFILE_LANDXML=str(Path(directory) / "profile.xml"),
+            )
+            result = self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+            table = self.context.getMapLayer(result["OUTPUT"])
+            self.assertEqual(table.featureCount(), result["HIGH"] + result["MEDIUM"] + result["LOW"])
+            self.assertEqual(self.context.getMapLayer(result["MAP_OUTPUT"]).featureCount(), table.featureCount())
+            self.assertIn("Geometric design review", Path(params["REPORT"]).read_text(encoding="utf-8"))
+            self.assertEqual(Path(params["PROFILE_TXT"]).read_text(encoding="utf-8").splitlines()[0], "0.000 101.000")
+            self.assertIn("<ProfAlign", Path(params["PROFILE_LANDXML"]).read_text(encoding="utf-8"))
+            params.pop("DESIGN_SPEED")
+            with self.assertRaisesRegex(QgsProcessingException, "design speed"):
+                self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+
+    def test_design_report_with_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory) / "report.html")
+            self.algorithms["landxml_design_report"].processAlgorithm(
+                {"INPUT": CORRIDOR, "OUTPUT": output, "STANDARD": 1, "DESIGN_SPEED": 60}, self.context, self.feedback
+            )
+            text = Path(output).read_text(encoding="utf-8")
+            self.assertIn("Geometric design review", text)
+            self.assertIn("Phasing diagram", text)
 
 
 if __name__ == "__main__":

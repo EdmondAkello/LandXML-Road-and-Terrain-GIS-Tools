@@ -69,6 +69,22 @@ class DesignReportAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterEnum("PLAN_AXES", "Plan coordinate order", options=AXES, defaultValue=0))
         self.addParameter(QgsProcessingParameterString("TITLE", "Report title", defaultValue="", optional=True))
+        from .landxml.criteria import list_standards
+
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                "STANDARD",
+                "Include a geometric design review against",
+                options=["None"] + [name for _id, name, _path in list_standards()],
+                defaultValue=0,
+            )
+        )
+        self.addParameter(number_param("DESIGN_SPEED", "Review: design speed km/h (0 = from file)", 0, 0, 200, decimals=0))
+        self.addParameter(
+            QgsProcessingParameterString("SPEED_RANGES", "Review: design speed by chainage, e.g. 0-5000:60; 5000-:80", defaultValue="", optional=True)
+        )
+        self.addParameter(QgsProcessingParameterEnum("TERRAIN", "Review: terrain", options=["flat", "rolling", "mountainous", "escarpment"], defaultValue=1))
+        self.addParameter(QgsProcessingParameterEnum("EMAX", "Review: e max", options=["4%", "6%", "8%"], defaultValue=1))
         self.addParameter(QgsProcessingParameterFileDestination("OUTPUT", "Design report (HTML)", fileFilter="HTML (*.html)"))
 
     def processAlgorithm(self, p, c, fb):
@@ -138,6 +154,30 @@ class DesignReportAlgorithm(QgsProcessingAlgorithm):
             )
         if not items:
             raise QgsProcessingException("No alignment with supported geometry was found.")
+        standard_index = self.parameterAsEnum(p, "STANDARD", c)
+        if standard_index > 0:
+            from .landxml.criteria import list_standards, load_criteria
+            from .landxml.review import parse_speed_ranges
+            from .review_algorithm import collect_reviews
+
+            terrain = ["flat", "rolling", "mountainous", "escarpment"][self.parameterAsEnum(p, "TERRAIN", c)]
+            emax = [4.0, 6.0, 8.0][self.parameterAsEnum(p, "EMAX", c)]
+            try:
+                criteria = load_criteria(list_standards()[standard_index - 1][2])
+                ranges = parse_speed_ranges(self.parameterAsString(p, "SPEED_RANGES", c))
+                reviews = collect_reviews(
+                    path, doc, alignment_filter, criteria, self.parameterAsDouble(p, "DESIGN_SPEED", c), ranges,
+                    terrain, "rural", emax, 0, True, "", "", fb,
+                )
+            except ValueError as exc:
+                raise QgsProcessingException(str(exc)) from exc
+            settings = f"Terrain {terrain} · e max {emax:g}% · design speed " + (
+                self.parameterAsString(p, "SPEED_RANGES", c) or (f"{self.parameterAsDouble(p, 'DESIGN_SPEED', c):g} km/h" if self.parameterAsDouble(p, "DESIGN_SPEED", c) else "from file")
+            )
+            by_name = {r["name"]: r for r in reviews}
+            for item in items:
+                if item["name"] in by_name:
+                    item["review"] = (by_name[item["name"]], settings)
         output = self.parameterAsFileOutput(p, "OUTPUT", c)
         title = self.parameterAsString(p, "TITLE", c).strip()
         with open(output, "w", encoding="utf-8") as stream:

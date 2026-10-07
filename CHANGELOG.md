@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.8.0 — unreleased
+
+### Fixed
+- Where Civil 3D records two speeds at the same station, the later one is used (previously the higher).
+
+### Added
+- **Geometric Design Review.** Checks alignment phasing, stopping sight distance (on the profile and on horizontal curves), crest and sag K, vertical curve length, grades and critical lengths, radii, transition spirals, tangents, broken-back and isolated curves, superelevation and run-off, combined grade, and safety barrier warrants from embankment height and side slope.
+- **Selectable standards:** Kenya RDM 1.3 (2025) Geometric Design manual (default) and AASHTO 2018 (Civil 3D's default basis), as editable JSON criteria files. Every finding cites its table.
+- **Recommended profile for Civil 3D:** phasing and K fixes are computed as PVI moves and curve lengths, capped by a maximum level change, and written as a Create Profile from File text file and a LandXML profile.
+- Findings table, findings on the map, and an HTML report with a phasing diagram, level-change chart, recommended PVI table and barrier schedule.
+- **Design speed variations.** Speed stations defined in Civil 3D are followed section by section, and each element is checked at the highest speed over its length. New checks flag speed steps above the standard (with the intermediate sections to add), short transition or oscillating speed sections, and sharp curves just past a speed reduction (RDM S3.10.3, S5.5, S5.14). The report tabulates the speed sections.
+- Design speed by chainage ranges, to override the file.
+- The Road Design Report can include the review for each alignment.
+
 ## 1.7.0 — unreleased
 
 ### Added

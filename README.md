@@ -29,7 +29,8 @@ The examined OpenRoads terrain exports contain `Surfaces/Surface/Definition/Pnts
 | Road design extraction | Labeled vertical profile graph, optional map profile overlay and VPC/VPI/VPT controls with vertical exaggeration; 3D centerlines; cross sections and optional points; station points; Complete Road Design to GeoPackage |
 | Surface extraction | TIN surface boundary; feature lines; breaklines |
 | Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference); Cross-Section Sheets and Report |
-| Reports | Road Design Report: plan, curvature, gradient, long-section and superelevation diagrams with element tables (under Utilities) |
+| Reports | Road Design Report: plan, curvature, gradient, long-section and superelevation diagrams with element tables, and an optional design review (under Utilities) |
+| Design review | Geometric Design Review: alignment phasing, sight distance, vertical and horizontal curves, grades, superelevation and barrier warrants against Kenya RDM 1.3 (2025) or AASHTO 2018, with recommended PVI changes for Civil 3D |
 
 Outside the Processing Toolbox, the **LandXML Profile Viewer** dock and the **Pick Alignment Profile on Map** toolbar button (menu **Plugins → LandXML Road & Terrain**) show existing-ground and design profiles for an alignment you click in the map.
 
@@ -98,6 +99,44 @@ Section surfaces are identified from source evidence when the names are left bla
 
 On long alignments, charts are split into strips (default 5,000 units per row). Print the page to PDF for a paginated report: each alignment starts on a new page and tables print in full.
 
+## Geometric design review
+
+**Geometric Design Review** checks the horizontal alignment, vertical profile and corridor sections in a LandXML file against a selectable standard. It only reviews what the designer controls in the geometric design (alignment, profile, superelevation and side slopes); pavement, drainage and structures are out of scope.
+
+**Standards.** Two criteria files ship in `criteria/`:
+
+- **Kenya RDM 1.3 (2025), Geometric Design of Highways, Rural and Urban Roads** (default). Values are taken from the manual's tables and referenced in every finding (for example Table 3.16 stopping sight distance, Table 6.1/6.4 K values, Table 5.1 minimum radii, Tables 5.9–5.11 superelevation, Chapter 7 phasing, Figure 12.4 and Table 12.6 barriers).
+- **AASHTO Green Book 2018**, the basis of Civil 3D's default design criteria. AASHTO maximum grades depend on road class and are not tabulated in the file, so enter a **Maximum grade %** for grade checks. AASHTO run-out lengths for barriers are not included; the barrier warrant still runs.
+
+Choose a **Custom criteria file** to use another standard: copy one of the JSON files and edit the tables. Only metric criteria and metric LandXML files are supported.
+
+**Checks** (each finding has a code, severity, chainage range, the value found, the value required, the source table and a recommendation):
+
+| Code | Check |
+| --- | --- |
+| V0–V2 | Missing vertical curve, crest/sag K below minimum, vertical curve too short (including the S7.3 small grade change rule) |
+| G1–G4 | Grade above the absolute or desirable maximum, grade longer than the critical length, flat grade in cut |
+| S1 | Stopping sight distance along the profile (line of sight from eye to object height on the sampled profile) |
+| S2 | Sight distance on horizontal curves, using cut slopes beyond the daylight line from corridor sections |
+| H0–H9 | Radius below minimum, missing or short transition spirals, short or long curves, broken-back curves, short and long tangents, isolated sharp curves |
+| E1–E5 | Superelevation required, too low or above e max, run-off too short, combined grade too steep |
+| P1–P7 | Alignment phasing: curve start hidden beyond a crest, crests or sags overlapping a horizontal curve, one-end overlaps, short crests inside sharp curves, horizontal curve changes near a sag, missing constant grade between crest and sag |
+| D1–D3 | Design speed changes: steps above 20 km/h (10 km/h preferred) with the intermediate sections to add on the faster side, transition and oscillating speed sections shorter than 1 km, and curves sharper than the faster speed allows within 1 km of a speed reduction |
+| R1 | Embankment height and side slope warranting a safety barrier, with run-out length and a barrier schedule by side |
+
+**Design speed.** The review follows the design speeds recorded along each alignment, so a road whose speed changes with terrain is checked section by section. Define them in Civil 3D before exporting (**Alignment Properties → Design Criteria**, adding speed stations); the export writes them as `SpeedStation` features, and Roadway `DesignSpeed` records are also read. Where Civil 3D lists two speeds at one station, the later one applies. Each element (curve, vertical curve, straight) is checked at the highest speed over its length, so an element spanning a speed change meets the faster approach. The report lists the speed sections. Leave **Design speed** at 0 to use the file; a single speed, or **Design speed by chainage** such as `0-5000:60; 5000-:80`, overrides it, and the log says when file speeds are ignored. Terrain, road type and e max (4, 6 or 8 %) select the table rows.
+
+**Back to Civil 3D.** For each phasing, K and length finding the tool searches PVI moves and curve lengths (one end coincident, both ends coincident, or a clear separation) that satisfy K, overlap and grade limits, and picks the one that changes levels least. Fixes that change any level by more than **Apply profile fixes … at most (m)** (default 1 m) are reported but not applied. The recommended profile is written as:
+
+- a text file for **Profiles → Create Profile from File** (station, elevation, curve length), and
+- a LandXML file with the original alignment and the recommended profile, for **Insert → LandXML**.
+
+The HTML report has summary cards, findings by category, a two-lane phasing diagram (horizontal over vertical curves), the change in elevation along the route, a table of recommended PVIs, a barrier schedule and the findings table. The findings are also written as a table and as points on the alignment.
+
+**Road Design Report** runs the same review when a standard is selected and adds it to each alignment's section.
+
+Limits: Figure 12.4 of RDM 1.3 is a chart; only its stated example (6 m height with slopes steeper than 1:3) is encoded, with a judgement band between 1:3 and 1:4 and from 3 m height. Sight distance on curves needs corridor sections; without them only the profile sight distance is checked. Intersection, passing and decision sight distances are not checked. Recommendations are a starting point for the designer, not a substitute for design judgement or a Departure from Standards process.
+
 ## Coordinate and unit handling
 
 LandXML numeric coordinates are kept in stored order. The plugin does not infer X/Y order, datum, false easting/northing, offset, CRS, or elevations. The user must choose an output CRS. Swap, offset, 2-D Helmert and reprojection are available only as explicit Processing choices. Reprojection also requires an explicitly chosen source CRS. A LandXML CRS declaration is shown for reference and is never applied automatically.
@@ -115,7 +154,7 @@ LandXML numeric coordinates are kept in stored order. The plugin does not infer 
 - 3D centerlines use the station range covered by a matching vertical profile. When a profile covers only part of an alignment, the covered segment is exported and the omitted range is reported; missing Z values are not filled with zero.
 - Alignment station points follow whole multiples of the requested interval (for example, 20, 40, 60) even when the alignment starts at a fractional station. The individual tool can optionally add an off-interval alignment endpoint; this is off by default. Complete Road Design exports interval points only.
 
-Current limits: the superelevation diagram assumes the usual two-lane rotation about the centreline; earthworks volumes use average end areas without curvature correction; superelevation, pipe networks, COGO points and plan features are not imported yet; circular vertical curves and non-clothoid spirals are reported as unsupported; station equations and semantic terrain void/hole classification are not implemented; 2D and 3D line records must be exported separately through individual Processing tools. OpenRoads road behavior beyond the one private alignment/profile export, including corridors, needs further validation. LandXML export from QGIS was considered separately and is not included in this release. GeoPackage, GeoTIFF and 3D vector output are supported; no DGN writer is attempted.
+Current limits: the design review encodes only the tables listed above; the superelevation diagram assumes the usual two-lane rotation about the centreline; earthworks volumes use average end areas without curvature correction; superelevation, pipe networks, COGO points and plan features are not imported yet; circular vertical curves and non-clothoid spirals are reported as unsupported; station equations and semantic terrain void/hole classification are not implemented; 2D and 3D line records must be exported separately through individual Processing tools. OpenRoads road behavior beyond the one private alignment/profile export, including corridors, needs further validation. LandXML export from QGIS was considered separately and is not included in this release. GeoPackage, GeoTIFF and 3D vector output are supported; no DGN writer is attempted.
 
 ## Install the development plugin
 

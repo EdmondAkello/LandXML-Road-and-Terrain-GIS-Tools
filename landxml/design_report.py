@@ -111,7 +111,11 @@ def design_speeds(alignment, root=None):
                     speeds.append((float(speed.attrib["staStart"]), float(speed.attrib["speed"])))
                 except (KeyError, ValueError):
                     continue
-    return sorted(set(speeds))
+    # Stable sort by station; where Civil 3D lists two speeds at one station the later entry applies.
+    latest = {}
+    for station, speed in sorted(speeds, key=lambda pair: pair[0]):
+        latest[station] = speed
+    return sorted(latest.items())
 
 
 # ---------------------------------------------------------------- charts
@@ -455,6 +459,11 @@ def alignment_section(item, unit, normal_crown, strip=0.0):
             )
         )
         parts.append("</div>")
+    if item.get("review"):
+        from .review_report import review_section_html
+
+        result, settings = item["review"]
+        parts.append(review_section_html(item["name"], result, unit, settings, strip or 5000.0))
     parts.append("</section>")
     return "".join(parts)
 

@@ -16,6 +16,7 @@ from .complete_export import CompleteRoadDesignAlgorithm
 from .inspect_algorithm import InspectLandXMLAlgorithm
 from .sections_algorithm import CrossSectionSheetsAlgorithm
 from .design_report_algorithm import DesignReportAlgorithm
+from .review_algorithm import DesignReviewAlgorithm
 from .earthworks_algorithm import (
     CorridorQuantitiesAlgorithm,
     ProfileCutFillAlgorithm,
@@ -64,3 +65,4 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
         self.addAlgorithm(SurfaceCutFillAlgorithm())
         self.addAlgorithm(CrossSectionSheetsAlgorithm())
         self.addAlgorithm(DesignReportAlgorithm())
+        self.addAlgorithm(DesignReviewAlgorithm())
