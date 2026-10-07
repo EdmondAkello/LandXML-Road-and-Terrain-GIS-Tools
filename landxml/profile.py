@@ -128,13 +128,18 @@ class ProfileMapPlacement:
         elevation_datum,
         offset,
         exaggeration,
+        distances=None,
     ):
+        """``distances`` are optional true distances along the source geometry
+        (arc length); without them chord lengths between vertices are used."""
         if len(source_points) != len(map_points):
             raise ValueError("Source and mapped alignment vertices do not match")
+        if distances is not None and len(distances) != len(source_points):
+            raise ValueError("Alignment vertex distances do not match the vertices")
         self.source = []
         self.mapped = []
         self.distance = []
-        for source, mapped in zip(source_points, map_points):
+        for index, (source, mapped) in enumerate(zip(source_points, map_points)):
             source_xy = (float(source[0]), float(source[1]))
             map_xy = (float(mapped[0]), float(mapped[1]))
             if not self.source:
@@ -142,7 +147,10 @@ class ProfileMapPlacement:
                 self.mapped.append(map_xy)
                 self.distance.append(0.0)
                 continue
-            length = math.dist(source_xy, self.source[-1])
+            if distances is not None:
+                length = float(distances[index]) - float(distances[0]) - self.distance[-1]
+            else:
+                length = math.dist(source_xy, self.source[-1])
             if length > 1e-9:
                 self.source.append(source_xy)
                 self.mapped.append(map_xy)

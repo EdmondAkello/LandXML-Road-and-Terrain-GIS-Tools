@@ -220,6 +220,11 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
             vertices, faces, meta = read_tin(
                 path, surface, progress, feedback.isCanceled
             )
+            if meta["invisible_face_count"]:
+                feedback.pushInfo(
+                    f"Skipped {meta['invisible_face_count']:,} invisible triangles "
+                    "(hidden by a source surface boundary)."
+                )
             raw_bounds = bounds(vertices)
             vertices = transform_vertices(vertices, method, **params)
             transformed_bounds = bounds(vertices)

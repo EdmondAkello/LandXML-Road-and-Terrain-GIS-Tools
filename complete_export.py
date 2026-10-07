@@ -23,6 +23,8 @@ from .landxml.geometry import read_alignments, regular_station_distances
 from .landxml.features import read_line_features
 from .landxml.profile import read_profile_controls, read_vertical_profile
 from .landxml.sections import read_cross_sections
+from .landxml.corridor import placed_section_surfaces, read_corridor_sections
+from .landxml.stationing import StationedPolyline
 from .processing_common import coordinate_choices
 from .params import number_param
 
@@ -426,14 +428,7 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                         )
                         continue
                     raw = np.asarray([[x, y, 0] for x, y in a["points"]], float)
-                    cum = [0.0]
-                    for i in range(1, len(raw)):
-                        cum.append(
-                            cum[-1]
-                            + math.hypot(
-                                raw[i, 0] - raw[i - 1, 0], raw[i, 1] - raw[i - 1, 1]
-                            )
-                        )
+                    cum = list(a["vertex_distances"])
                     for distance, station in regular_station_distances(
                         float(a["sta_start"]), cum[-1], station_interval
                     ):
@@ -580,14 +575,7 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                         continue
                     _, element, samples, _controls = matches[0]
                     raw = np.asarray([[x, y, 0] for x, y in alignment["points"]], float)
-                    cum = [0.0]
-                    for i in range(1, len(raw)):
-                        cum.append(
-                            cum[-1]
-                            + math.hypot(
-                                raw[i, 0] - raw[i - 1, 0], raw[i, 1] - raw[i - 1, 1]
-                            )
-                        )
+                    cum = list(alignment["vertex_distances"])
                     s0 = float(alignment["sta_start"])
                     start = max(s0, samples[0][0])
                     end = min(s0 + cum[-1], samples[-1][0])
@@ -644,6 +632,20 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
 
         if flags["INCLUDE_CROSSSECTIONS"]:
             sections, warnings = read_cross_sections(root)
+            relative, relative_warnings, _names, _shapes = read_corridor_sections(
+                root, alignment_filter or None
+            )
+            warnings.extend(relative_warnings)
+            polylines = {}
+            for alignment in al:
+                polyline = StationedPolyline.from_alignment(alignment)
+                if polyline is not None:
+                    polylines.setdefault(alignment["name"], polyline)
+            placed, unplaced = placed_section_surfaces(relative, polylines)
+            if unplaced:
+                warnings.append(
+                    f"{unplaced} station-relative section surface(s) could not be placed on their alignment."
+                )
             for warning in warnings[:20]:
                 fb.pushWarning(warning)
             if len(warnings) > 20:
@@ -656,12 +658,31 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                     for section in sections
                     if section.alignment_name == alignment_filter
                 ]
+            records = [
+                (
+                    section.alignment_name,
+                    section.name,
+                    section.description,
+                    section.surface_name,
+                    "absolute",
+                    section.station,
+                    section.points,
+                )
+                for section in sections
+            ] + [
+                (
+                    item["alignment_name"],
+                    item["name"],
+                    None,
+                    item["surface_name"],
+                    "station-offset",
+                    item["station"],
+                    item["points"],
+                )
+                for item in placed
+            ]
             for dimension in (2, 3):
-                selected = [
-                    section
-                    for section in sections
-                    if len(section.points[0]) == dimension
-                ]
+                selected = [row for row in records if len(row[6][0]) == dimension]
                 if not selected:
                     continue
                 layer_name = "cross_sections" if dimension == 3 else "cross_sections_2d"
@@ -676,23 +697,35 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                     "source_description",
                     "source_vendor",
                     "source_file",
+                    "surface_name",
+                    "placement",
                 ):
                     _fld(layer, field)
                 _fld(layer, "station", ogr.OFTReal)
                 _fld(layer, "point_count", ogr.OFTInteger)
-                for section in selected:
+                for (
+                    alignment_name,
+                    source_name,
+                    description,
+                    surface_name,
+                    placement,
+                    station,
+                    points,
+                ) in selected:
                     feature = ogr.Feature(layer.GetLayerDefn())
-                    feature.SetGeometry(_ogr_line(section.points, m, tp, dimension))
+                    feature.SetGeometry(_ogr_line(points, m, tp, dimension))
                     _set_fields(
                         feature,
                         dict(
-                            alignment_name=section.alignment_name,
-                            source_name=section.name,
-                            source_description=section.description,
+                            alignment_name=alignment_name,
+                            source_name=source_name,
+                            source_description=description,
                             source_vendor=document.vendor,
                             source_file=os.path.basename(path),
-                            station=section.station,
-                            point_count=len(section.points),
+                            surface_name=surface_name,
+                            placement=placement,
+                            station=station,
+                            point_count=len(points),
                         ),
                     )
                     layer.CreateFeature(feature)

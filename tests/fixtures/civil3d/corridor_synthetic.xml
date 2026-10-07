@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic corridor fixture: invented names and coordinates; no project data. -->
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Metric linearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/></Units>
+  <Application name="Autodesk Civil 3D" manufacturer="Autodesk, Inc."/>
+  <Surfaces>
+    <Surface name="EG">
+      <Definition surfType="TIN"><Pnts><P id="1">0 0 100</P><P id="2">20 0 100</P><P id="3">20 10 100</P><P id="4">0 10 100</P></Pnts>
+      <Faces><F>1 2 3</F><F>1 3 4</F></Faces></Definition>
+    </Surface>
+    <Surface name="Design">
+      <Definition surfType="TIN"><Pnts><P id="1">0 0 101</P><P id="2">10 0 101</P><P id="3">10 10 101</P><P id="4">0 10 101</P><P id="5">20 0 105</P></Pnts>
+      <Faces><F>1 2 3</F><F>1 3 4</F><F i="1">2 5 3</F></Faces></Definition>
+    </Surface>
+    <SurfVolumes surfVolCalcMethod="composite">
+      <SurfVolume surfBase="EG" surfCompare="Design" volCut="0" volFill="100" volTotal="100" name="Synthetic volume"/>
+    </SurfVolumes>
+  </Surfaces>
+  <Alignments>
+    <Alignment name="Synthetic Road" staStart="0" length="200">
+      <CoordGeom><Line staStart="0" length="200"><Start>5000 1000</Start><End>5000 1200</End></Line></CoordGeom>
+      <Profile name="Synthetic Road">
+        <ProfSurf name="Synthetic Road_EG Surface" state="existing"><PntList2D>0 100 200 100</PntList2D></ProfSurf>
+        <ProfAlign name="Synthetic FRL"><PVI>0 101</PVI><PVI>200 99</PVI></ProfAlign>
+      </Profile>
+      <CrossSects>
+      <CrossSect sta="0" name="0+000.00">
+        <CrossSectSurf name="EG Surface"><PntList2D>-30 100 30 100</PntList2D></CrossSectSurf>
+        <CrossSectSurf name="Synthetic Corridor TOP"><PntList2D>-7 100 -5 101 5 101 7 100</PntList2D></CrossSectSurf>
+        <DesignCrossSectSurf name="Pave" side="both" closedArea="true" area="1.0"><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="ETW">5 0</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt code="ETW">-5 0</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Base" side="both" closedArea="true"><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Datum"><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="Crown">0 0</CrossSectPnt></DesignCrossSectSurf>
+      </CrossSect>
+      <CrossSect sta="50" name="0+050.00">
+        <CrossSectSurf name="EG Surface"><PntList2D>-30 100 30 100</PntList2D></CrossSectSurf>
+        <CrossSectSurf name="Synthetic Corridor TOP"><PntList2D>-6 100 -5 100.5 5 100.5 6 100</PntList2D></CrossSectSurf>
+        <DesignCrossSectSurf name="Pave" side="both" closedArea="true" area="1.0"><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="ETW">5 0</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt code="ETW">-5 0</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Base" side="both" closedArea="true"><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Datum"><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="Crown">0 0</CrossSectPnt></DesignCrossSectSurf>
+      </CrossSect>
+      <CrossSect sta="100" name="0+100.00">
+        <CrossSectSurf name="EG Surface"><PntList2D>-30 100 30 100</PntList2D></CrossSectSurf>
+        <CrossSectSurf name="Synthetic Corridor TOP"><PntList2D>-5 100 5 100</PntList2D></CrossSectSurf>
+        <DesignCrossSectSurf name="Pave" side="both" closedArea="true" area="1.0"><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="ETW">5 0</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt code="ETW">-5 0</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Base" side="both" closedArea="true"><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Datum"><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="Crown">0 0</CrossSectPnt></DesignCrossSectSurf>
+      </CrossSect>
+      <CrossSect sta="150" name="0+150.00">
+        <CrossSectSurf name="EG Surface"><PntList2D>-30 100 30 100</PntList2D></CrossSectSurf>
+        <CrossSectSurf name="Synthetic Corridor TOP"><PntList2D>-6 100 -5 99.5 5 99.5 6 100</PntList2D></CrossSectSurf>
+        <DesignCrossSectSurf name="Pave" side="both" closedArea="true" area="1.0"><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="ETW">5 0</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt code="ETW">-5 0</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Base" side="both" closedArea="true"><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Datum"><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="Crown">0 0</CrossSectPnt></DesignCrossSectSurf>
+      </CrossSect>
+      <CrossSect sta="200" name="0+200.00">
+        <CrossSectSurf name="EG Surface"><PntList2D>-30 100 30 100</PntList2D></CrossSectSurf>
+        <CrossSectSurf name="Synthetic Corridor TOP"><PntList2D>-7 100 -5 99 5 99 7 100</PntList2D></CrossSectSurf>
+        <DesignCrossSectSurf name="Pave" side="both" closedArea="true" area="1.0"><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="ETW">5 0</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt code="ETW">-5 0</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Base" side="both" closedArea="true"><CrossSectPnt>-5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.1</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>-5 -0.1</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf name="Datum"><CrossSectPnt>-5 -0.3</CrossSectPnt><CrossSectPnt>5 -0.3</CrossSectPnt></DesignCrossSectSurf>
+        <DesignCrossSectSurf><CrossSectPnt code="ETW">-5 0</CrossSectPnt><CrossSectPnt code="Crown">0 0</CrossSectPnt></DesignCrossSectSurf>
+      </CrossSect>
+      </CrossSects>
+    </Alignment>
+  </Alignments>
+  <Roadways><Roadway name="Synthetic Roadway" alignmentRefs="Synthetic Road" surfaceRefs="TOP"/></Roadways>
+</LandXML>

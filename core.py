@@ -34,7 +34,19 @@ def declared_epsg(path):
     return None
 
 
-def read_tin(path, surface_name=None, progress=None, cancel=None, surface_index=None):
+def read_tin(
+    path,
+    surface_name=None,
+    progress=None,
+    cancel=None,
+    surface_index=None,
+    include_invisible=False,
+):
+    """Read TIN vertices and faces.
+
+    Faces flagged invisible (``<F i="1">``, written by Civil 3D for triangles
+    hidden by surface boundaries) are skipped unless ``include_invisible``.
+    """
     if progress:
         progress(2, "Parsing LandXML…")
     root = load_document(path).root
@@ -93,7 +105,11 @@ def read_tin(path, surface_name=None, progress=None, cancel=None, surface_index=
     if not face_nodes:
         raise ValueError(f"Surface '{surface_name}' contains no TIN faces.")
     face_list = []
+    invisible = 0
     for i, f in enumerate(face_nodes):
+        if not include_invisible and f.attrib.get("i", "0").strip() == "1":
+            invisible += 1
+            continue
         vals = (f.text or "").split()
         if len(vals) != 3:
             raise ValueError(
@@ -111,7 +127,7 @@ def read_tin(path, surface_name=None, progress=None, cancel=None, surface_index=
                 f"Surface '{surface_name}' face {i + 1} contains a noninteger point ID."
             ) from exc
     if not face_list:
-        raise ValueError("No valid triangular faces were found.")
+        raise ValueError("No visible triangular faces were found.")
 
     farr = np.asarray(face_list, dtype=np.int32)
     b = xyz[:, :2]
@@ -120,6 +136,7 @@ def read_tin(path, surface_name=None, progress=None, cancel=None, surface_index=
         "surface_name": surface_name,
         "point_count": len(xyz),
         "face_count": len(farr),
+        "invisible_face_count": invisible,
         "epsg": epsg,
         "bounds": (
             float(b[:, 0].min()),
@@ -203,6 +220,18 @@ def bounds(vertices):
     )
 
 
+def grid_for_bounds(extent, resolution):
+    """Return (xmin, ymax, cols, rows) snapped to whole multiples of resolution."""
+    xmin, ymin, xmax, ymax = extent
+    xmin_r = math.floor(xmin / resolution) * resolution
+    ymax_r = math.ceil(ymax / resolution) * resolution
+    xmax_r = math.ceil(xmax / resolution) * resolution
+    ymin_r = math.floor(ymin / resolution) * resolution
+    cols = int(round((xmax_r - xmin_r) / resolution))
+    rows = int(round((ymax_r - ymin_r) / resolution))
+    return xmin_r, ymax_r, cols, rows
+
+
 def rasterize_tin(
     vertices,
     faces,
@@ -211,19 +240,15 @@ def rasterize_tin(
     progress=None,
     cancel=None,
     max_cells=250_000_000,
+    grid=None,
 ):
+    """Rasterize TIN faces; ``grid=(xmin, ymax, cols, rows)`` forces a shared grid."""
     if resolution <= 0:
         raise ValueError("Resolution must be greater than zero.")
-    x = vertices[:, 0]
-    y = vertices[:, 1]
-    xmin, xmax = float(x.min()), float(x.max())
-    ymin, ymax = float(y.min()), float(y.max())
-    xmin_r = math.floor(xmin / resolution) * resolution
-    ymax_r = math.ceil(ymax / resolution) * resolution
-    xmax_r = math.ceil(xmax / resolution) * resolution
-    ymin_r = math.floor(ymin / resolution) * resolution
-    cols = int(round((xmax_r - xmin_r) / resolution))
-    rows = int(round((ymax_r - ymin_r) / resolution))
+    if grid is not None:
+        xmin_r, ymax_r, cols, rows = grid
+    else:
+        xmin_r, ymax_r, cols, rows = grid_for_bounds(bounds(vertices), resolution)
     if cols <= 0 or rows <= 0:
         raise ValueError("Computed raster dimensions are invalid.")
     cells = rows * cols
@@ -324,3 +349,55 @@ def write_geotiff(
     ds.FlushCache()
     ds = None
     return path
+
+
+def surface_difference(
+    base, compare, resolution, nodata=-9999.0, progress=None, cancel=None, max_cells=250_000_000
+):
+    """Grid compare minus base where both TINs exist (positive = fill).
+
+    ``base`` and ``compare`` are (vertices, faces) in the same output
+    coordinates. Volumes are cell-centre sums (grid method), in output
+    horizontal units squared times source vertical units.
+    """
+    (base_xyz, base_faces), (compare_xyz, compare_faces) = base, compare
+    extent_a, extent_b = bounds(base_xyz), bounds(compare_xyz)
+    overlap = (
+        max(extent_a[0], extent_b[0]),
+        max(extent_a[1], extent_b[1]),
+        min(extent_a[2], extent_b[2]),
+        min(extent_a[3], extent_b[3]),
+    )
+    if overlap[2] <= overlap[0] or overlap[3] <= overlap[1]:
+        raise ValueError("The two surfaces do not overlap.")
+    grid = grid_for_bounds(overlap, resolution)
+
+    def stage(start, span):
+        if progress is None:
+            return None
+        return lambda value, message: progress(start + int(span * value / 100), message)
+
+    base_grid, xmin, ymax, _ = rasterize_tin(
+        base_xyz, base_faces, resolution, nodata, stage(0, 45), cancel, max_cells, grid
+    )
+    compare_grid, _, _, _ = rasterize_tin(
+        compare_xyz, compare_faces, resolution, nodata, stage(45, 45), cancel, max_cells, grid
+    )
+    valid = (base_grid != np.float32(nodata)) & (compare_grid != np.float32(nodata))
+    difference = np.full(base_grid.shape, np.float32(nodata), dtype=np.float32)
+    delta = compare_grid.astype(np.float64) - base_grid.astype(np.float64)
+    difference[valid] = delta[valid].astype(np.float32)
+    cell = resolution * resolution
+    fill = float(delta[valid & (delta > 0)].sum() * cell)
+    cut = float(-delta[valid & (delta < 0)].sum() * cell)
+    stats = {
+        "cut_volume": cut,
+        "fill_volume": fill,
+        "net_volume": fill - cut,
+        "cut_area": float(np.count_nonzero(valid & (delta < 0)) * cell),
+        "fill_area": float(np.count_nonzero(valid & (delta > 0)) * cell),
+        "compared_area": float(np.count_nonzero(valid) * cell),
+        "max_cut": float(-delta[valid].min()) if valid.any() and delta[valid].min() < 0 else 0.0,
+        "max_fill": float(delta[valid].max()) if valid.any() and delta[valid].max() > 0 else 0.0,
+    }
+    return difference, xmin, ymax, stats

@@ -43,7 +43,7 @@ def regular_station_distances(start_station, length, interval, include_end=False
     return result
 
 
-def _spiral_points(spiral, segment_length=5.0):
+def _spiral_points(spiral, segment_length=5.0, with_distances=False):
     """Approximate a clothoid spiral from LandXML geometry.
 
     Uses Start->PI as the tangent direction at the start, linearly varying
@@ -110,10 +110,12 @@ def _spiral_points(spiral, segment_length=5.0):
 
     pts[0] = (sx, sy)
     pts[-1] = (ex, ey)
+    if with_distances:
+        return pts, [ds * i for i in range(n)]
     return pts
 
 
-def _curve_points(curve, segment_length):
+def _curve_points(curve, segment_length, with_distances=False):
     start = child(curve, "Start")
     end = child(curve, "End")
     center = child(curve, "Center")
@@ -152,11 +154,16 @@ def _curve_points(curve, segment_length):
     # Force exact endpoints to avoid floating-point drift.
     pts[0] = (sx, sy)
     pts[-1] = (ex, ey)
+    if with_distances:
+        return pts, [length * i / (n - 1) for i in range(n)]
     return pts
 
 
-def _line_points(line):
-    return [_xy(child(line, "Start")), _xy(child(line, "End"))]
+def _line_points(line, with_distances=False):
+    pts = [_xy(child(line, "Start")), _xy(child(line, "End"))]
+    if with_distances:
+        return pts, [0.0, math.dist(pts[0], pts[1])]
+    return pts
 
 
 def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
@@ -180,17 +187,18 @@ def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
             unsupported.append(f"{name}: no CoordGeom")
             continue
         pts = []
+        vertex_distances = []
         segments = []
         complete = True
         for geom in list(cg):
             tag = geom.tag.split("}")[-1]
             try:
                 if tag == "Line":
-                    p = _line_points(geom)
+                    p, d = _line_points(geom, True)
                 elif tag == "Curve":
-                    p = _curve_points(geom, segment_length)
+                    p, d = _curve_points(geom, segment_length, True)
                 elif tag == "Spiral":
-                    p = _spiral_points(geom, segment_length)
+                    p, d = _spiral_points(geom, segment_length, True)
                 else:
                     complete = False
                     unsupported.append(f"{name}: unsupported CoordGeom element {tag}")
@@ -214,12 +222,14 @@ def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
                         "station_start": _float_attr(geom, "staStart"),
                     }
                 )
+                offset = vertex_distances[-1] if vertex_distances else 0.0
                 if pts and p:
                     # Avoid duplicate vertices at element junctions.
                     if math.isclose(pts[-1][0], p[0][0], abs_tol=1e-9) and math.isclose(
                         pts[-1][1], p[0][1], abs_tol=1e-9
                     ):
                         pts.extend(p[1:])
+                        vertex_distances.extend(offset + value for value in d[1:])
                     else:
                         complete = False
                         unsupported.append(
@@ -227,6 +237,7 @@ def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
                         )
                 else:
                     pts.extend(p)
+                    vertex_distances.extend(offset + value for value in d)
             except Exception as exc:
                 complete = False
                 unsupported.append(f"{name}: {tag} skipped ({exc})")
@@ -240,6 +251,9 @@ def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
                     "sta_start": sta_start,
                     "sta_end": sta_end,
                     "points": pts,
+                    # True distance along the source geometry at each vertex
+                    # (arc length on curves and spirals, not chord length).
+                    "vertex_distances": vertex_distances,
                     "segments": segments,
                 }
             )

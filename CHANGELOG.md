@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.6.0 — unreleased
+
+### Added
+- **LandXML Profile Viewer** dock and **Pick Alignment Profile on Map** tool: click an alignment-based layer to open its existing-ground vs design long-section at that chainage. Shaded cut/fill, depth panel, VPI/K labels, transition markers, segment table, hover readout linked to a map marker, zoom/pan, on-grade tolerance and structure exclusions. Exports PNG, SVG, PDF (A3), clipboard image, station-table and segment CSV, and an HTML report. Drawn with QPainter; no plotting dependency.
+- **Profile Cut/Fill Analysis (Existing vs Design)**: depth table, cut/fill segments with high-fill/deep-cut flags, cut↔fill transition points on the map, optional level-section earthworks and side-slope estimate, HTML report with long-section and depth diagrams.
+- **Corridor Section Quantities**: from Civil 3D sample-line cross-sections — cut/fill areas, average-end-area volumes, mass-haul ordinate with shrink/bulk factor, Datum-based earthworks, corridor material (shape) volumes, embankment and cut side-slope areas for grassing with steep-slope flags, side-slope and footprint polygons along the alignment, and an HTML report.
+- **Surface Cut/Fill (TIN Difference)**: shared-grid TIN difference GeoTIFF with cut/fill/net volumes and a comparison with any Civil 3D `SurfVolume` recorded in the file.
+- Existing-ground (`ProfSurf`) profile parsing with gap handling; Inspect LandXML now lists surface profiles and recorded Civil 3D surface volumes.
+- Processing outputs remember their LandXML source as a QGIS project layer property (not in the data) so the viewer can reopen it; new map outputs are styled on load.
+
+### Fixed
+- **Station-relative cross-sections were placed at false map coordinates.** `CrossSectSurf/PntList2D` holds offset/elevation pairs, but they were written as map X/Y (sections appeared near X = offset, Y = elevation). They are now positioned along their alignment as 3D lines, one per section surface; previously only the first surface of each section was read.
+- **Hidden TIN triangles were rasterized.** Faces flagged `i="1"` (Civil 3D triangles hidden by surface boundaries) are now excluded from GeoTIFFs, boundaries and volumes. On a private export this changed a TIN-difference fill volume from 1,423 to 1,359 m³, matching the 1,358.8 m³ Civil 3D recorded.
+- **Chainage drift on curves.** Station points, 3D centerlines and map profile overlays used chord lengths between densified vertices; on a 36 km private alignment the end station was 0.33 m short. True arc lengths now match declared alignment lengths to 0.1 mm.
+- Profile control labels use `0+000.00` chainage for metric files (previously `1+00.00` style for all units).
+
+### Validation
+- 60 tests (parser, earthworks with closed-form expectations, Processing and offscreen GUI) pass on Linux QGIS 3.44.14. Six private Civil 3D exports were run through every tool (names withheld; see `docs/earthworks-validation.md`). The chart widget was exercised under PyQt6 6.11; desktop QGIS 4 checks remain outstanding. Ruff (`F,E4,E7,E9`) and Bandit report no findings.
+
 ## 1.5.0 — unreleased
 
 - Ported Processing field creation to `QMetaType`, removed fixed EPSG defaults, required explicit CRS choices, and verified provider and algorithm execution under QGIS 4.2.2 and the headless QGIS 3.44.3 runtime.
@@ -38,13 +57,13 @@
 - **3D centerlines always reported `z_source: "No profile; Z=0"` even when a matching profile existed.** `Centerline3DAlgorithm` and the Complete Road Design export both looked for an `alignment=` attribute on `<ProfAlign>` to associate a profile with its alignment, but real `<ProfAlign>` elements carry no such attribute — the owning alignment's name lives on the parent `<Alignment>` element, with `<Profile><ProfAlign>` nested inside it. Fixed by walking `<Alignment>` elements and searching within each for its nested profile, with a fallback pass for any `ProfAlign` that does carry an explicit `alignment=` reference. Verified: centerlines now correctly report `z_source: "Vertical profile"` with Z-values matching the source profile's elevation range.
 
 ### Known limitation (documented, not fixed)
-- **Design-template cross-sections (`DesignCrossSectSurf`/`CrossSectPnt`) are not extracted.** Only absolute-coordinate `CrossSectSurf`/`PntList2D`|`PntList3D` cross-sections were ever supported. In the Olkaria sample, 3,235 of 3,569 `CrossSect` records are design-template-only and are skipped. Full support would require reconstructing XY geometry from alignment station + offset, which is a larger feature than a bug fix and was not attempted here to avoid an unverified, rushed change. `CrossSectionsAlgorithm` and the Complete Road Design export now emit an explicit `pushWarning()` reporting the skipped count instead of silently dropping the data, and the limitation is documented in the tool's help text.
+- **Design-template cross-sections (`DesignCrossSectSurf`/`CrossSectPnt`) are not extracted.** Only absolute-coordinate `CrossSectSurf`/`PntList2D`|`PntList3D` cross-sections were ever supported. In one private sample, 3,235 of 3,569 `CrossSect` records are design-template-only and are skipped. Full support would require reconstructing XY geometry from alignment station + offset, which is a larger feature than a bug fix and was not attempted here to avoid an unverified, rushed change. `CrossSectionsAlgorithm` and the Complete Road Design export now emit an explicit `pushWarning()` reporting the skipped count instead of silently dropping the data, and the limitation is documented in the tool's help text.
 
 ### Changed
 - Trademark/branding review for this release: no ArcGIS/ArcHydro/ESRI references were found in this plugin. "Civil 3D" file-format-origin references were kept, since they describe the source file format rather than a comparison claim.
 
 ### Verification
-All 10 Processing algorithms were run end-to-end against both real sample LandXML files (`Proposed Nithi Bridge Realignment.xml`, `Olkaria LOT 3-design alignment 09.07.2026.xml`), including `Complete Road Design` run twice per sample mirroring the exact parameter combinations from the reported crash. Verification used a QGIS test stub whose parameter-reading and sink/geometry glue is backed by real `osgeo.gdal`/`ogr`/`osr` bindings rather than mocks, so algorithms ran to completion and produced real, inspectable GeoTIFF/GeoPackage output — not just "no exception raised." Final run: 22/22 cases passed, with output feature counts, geometries, and elevation ranges checked directly against the source XML.
+All 10 Processing algorithms were run end-to-end against two private sample LandXML files (project names withheld), including `Complete Road Design` run twice per sample mirroring the exact parameter combinations from the reported crash. Verification used a QGIS test stub whose parameter-reading and sink/geometry glue is backed by real `osgeo.gdal`/`ogr`/`osr` bindings rather than mocks, so algorithms ran to completion and produced real, inspectable GeoTIFF/GeoPackage output — not just "no exception raised." Final run: 22/22 cases passed, with output feature counts, geometries, and elevation ranges checked directly against the source XML.
 
 ## 1.4.8 — 2026-08-23
 

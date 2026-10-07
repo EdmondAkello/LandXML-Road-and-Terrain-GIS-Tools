@@ -161,9 +161,31 @@ class LandXMLDocument:
                         item.attrib.get("name")
                         for item in descendants(alignment, "ProfAlign")
                     ],
+                    "surface_profiles": [
+                        item.attrib.get("name")
+                        for item in descendants(alignment, "ProfSurf")
+                    ],
                     "cross_sections": len(list(descendants(alignment, "CrossSect"))),
                 }
             )
+        surface_volumes = []
+        for item in descendants(self.root, "SurfVolume"):
+            record = {"name": item.attrib.get("name")}
+            for key, label in (
+                ("surfBase", "base_surface"),
+                ("surfCompare", "compare_surface"),
+            ):
+                record[label] = item.attrib.get(key)
+            for key, label in (
+                ("volCut", "cut_volume"),
+                ("volFill", "fill_volume"),
+                ("volTotal", "net_volume"),
+            ):
+                try:
+                    record[label] = float(item.attrib[key])
+                except (KeyError, ValueError):
+                    record[label] = None
+            surface_volumes.append(record)
         return {
             "source_file": os.path.basename(self.path),
             "vendor": self.vendor,
@@ -177,6 +199,8 @@ class LandXMLDocument:
             "alignments": alignments,
             "profiles": len(list(descendants(self.root, "ProfAlign"))),
             "cross_sections": len(list(descendants(self.root, "CrossSect"))),
+            "surface_profiles": len(list(descendants(self.root, "ProfSurf"))),
+            "surface_volumes": surface_volumes,
             "breaklines": len(list(descendants(self.root, "Breakline"))),
             "feature_lines": len(list(descendants(self.root, "FeatureLine"))),
             "bounds": bounds,

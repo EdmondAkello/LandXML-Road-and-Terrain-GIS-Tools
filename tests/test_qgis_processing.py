@@ -30,6 +30,8 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
     QgsProcessingFeedback,
+    QgsProcessingOutputLayerDefinition,
+    QgsProject,
     QgsWkbTypes,
 )
 from osgeo import gdal, ogr
@@ -41,14 +43,18 @@ from landxml_plugin.provider import LandXMLTinToGeoTIFFProvider
 
 OPENROADS = str(ROOT / "tests" / "fixtures" / "openroads" / "terrain_minimal.xml")
 CIVIL3D = str(ROOT / "tests" / "fixtures" / "civil3d" / "road_minimal.xml")
+CORRIDOR = str(ROOT / "tests" / "fixtures" / "civil3d" / "corridor_synthetic.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        cls.app = QgsApplication([], False)
-        cls.app.initQgis()
+        cls.app = QgsApplication.instance()
+        if cls.app is None:
+            # GUI-enabled so the profile viewer tests can share this instance.
+            cls.app = QgsApplication([], True)
+            cls.app.initQgis()
         cls.provider = LandXMLTinToGeoTIFFProvider()
         cls.provider.loadAlgorithms()
         cls.algorithms = {
@@ -67,7 +73,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 11)
+        self.assertEqual(len(self.algorithms), 14)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_plugin_unload_after_provider_is_deleted(self):
@@ -156,7 +162,7 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(graph_feature["vertical_exaggeration"], 4)
         self.assertAlmostEqual(graph_feature.geometry().asPolyline()[-1].y(), 8)
         controls = list(points.getFeatures())
-        self.assertIn("VPI 1+00.00\nElev 0.00\nG2 +6.67%", controls[0]["label_text"])
+        self.assertIn("VPI 0+100.00\nElev 0.00\nG2 +6.67%", controls[0]["label_text"])
         curve_vpi = next(
             point
             for point in controls
@@ -420,6 +426,202 @@ class QgisProcessingTests(unittest.TestCase):
             controls = package.GetLayerByName("profile_controls")
             self.assertEqual(controls.GetFeatureCount(), 3)
             package = None
+
+    def _loaded(self, name="memory:"):
+        # A destination Processing will load, so result post-processors attach.
+        return QgsProcessingOutputLayerDefinition(name, QgsProject.instance())
+
+    def _post_process(self, destination):
+        layer = self.context.getMapLayer(destination)
+        details = self.context.layerToLoadOnCompletionDetails(destination)
+        details.postProcessor().postProcessLayer(layer, self.context, self.feedback)
+        return layer
+
+    def test_profile_cut_fill_tables_map_and_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = str(Path(directory) / "profile.html")
+            params = self._params(CORRIDOR, "EPSG:32637")
+            params.update(
+                OUTPUT="memory:",
+                SEGMENTS=self._loaded(),
+                TRANSITIONS=self._loaded(),
+                REPORT=report,
+                INTERVAL=50,
+                FORMATION_WIDTH=10,
+                FILL_SLOPE=2,
+                CUT_SLOPE=2,
+                HIGH_FILL=0.9,
+            )
+            result = self.algorithms["landxml_profile_cut_fill"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            table = self.context.getMapLayer(result["OUTPUT"])
+            rows = sorted(table.getFeatures(), key=lambda f: f["station"])
+            self.assertEqual([f["station"] for f in rows], [0, 50, 100, 150, 200])
+            self.assertEqual(rows[1]["station_label"], "0+050.00")
+            self.assertAlmostEqual(rows[1]["depth"], 0.5)
+            self.assertEqual(rows[1]["kind"], "fill")
+            self.assertEqual(rows[3]["kind"], "cut")
+            segments = self._post_process(result["SEGMENTS"])
+            self.assertEqual(segments.featureCount(), 2)
+            self.assertEqual(segments.renderer().type(), "categorizedSymbol")
+            self.assertEqual(segments.customProperty("landxml/source_path"), CORRIDOR)
+            fill = next(f for f in segments.getFeatures() if f["kind"] == "fill")
+            self.assertEqual(fill["severity"], "high fill")
+            line = fill.geometry().asPolyline()
+            self.assertEqual((line[0].x(), line[0].y()), (5000, 1000))
+            self.assertEqual((line[-1].x(), line[-1].y()), (5000, 1100))
+            transitions = self.context.getMapLayer(result["TRANSITIONS"])
+            point = next(transitions.getFeatures())
+            self.assertEqual(point["transition"], "fill→cut")
+            self.assertEqual(point.geometry().asPoint().y(), 1100)
+            self.assertEqual(result["TRANSITION_COUNT"], 1)
+            text = Path(report).read_text(encoding="utf-8")
+            self.assertIn("Preliminary level-section estimate", text)
+            self.assertIn("<svg", text)
+
+    def test_profile_cut_fill_requires_profile_pair(self):
+        with self.assertRaisesRegex(QgsProcessingException, "existing-ground profile"):
+            self.algorithms["landxml_profile_cut_fill"].processAlgorithm(
+                {"INPUT": CIVIL3D, "OUTPUT": "memory:"}, self.context, self.feedback
+            )
+
+    def test_corridor_quantities_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = str(Path(directory) / "corridor.html")
+            params = self._params(CORRIDOR, "EPSG:32637")
+            params.update(
+                OUTPUT="memory:",
+                VOLUMES="memory:",
+                SIDE_SLOPES=self._loaded(),
+                FOOTPRINT="memory:",
+                REPORT=report,
+                USE_DATUM=False,
+            )
+            result = self.algorithms["landxml_corridor_quantities"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            self.assertAlmostEqual(result["CUT_VOLUME"], 575)
+            self.assertAlmostEqual(result["FILL_VOLUME"], 575)
+            self.assertAlmostEqual(result["FILL_SLOPE_AREA"], 100 * 5 ** 0.5)
+            table = self.context.getMapLayer(result["OUTPUT"])
+            self.assertEqual(table.featureCount(), 5)
+            first = min(table.getFeatures(), key=lambda f: f["station"])
+            self.assertAlmostEqual(first["fill_area"], 12)
+            self.assertAlmostEqual(first["m_pave"], 1)
+            self.assertAlmostEqual(first["m_base"], 2)
+            self.assertEqual(first["ground_surface"], "EG Surface")
+            volumes = self.context.getMapLayer(result["VOLUMES"])
+            self.assertEqual(volumes.featureCount(), 4)
+            slopes = self._post_process(result["SIDE_SLOPES"])
+            self.assertEqual(slopes.featureCount(), 8)
+            band = next(
+                f for f in slopes.getFeatures() if f["side"] == "left" and f["sta_start"] == 0
+            )
+            self.assertEqual(band["kind"], "fill")
+            self.assertAlmostEqual(band["plan_area"], 75)
+            self.assertLess(band.geometry().boundingBox().xMaximum(), 5000 - 4.99)
+            footprint = self.context.getMapLayer(result["FOOTPRINT"])
+            self.assertEqual(footprint.featureCount(), 4)
+            self.assertIn("Corridor material quantities", Path(report).read_text(encoding="utf-8"))
+
+    def test_corridor_quantities_without_sections(self):
+        with self.assertRaisesRegex(QgsProcessingException, "cross-sections"):
+            self.algorithms["landxml_corridor_quantities"].processAlgorithm(
+                {"INPUT": OPENROADS, "OUTPUT": "memory:"}, self.context, self.feedback
+            )
+
+    def test_surface_cut_fill_matches_recorded_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(CORRIDOR, "EPSG:32637")
+            params.update(
+                BASE_SURFACE="EG",
+                COMPARE_SURFACE="Design",
+                RESOLUTION=1,
+                OUTPUT=str(Path(directory) / "diff.tif"),
+                REPORT=str(Path(directory) / "diff.html"),
+            )
+            result = self.algorithms["landxml_surface_cut_fill"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            # The hidden (i="1") triangle beyond x = 10 is excluded.
+            self.assertAlmostEqual(result["fill_volume"], 100)
+            self.assertEqual(result["cut_volume"], 0)
+            self.assertAlmostEqual(result["compared_area"], 100)
+            dataset = gdal.Open(params["OUTPUT"])
+            band = dataset.GetRasterBand(1).ReadAsArray()
+            self.assertAlmostEqual(float(band[5, 5]), 1)
+            dataset = None
+            self.assertIn("Civil 3D volume surface", Path(params["REPORT"]).read_text(encoding="utf-8"))
+
+    def test_tin_geotiff_skips_invisible_faces(self):
+        with tempfile.TemporaryDirectory() as directory:
+            raster = self._params(CORRIDOR, "EPSG:32637")
+            raster.update(OUTPUT=str(Path(directory) / "design.tif"), RESOLUTION=1, SURFACE="Design")
+            self.algorithms["landxml_tin_to_geotiff"].processAlgorithm(
+                raster, self.context, self.feedback
+            )
+            dataset = gdal.Open(raster["OUTPUT"])
+            band = dataset.GetRasterBand(1)
+            values = band.ReadAsArray()
+            nodata = band.GetNoDataValue()
+            self.assertEqual(values.shape, (10, 20))
+            self.assertAlmostEqual(float(values[5, 5]), 101)
+            self.assertEqual(float(values[8, 15]), nodata)
+            dataset = None
+
+    def test_station_relative_cross_sections_are_placed(self):
+        params = self._params(CORRIDOR, "EPSG:32637")
+        params.update(OUTPUT="memory:", POINTS="memory:")
+        result = self.algorithms["landxml_cross_sections"].processAlgorithm(
+            params, self.context, self.feedback
+        )
+        lines = self.context.getMapLayer(result["OUTPUT"])
+        self.assertEqual(lines.featureCount(), 10)
+        self.assertTrue(QgsWkbTypes.hasZ(lines.wkbType()))
+        first = next(
+            f for f in lines.getFeatures() if f["station"] == 0 and f["surface_name"] == "EG Surface"
+        )
+        self.assertEqual(first["placement"], "station-offset")
+        start = next(first.geometry().vertices())
+        self.assertEqual((start.x(), start.y(), start.z()), (4970, 1000, 100))
+        points = self.context.getMapLayer(result["POINTS"])
+        offsets = sorted({round(f["offset"], 3) for f in points.getFeatures() if f["station"] == 0})
+        self.assertEqual(offsets[0], -30)
+
+        with tempfile.TemporaryDirectory() as directory:
+            complete = self._params(CORRIDOR, "EPSG:32637")
+            complete["OUTPUT_DIR"] = directory
+            for key in (
+                "INCLUDE_ALIGNMENTS",
+                "INCLUDE_CENTERLINES",
+                "INCLUDE_PROFILES",
+                "INCLUDE_STATIONS",
+                "INCLUDE_FEATURELINES",
+                "INCLUDE_BREAKLINES",
+                "INCLUDE_SURFACE_BOUNDARY",
+                "INCLUDE_DEM",
+                "INCLUDE_CONTOURS",
+            ):
+                complete[key] = False
+            complete["INCLUDE_CROSSSECTIONS"] = True
+            self.algorithms["landxml_complete_road_design"].processAlgorithm(
+                complete, self.context, self.feedback
+            )
+            package = ogr.Open(str(Path(directory) / "corridor_synthetic_GIS.gpkg"))
+            layer = package.GetLayerByName("cross_sections")
+            self.assertEqual(layer.GetFeatureCount(), 10)
+            self.assertIsNone(package.GetLayerByName("cross_sections_2d"))
+            package = None
+
+    def test_alignment_output_remembers_source_for_viewer(self):
+        params = self._params(CORRIDOR, "EPSG:32637")
+        params["OUTPUT"] = self._loaded()
+        result = self.algorithms["landxml_alignments_to_vector"].processAlgorithm(
+            params, self.context, self.feedback
+        )
+        layer = self._post_process(result["OUTPUT"])
+        self.assertEqual(layer.customProperty("landxml/source_path"), CORRIDOR)
 
 
 if __name__ == "__main__":

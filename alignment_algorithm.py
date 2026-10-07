@@ -21,7 +21,7 @@ from .compat import FIELD_STRING, FIELD_DOUBLE
 
 from .core import transform_vertices
 from .landxml.geometry import read_alignments
-from .processing_common import BoundsTracker, coordinate_choices
+from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices
 from .params import number_param
 
 METHODS = [
@@ -273,4 +273,5 @@ class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException(
                 f"Alignment import failed for '{os.path.basename(path)}': {exc}"
             ) from exc
+        attach_post_processor(context, dest_id, source_path=path)
         return {self.OUTPUT: dest_id, "ALIGNMENT_COUNT": len(alignments)}
