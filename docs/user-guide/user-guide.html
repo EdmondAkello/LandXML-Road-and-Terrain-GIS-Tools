@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>LandXML Road &amp; Terrain GIS Tools 1.8 — User Guide and Technical Manual</title>
+<title>LandXML Road &amp; Terrain GIS Tools 1.8.1 — User Guide and Technical Manual</title>
 <style>
 :root {
   --ink: #1d2330; --muted: #5b6575; --line: #d9dee7; --soft: #f4f6f9;
@@ -84,7 +84,7 @@ a { color: var(--accent); }
 <section class="cover">
   <div class="hero"></div>
   <div class="text">
-    <div class="kicker">QGIS plugin · Version 1.8.0</div>
+    <div class="kicker">QGIS plugin · Version 1.8.1</div>
     <h1>LandXML Road &amp; Terrain GIS Tools</h1>
     <div class="sub">User Guide and Technical Manual</div>
     <div class="meta">
@@ -306,7 +306,11 @@ a { color: var(--accent); }
 <h1 class="part"><span class="num">Part C</span>Viewing, quantities and reports</h1>
 <p class="part-intro">Look at the design the way a reviewer does: long-sections and cross-sections on demand, earthworks quantities and report-ready drawings.</p>
 
+<h3>Saving reports as PDF</h3>
+<p>Every HTML report is laid out for A4 printing. Open it in Chrome or Edge, choose <span class="kbd">Print → Save as PDF</span> and untick <i>Headers and footers</i>. The report prints its own title and page numbers, keeps chart colours and legends, keeps each heading with its chart, repeats table headers on every page and starts each alignment on a new page. The Road Design Report opens with a table of the alignments it contains.</p>
+
 <h2 id="viewer"><span class="sec">12</span>Profile Viewer</h2>
+<div class="note"><b>Where to find it</b>The Profile Viewer is a panel, not a Processing tool, so it is <i>not</i> listed in the Processing Toolbox. Open it from <span class="kbd">Plugins → LandXML Road &amp; Terrain → LandXML Profile Viewer</span> or <span class="kbd">Pick Alignment Profile on Map</span>, or press the plugin's button on the Plugins toolbar (the same icon as the plugin). The panel docks along the bottom of the QGIS window; drag its title bar to move or float it. Once opened, it is also listed under <span class="kbd">View → Panels</span>.</div>
 <p>Press <span class="kbd">Pick Alignment Profile on Map</span> and click an alignment, or any layer with an <code>alignment_name</code> or <code>alignment</code> field (station points, cut/fill segments, cross-sections). The dock opens that alignment's existing-ground and design long-section with the clicked chainage marked.</p>
 <figure>
   <img src="figures/fig_viewer_profile.png" alt="Profile viewer">
@@ -364,7 +368,7 @@ a { color: var(--accent); }
 <p><b>Road Design Report</b> writes one HTML page per file with a section per alignment. Print it to PDF from a browser for a paginated report; each alignment starts on a new page.</p>
 <figure>
   <img src="figures/fig_report_top.png" alt="Report summary">
-  <figcaption><b>Figure 8.</b> Summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed and maximum superelevation.</figcaption>
+  <figcaption><b>Figure 8.</b> The report opens with a table of its alignments (chainage, length, design speeds and review findings), followed for each alignment by summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed and maximum superelevation.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_plan.png" alt="Plan">
@@ -476,7 +480,7 @@ a { color: var(--accent); }
 </table>
 <figure>
   <img src="figures/fig_review_findings.png" alt="Findings table">
-  <figcaption><b>Figure 16.</b> Findings table (first rows): severity, category, chainage range, issue and detail, recommendation and reference.</figcaption>
+  <figcaption><b>Figure 16.</b> Findings table (first rows), grouped by category: severity and code, chainage range, issue and detail, recommendation and the criteria reference.</figcaption>
 </figure>
 
 <h2 id="phasing"><span class="sec">22</span>Alignment phasing and recommended PVIs</h2>
@@ -658,6 +662,8 @@ a { color: var(--accent); }
     <tr><td>"The file records no design speed"</td><td>Define design speeds in Civil 3D before export, or enter a speed or ranges.</td></tr>
     <tr><td>Very many findings</td><td>Check that the design speed and terrain match the road; use speed ranges where terrain changes. Read the category summary first.</td></tr>
     <tr><td>Grade checks missing under AASHTO</td><td>Enter a maximum grade.</td></tr>
+    <tr><td>Cannot find the Profile Viewer</td><td>It is not in the Processing Toolbox: use <span class="kbd">Plugins → LandXML Road &amp; Terrain</span> or the plugin's toolbar button; the panel opens along the bottom of the window.</td></tr>
+    <tr><td>Report PDF shows a file path at the top or bottom of each page</td><td>Untick <i>Headers and footers</i> in the browser's print dialog; the report prints its own title and page numbers.</td></tr>
     <tr><td>Profile Viewer opens the wrong file</td><td>Use Open… in the dock; layers from other sources are remembered per layer.</td></tr>
     <tr><td>Complete Road Design stops</td><td>The GeoPackage already exists; choose a new folder.</td></tr>
   </tbody>

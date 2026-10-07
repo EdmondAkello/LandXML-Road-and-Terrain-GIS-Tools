@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from datetime import datetime
 import html
+import re
 import math
 
 CUT_COLOR = "#d9822b"
@@ -48,13 +49,31 @@ def _fmt(value, digits=2):
     return html.escape(str(value))
 
 
-def _table(header, rows, digits=2):
-    head = "".join(f"<th>{html.escape(str(item))}</th>" for item in header)
+_NUMERIC_TEXT = re.compile(r"^(?:[-+]?[\d,]*\.?\d+%?|\d+\+\d+(?:\.\d+)?(?: ●)?|[–—∞-])$")
+
+
+def _numeric_column(rows, index):
+    values = [row[index] for row in rows if index < len(row) and row[index] not in (None, "")]
+    return all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) or (isinstance(v, str) and _NUMERIC_TEXT.match(v.strip()))
+        for v in values
+    )
+
+
+def _table(header, rows, digits=2, cls="", widths=None):
+    """HTML table; numeric and chainage columns align right, text columns left."""
+    rows = list(rows)
+    align = ["num" if i and _numeric_column(rows, i) else "txt" for i in range(len(header))]
+    cols = ""
+    if widths:
+        cols = "<colgroup>" + "".join(f"<col style='width:{w}'>" for w in widths) + "</colgroup>"
+    head = "".join(f"<th class='{a}'>{html.escape(str(item))}</th>" for a, item in zip(align, header))
     body = "".join(
-        "<tr>" + "".join(f"<td>{_fmt(value, digits)}</td>" for value in row) + "</tr>"
+        "<tr>" + "".join(f"<td class='{a}'>{_fmt(value, digits)}</td>" for a, value in zip(align, row)) + "</tr>"
         for row in rows
     )
-    return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    class_attr = f" class='{cls}'" if cls else ""
+    return f"<table{class_attr}>{cols}<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
 def _cards(items):
@@ -65,17 +84,52 @@ def _cards(items):
 
 
 _STYLE = """
-:root{--fg:#1d2430;--muted:#5b6575;--line:#d8dde5;--bg:#fff;--soft:#f4f6f9}
+:root{--fg:#1d2430;--muted:#5b6575;--line:#d8dde5;--bg:#fff;--soft:#f4f6f9;--accent:#1f5f8b}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 body{font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg);margin:24px auto;max-width:1100px;padding:0 16px}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
-.meta{color:var(--muted);font-size:13px}.note{background:var(--soft);border-left:3px solid #9aa5b5;padding:8px 12px;font-size:13px;color:var(--muted)}
+h1{font-size:24px;margin:0 0 4px}h2{font-size:18px;margin:28px 0 8px;border-bottom:2px solid var(--fg);padding-bottom:4px}
+h3{font-size:15px;margin:22px 0 6px}
+.meta{color:var(--muted);font-size:13px}.note{background:var(--soft);border-left:3px solid #9aa5b5;padding:8px 12px;font-size:13px;color:var(--muted);margin:8px 0}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:12px 0}
 .card{border:1px solid var(--line);border-radius:8px;padding:10px 12px}.card .k{color:var(--muted);font-size:12px}.card .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
-table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}th,td{border-bottom:1px solid var(--line);padding:4px 8px;text-align:right}th{background:var(--soft);position:sticky;top:0}
-td:first-child,th:first-child{text-align:left}.scroll{max-height:420px;overflow:auto;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums;margin:6px 0 10px}
+th,td{border-bottom:1px solid var(--line);padding:4px 8px;vertical-align:top}th{background:var(--soft);position:sticky;top:0}
+.num{text-align:right;white-space:nowrap}.txt{text-align:left}
+.scroll{max-height:420px;overflow:auto;border:1px solid var(--line)}
 svg{width:100%;height:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
 .legend span{display:inline-block;margin-right:14px;font-size:12px;color:var(--muted)}.legend i{display:inline-block;width:12px;height:12px;margin-right:4px;vertical-align:-1px;border-radius:2px}
+.sev{display:inline-block;padding:1px 6px;border-radius:3px;color:#fff;font-size:11px;font-weight:600}
+table.findings td{font-size:12px}table.findings tr.group td{background:var(--soft);font-weight:600;color:var(--fg);border-top:1px solid var(--line)}
+table.findings .detail{color:var(--muted);display:block;margin-top:2px}
+.print-hint{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:6px;padding:6px 10px;margin:10px 0}
+@media print{
+  body{font-size:10pt;margin:0;max-width:none;padding:0}
+  h1{font-size:18pt}h2{font-size:13pt;margin-top:16px}h3{font-size:11pt;margin:14px 0 4px}
+  h1,h2,h3{break-after:avoid-page}
+  .print-hint{display:none}
+  .scroll{max-height:none;overflow:visible;border:none}
+  th{position:static}thead{display:table-header-group}tr{break-inside:avoid}tr.group{break-after:avoid}
+  table{font-size:8.5pt}table.findings td{font-size:8pt}th,td{padding:3px 6px}
+  svg,.card,.note,.keep,.legend{break-inside:avoid}
+  .cards{grid-template-columns:repeat(4,1fr);gap:6px}.card{padding:6px 8px}.card .v{font-size:12pt}
+}
 """
+
+_KEEP = re.compile(r"(<h[23][^>]*>(?:(?!</h[23]>).)*</h[23]>)\s*(<p class='note'>(?:(?!</p>).)*</p>\s*)?(<svg\b(?:(?!</svg>).)*</svg>)", re.S)
+
+
+def _keep_headings(body):
+    """Keep each heading together with the chart that follows it when printing."""
+    return _KEEP.sub(lambda m: f"<div class='keep'>{m.group(1)}{m.group(2) or ''}{m.group(3)}</div>", body)
+
+
+def _page_rule(title):
+    label = title.replace("\\", "").replace('"', "'")
+    return (
+        "@page{size:A4;margin:14mm 12mm 16mm 12mm;"
+        f'@bottom-left{{content:"{label}";font:8pt system-ui,sans-serif;color:#5b6575}}'
+        '@bottom-right{content:"Page " counter(page) " of " counter(pages);font:8pt system-ui,sans-serif;color:#5b6575}}'
+    )
 
 
 def _document(title, body):
@@ -83,9 +137,11 @@ def _document(title, body):
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{html.escape(title)}</title><style>{_STYLE}</style></head><body>"
+        f"<title>{html.escape(title)}</title><style>{_STYLE}{_page_rule(title)}</style></head><body>"
         f"<h1>{html.escape(title)}</h1><div class='meta'>Generated {stamp} by LandXML Road &amp; Terrain GIS Tools</div>"
-        f"{body}</body></html>"
+        "<div class='print-hint'>To save as PDF, print this page from a browser (Chrome or Edge: Save as PDF). "
+        "Pages are numbered and charts keep their colours; untick <i>Headers and footers</i> to hide the browser's file path.</div>"
+        f"{_keep_headings(body)}</body></html>"
     )
 
 

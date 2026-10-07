@@ -2,7 +2,7 @@
 
 A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Originally created by **Edmond Akello** under GPL-2.0-or-later; the original attribution and license remain in place.
 
-The **[User Guide and Technical Manual](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.8.0_User_Guide.pdf)** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. Its source and figure scripts are in `docs/user-guide` and `tools/guide`.
+The **[User Guide and Technical Manual](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.8.1_User_Guide.pdf)** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. Its source and figure scripts are in `docs/user-guide` and `tools/guide`.
 
 ## Compatibility and validation
 

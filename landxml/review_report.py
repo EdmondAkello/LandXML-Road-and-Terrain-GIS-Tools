@@ -166,22 +166,32 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0):
             )
         )
     parts.append("<h3>Findings and recommendations</h3><div class='scroll'>")
+    order = {"High": 0, "Medium": 1, "Low": 2}
     body = []
-    for f in findings:
-        color = SEVERITY_COLORS.get(f["severity"], "#5b6575")
-        body.append(
-            "<tr>"
-            f"<td><span style='color:{color};font-weight:600'>{f['severity']}</span></td>"
-            f"<td>{html.escape(f['category'])}</td>"
-            f"<td>{html.escape(station_label(f['start'], unit))}</td>"
-            f"<td>{html.escape(station_label(f['end'], unit))}</td>"
-            f"<td style='text-align:left'>{html.escape(f['title'])}<br><span class='meta'>{html.escape(f['detail'])}</span></td>"
-            f"<td style='text-align:left'>{html.escape(f['recommendation'])}</td>"
-            f"<td style='text-align:left'>{html.escape(f['reference'])}</td>"
-            "</tr>"
-        )
+    for category in categories:
+        group = sorted((f for f in findings if f["category"] == category), key=lambda f: (order.get(f["severity"], 3), f["start"]))
+        tally = ", ".join(f"{n} {s.lower()}" for s in ("High", "Medium", "Low") for n in [sum(1 for f in group if f["severity"] == s)] if n)
+        body.append(f"<tr class='group'><td colspan='5'>{html.escape(category)} · {tally}</td></tr>")
+        for f in group:
+            color = SEVERITY_COLORS.get(f["severity"], "#5b6575")
+            span = station_label(f["start"], unit)
+            if abs(f["end"] - f["start"]) > 1e-6:
+                span += f"<br>{html.escape(station_label(f['end'], unit))}"
+            code = f" <b>{html.escape(f['code'])}</b>" if f.get("code") else ""
+            body.append(
+                "<tr>"
+                f"<td><span class='sev' style='background:{color}'>{f['severity']}</span>{code}</td>"
+                f"<td class='num'>{span}</td>"
+                f"<td class='txt'>{html.escape(f['title'])}<span class='detail'>{html.escape(f['detail'])}</span></td>"
+                f"<td class='txt'>{html.escape(f['recommendation'])}</td>"
+                f"<td class='txt'>{html.escape(f['reference'])}</td>"
+                "</tr>"
+            )
     parts.append(
-        "<table><thead><tr><th>Severity</th><th>Category</th><th>From</th><th>To</th><th>Issue</th><th>Recommendation</th><th>Reference</th></tr></thead>"
+        "<table class='findings'><colgroup><col style='width:12%'><col style='width:11%'><col style='width:33%'>"
+        "<col style='width:33%'><col style='width:11%'></colgroup>"
+        "<thead><tr><th class='txt'>Severity</th><th class='num'>Chainage</th><th class='txt'>Issue</th>"
+        "<th class='txt'>Recommendation</th><th class='txt'>Reference</th></tr></thead>"
         f"<tbody>{''.join(body)}</tbody></table></div>"
     )
     return "".join(parts)

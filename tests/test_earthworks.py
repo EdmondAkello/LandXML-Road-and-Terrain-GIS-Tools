@@ -438,7 +438,7 @@ class DesignReportTests(unittest.TestCase):
         for heading in ("Plan", "Curvature diagram", "Gradient diagram", "Horizontal elements", "Vertical controls"):
             self.assertIn(heading, html_text)
         self.assertIn("R10", html_text)
-        self.assertIn("<td>1</td>", html_text)
+        self.assertIn("<td class='txt'>1</td>", html_text)
 
 
 from landxml_plugin.landxml.criteria import list_standards, load_criteria

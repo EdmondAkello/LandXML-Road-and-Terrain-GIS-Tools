@@ -3,7 +3,7 @@ name=LandXML Road & Terrain GIS Tools
 qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
 description=Civil 3D, OpenRoads and generic LandXML in QGIS: terrain, road geometry, profile and cross-section viewers, earthworks quantities, design reports and a geometric design review (alignment phasing, sight distance, barriers) against Kenya RDM 1.3 or AASHTO.
-version=1.8.0
+version=1.8.1
 author=Edmond Akello
 email=francenicklaus@gmail.com
 about=Brings LandXML road and terrain data into QGIS and turns it into review-ready reports.
@@ -20,7 +20,11 @@ about=Brings LandXML road and terrain data into QGIS and turns it into review-re
 repository=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 tracker=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/issues
 homepage=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
-changelog=1.8.0
+changelog=1.8.1
+    - Reports print cleanly to PDF: page numbers, no empty pages, headings kept with charts, legend colours kept, tables split across pages with repeated headers.
+    - Review findings grouped by category with wider issue and recommendation columns; the Road Design Report opens with a table of its alignments.
+    - Design speed card lists only the speeds that apply within each alignment.
+    1.8.0
     - Geometric Design Review: alignment phasing, sight distance, vertical and horizontal curves, grades, superelevation, design speed changes and barrier warrants, with Kenya RDM 1.3 (2025) or AASHTO 2018 criteria.
     - Recommended PVIs and curve lengths exported for Civil 3D (Create Profile from File text and LandXML).
     - Design speeds from Civil 3D speed stations are followed section by section.

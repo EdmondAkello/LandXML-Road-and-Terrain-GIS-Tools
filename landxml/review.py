@@ -445,8 +445,8 @@ class Review:
                 nearest[key] = distance
                 self.add("Design speed", "Medium", group["start"], group["end"],
                          f"Sharp curve R{group['radius']:,.0f} close to a speed reduction ({high:g} → {min(va, vb):g} km/h)",
-                         f"The curve is {distance:.0f} m from the speed change, within the {reach:g} m drivers need to slow; "
-                         f"R{group['radius']:,.0f} is below the {high:g} km/h minimum ({rmin_high:.0f} m).",
+                         (f"The curve is {distance:.0f} m from the speed change, within the {reach:g} m drivers need to slow; " if distance > 0.5 else "The curve spans the speed change, so drivers enter it at the higher speed; ")
+                         + f"R{group['radius']:,.0f} is below the {high:g} km/h minimum ({rmin_high:.0f} m).",
                          c.ref("speed_change"),
                          f"Move the speed change at least {reach:g} m before the curve, add an intermediate speed section, "
                          f"or increase the radius to ≥ {round_up(rmin_high):.0f} m.",

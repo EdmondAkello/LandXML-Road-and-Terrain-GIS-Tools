@@ -288,6 +288,18 @@ def _fmt_radius(value):
     return "∞" if value is None else f"{value:,.1f}"
 
 
+def applicable_speeds(speeds, elements):
+    """Distinct design speeds that apply within the alignment's chainage range."""
+    if not speeds:
+        return []
+    if not elements:
+        return sorted({speed for _s, speed in speeds})
+    from .review import SpeedProfile
+
+    profile = SpeedProfile(speeds)
+    return sorted({speed for _a, _b, speed in profile.sections(elements[0]["start"], elements[-1]["end"])})
+
+
 def alignment_section(item, unit, normal_crown, strip=0.0):
     """HTML for one alignment. ``item`` keys: name, alignment, elements,
     controls, profile_name, runs, transitions, ground_name, speeds,
@@ -300,7 +312,7 @@ def alignment_section(item, unit, normal_crown, strip=0.0):
     crests = [c["k_value"] for c in controls if c.get("curve_type") == "crest" and c.get("k_value")]
     sags = [c["k_value"] for c in controls if c.get("curve_type") == "sag" and c.get("k_value")]
     length = elements[-1]["end"] - elements[0]["start"] if elements else 0.0
-    speeds = sorted({speed for _s, speed in item["speeds"]})
+    speeds = applicable_speeds(item["speeds"], elements)
     cards = [
         ("Length", f"{length:,.1f} {unit or ''}".strip()),
         ("Chainage", f"{station_label(elements[0]['start'], unit)} – {station_label(elements[-1]['end'], unit)}" if elements else "–"),
@@ -468,11 +480,7 @@ def alignment_section(item, unit, normal_crown, strip=0.0):
     return "".join(parts)
 
 
-PRINT_STYLE = (
-    "<style>h3{font-size:15px;margin:22px 0 6px}"
-    "@media print{.scroll{max-height:none;overflow:visible}section.alignment{break-before:page}"
-    "svg,table{break-inside:avoid}body{margin:0}}</style>"
-)
+PRINT_STYLE = "<style>@media print{section.alignment+section.alignment{break-before:page}}</style>"
 
 
 def clip_runs(runs, low, high):
@@ -482,10 +490,30 @@ def clip_runs(runs, low, high):
 
 
 def design_report_html(items, unit, title, source_file, normal_crown=2.5, strip=0.0):
+    rows = []
+    for item in items:
+        elements = item["elements"]
+        speeds = applicable_speeds(item["speeds"], elements)
+        review = item.get("review")
+        counts = "–"
+        if review:
+            findings = review[0]["findings"]
+            counts = " / ".join(str(sum(1 for f in findings if f["severity"] == s)) for s in ("High", "Medium", "Low"))
+        rows.append(
+            (
+                item["name"],
+                station_label(elements[0]["start"], unit) if elements else "–",
+                station_label(elements[-1]["end"], unit) if elements else "–",
+                (elements[-1]["end"] - elements[0]["start"]) if elements else None,
+                " / ".join(f"{v:g}" for v in speeds) if speeds else "–",
+                counts,
+            )
+        )
     body = [
         PRINT_STYLE,
-        f"<p class='meta'>Source: {html.escape(source_file)} · {len(items)} alignment(s). "
-        "Print this page to PDF for a paginated report.</p>",
+        f"<p class='meta'>Source: {html.escape(source_file)} · {len(items)} alignment(s)</p>",
+        "<h2>Alignments in this report</h2>",
+        _table(["Alignment", "Start", "End", "Length", "Design speed km/h", "Findings H / M / L"], rows, 1),
     ]
     body += [alignment_section(item, unit, normal_crown, strip) for item in items]
     return _document(title or "Road design report", "".join(body))

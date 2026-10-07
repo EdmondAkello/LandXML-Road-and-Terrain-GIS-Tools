@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.1 — unreleased
+
+### Changed
+- **Printable reports.** All HTML reports now print to PDF from Chrome or Edge with A4 page layout, the report title and page numbers in the footer, chart colours and legend swatches kept, headings kept with their charts, and long tables split across pages with repeated headers. Previously, long tables were moved whole to the next page, leaving blank pages (a 4-alignment design report went from 89 to 54 pages), and the first page held only the title.
+- Tables align numbers and chainages right and text left.
+- Review findings are grouped by category, with severity, code and chainage range in compact columns and wider issue and recommendation columns.
+- The Road Design Report opens with a table of its alignments (chainage, length, design speeds, findings).
+- User guide: where to find the Profile Viewer (Plugins menu and toolbar, not the Processing Toolbox) and how to save reports as PDF.
+
+### Fixed
+- The design-speed card listed speeds recorded beyond the end of an alignment.
+- A curve that spans a speed change is described as such instead of "0 m from the speed change".
+
 ## 1.8.0 — unreleased
 
 ### Fixed
