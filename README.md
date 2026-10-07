@@ -2,7 +2,11 @@
 
 A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Originally created by **Edmond Akello** under GPL-2.0-or-later; the original attribution and license remain in place.
 
+The **[User Guide and Technical Manual](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.8.0_User_Guide.pdf)** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. Its source and figure scripts are in `docs/user-guide` and `tools/guide`.
+
 ## Compatibility and validation
+
+- **Version 1.8.0 (QGIS 3.44):** 89 tests pass on Linux QGIS 3.44.14. The release ZIP built by `tools/build_release.py` passes the plugins.qgis.org upload validator checks and security scan (Bandit with the repository's enabled rules, detect-secrets, flake8), and was installed from the ZIP and loaded, run and unloaded through QGIS's plugin loader. The design review ran on six private Civil 3D exports under both standards.
 
 - **Version 1.7.0 (QGIS 3.44):** 72 tests pass on Linux QGIS 3.44.14, including the new cross-section sheets, design report, name catalog and dropdown sources. The dropdown widget was also exercised in a real QGIS Processing dialog, and every new tool ran on the six private Civil 3D exports. Desktop QGIS 4 checks remain outstanding.
 - **Version 1.6.0 (QGIS 3.44):** the 60-test suite — parser, earthworks engine, headless Processing and offscreen profile-viewer GUI — passes on Linux QGIS 3.44.14 (conda-forge build). Six private Civil 3D 2022–2026 exports (alignments, design and existing-ground profiles, corridor sections, TIN surfaces and volume surfaces; project names withheld) were run through every tool; see [the earthworks validation notes](docs/earthworks-validation.md). Two TIN-difference results reproduce the volumes Civil 3D recorded in the same files to within 0.1 m³. The profile chart widget was also exercised under PyQt6 6.11 (the Qt binding used by QGIS 4), and every Qt enum used by the new GUI code resolves in PyQt6; a QGIS 4 runtime was not available for 1.6.0, so desktop QGIS 4 checks remain outstanding.
@@ -158,17 +162,18 @@ Current limits: the design review encodes only the tables listed above; the supe
 
 ## Install the development plugin
 
-In QGIS, choose **Settings → User Profiles → Open Active Profile Folder**. Inside that folder, open `python/plugins` (create those directories if needed) and place this repository checkout there as a directory named `landxml_road_terrain`. A symbolic link to a checkout elsewhere also works. Restart QGIS, enable **LandXML Road & Terrain GIS Tools** in **Plugins → Manage and Install Plugins → Installed**, then search the **Processing Toolbox** for **Inspect LandXML**. QGIS supplies NumPy and GDAL/OGR; this plugin has no separately installed Python dependency.
+In QGIS, choose **Settings → User Profiles → Open Active Profile Folder**. Inside that folder, open `python/plugins` (create those directories if needed) and place this repository checkout there as a directory named `landxml_tin_to_geotiff` (the plugin's permanent folder name; a different name installs a second copy). A symbolic link to a checkout elsewhere also works. Restart QGIS, enable **LandXML Road & Terrain GIS Tools** in **Plugins → Manage and Install Plugins → Installed**, then search the **Processing Toolbox** for **Inspect LandXML**. QGIS supplies NumPy and GDAL/OGR; this plugin has no separately installed Python dependency.
 
-### Package a ZIP for testing
+### Package a ZIP for testing or release
 
-From the repository root, run this in PowerShell:
+From the repository root:
 
-```powershell
-git archive --format=zip --prefix=landxml_road_terrain/ -o landxml_road_terrain-test.zip HEAD
+```
+pip install bandit detect-secrets flake8
+python tools/build_release.py
 ```
 
-The ZIP has the required `landxml_road_terrain` top-level folder. `git archive` packages committed files, so commit any changes you want to test first. In QGIS, choose **Plugins → Manage and Install Plugins → Install from ZIP**, select `landxml_road_terrain-test.zip`, and enable **LandXML Road & Terrain GIS Tools**. Search the **Processing Toolbox** for **Inspect LandXML** to confirm it loaded.
+This writes `dist/landxml_tin_to_geotiff-<version>.zip` from committed files (the plugin runtime only; tests and developer documents are left out) and runs the checks plugins.qgis.org applies on upload: the package layout, forbidden and hidden files, required metadata, LICENSE, executable permissions, Bandit with the repository's enabled rules, detect-secrets and flake8. In QGIS, choose **Plugins → Manage and Install Plugins → Install from ZIP**, select the ZIP, and enable **LandXML Road & Terrain GIS Tools**. Search the **Processing Toolbox** for **Inspect LandXML** to confirm it loaded.
 
 ## Test and manual check
 

@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LandXML Road &amp; Terrain GIS Tools 1.8 — User Guide and Technical Manual</title>
+<style>
+:root {
+  --ink: #1d2330; --muted: #5b6575; --line: #d9dee7; --soft: #f4f6f9;
+  --navy: #1f2a44; --accent: #1f6f8b; --accent-soft: #e6f1f5;
+  --high: #c0392b; --medium: #d9822b; --low: #b7950b; --fill: #3a9e5f; --cut: #d9822b;
+}
+@page { size: A4; margin: 20mm 17mm 20mm 17mm; }
+@page cover { margin: 0; }
+* { box-sizing: border-box; }
+html { font-family: Inter, "Liberation Sans", sans-serif; font-size: 9.6pt; color: var(--ink); line-height: 1.5; }
+body { margin: 0; }
+h1, h2, h3, h4 { font-family: "Inter Display", Inter, sans-serif; color: var(--navy); line-height: 1.2; }
+h1.part { page-break-before: always; font-size: 26pt; margin: 0 0 4mm; padding-top: 30mm; letter-spacing: -0.01em; }
+h1.part .num { display: block; font-size: 10pt; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); margin-bottom: 3mm; }
+p.part-intro { font-size: 11pt; color: var(--muted); max-width: 140mm; margin-bottom: 10mm; }
+h2 { font-size: 15pt; margin: 9mm 0 3mm; padding-bottom: 1.5mm; border-bottom: 1.5px solid var(--navy); page-break-after: avoid; }
+h2 .sec { color: var(--accent); margin-right: 3mm; }
+h3 { font-size: 11pt; margin: 6mm 0 2mm; page-break-after: avoid; }
+h4 { font-size: 9.8pt; margin: 4mm 0 1.5mm; page-break-after: avoid; }
+p { margin: 0 0 2.6mm; }
+ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+li { margin-bottom: 1mm; }
+code, .mono { font-family: "DejaVu Sans Mono", monospace; font-size: 8.4pt; background: var(--soft); padding: 0 1mm; border-radius: 1mm; }
+pre { font-family: "DejaVu Sans Mono", monospace; font-size: 8.2pt; background: var(--soft); border: 1px solid var(--line); border-radius: 2mm; padding: 3mm 4mm; white-space: pre-wrap; page-break-inside: avoid; }
+table { width: 100%; border-collapse: collapse; margin: 2mm 0 4mm; font-size: 8.6pt; page-break-inside: auto; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; }
+th { text-align: left; background: var(--navy); color: white; font-weight: 600; padding: 1.6mm 2.2mm; }
+td { padding: 1.5mm 2.2mm; border-bottom: 1px solid var(--line); vertical-align: top; }
+tbody tr:nth-child(even) td { background: #fafbfc; }
+td.num, th.num { text-align: right; white-space: nowrap; }
+td.code { font-weight: 700; color: var(--accent); white-space: nowrap; }
+figure { margin: 3mm 0 5mm; page-break-inside: avoid; }
+figure img { width: 100%; border: 1px solid var(--line); border-radius: 1.5mm; display: block; }
+figure.half img { width: 70%; margin: 0 auto; }
+figcaption { font-size: 8.3pt; color: var(--muted); margin-top: 1.5mm; }
+figcaption b { color: var(--ink); }
+.note, .tip, .warn { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 2.5mm 4mm; margin: 3mm 0 4mm; border-radius: 0 1.5mm 1.5mm 0; page-break-inside: avoid; }
+.tip { border-color: var(--fill); background: #e9f5ee; }
+.warn { border-color: var(--high); background: #fbeceb; }
+.note b:first-child, .tip b:first-child, .warn b:first-child { display: block; font-size: 8pt; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.8mm; }
+.steps { counter-reset: step; list-style: none; padding-left: 0; }
+.steps > li { counter-increment: step; position: relative; padding-left: 9mm; margin-bottom: 2mm; }
+.steps > li::before { content: counter(step); position: absolute; left: 0; top: 0.2mm; width: 5.6mm; height: 5.6mm; border-radius: 50%; background: var(--navy); color: white; font-size: 8pt; font-weight: 700; text-align: center; line-height: 5.6mm; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; }
+.card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; margin: 3mm 0 5mm; }
+.card { border: 1px solid var(--line); border-radius: 2mm; padding: 3mm; page-break-inside: avoid; }
+.card h4 { margin: 0 0 1mm; color: var(--accent); }
+.card p { margin: 0; font-size: 8.6pt; color: var(--muted); }
+.kbd { font-weight: 600; }
+.sev { display: inline-block; padding: 0 2mm; border-radius: 1mm; color: white; font-size: 7.8pt; font-weight: 700; }
+.sev.h { background: var(--high); } .sev.m { background: var(--medium); } .sev.l { background: var(--low); }
+.keep { page-break-inside: avoid; }
+.pb { page-break-before: always; }
+
+/* cover */
+.cover { page: cover; height: 297mm; width: 210mm; position: relative; overflow: hidden; background: var(--navy); color: white; }
+.cover .hero { position: absolute; top: 0; left: 0; right: 0; height: 170mm; background: url(figures/fig_map.png) center 42% / cover no-repeat; }
+.cover .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(31,42,68,0) 35%, rgba(31,42,68,0.85) 70%, rgba(31,42,68,1) 88%); }
+.cover .text { position: absolute; left: 20mm; right: 20mm; top: 150mm; }
+.cover .kicker { font-size: 10pt; letter-spacing: 0.22em; text-transform: uppercase; color: #9fd3e3; margin-bottom: 5mm; }
+.cover h1 { color: white; font-size: 34pt; margin: 0 0 4mm; letter-spacing: -0.015em; }
+.cover .sub { font-size: 15pt; color: #d6deea; margin-bottom: 14mm; }
+.cover .meta { display: grid; grid-template-columns: 38mm 1fr; row-gap: 1.6mm; font-size: 9.5pt; color: #d6deea; }
+.cover .meta b { color: white; font-weight: 600; }
+.cover .foot { position: absolute; left: 20mm; right: 20mm; bottom: 14mm; font-size: 8pt; color: #9aa7bd; border-top: 1px solid #3a4766; padding-top: 3mm; }
+
+/* contents */
+.toc { columns: 2; column-gap: 10mm; font-size: 9pt; }
+.toc .part-title { font-weight: 700; color: var(--accent); margin: 3mm 0 1mm; break-after: avoid; text-transform: uppercase; font-size: 8pt; letter-spacing: 0.1em; }
+.toc a { color: var(--ink); text-decoration: none; display: block; padding: 0.6mm 0; }
+.toc a span { color: var(--accent); display: inline-block; width: 8mm; font-weight: 600; }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- ============================== COVER ============================== -->
+<section class="cover">
+  <div class="hero"></div>
+  <div class="text">
+    <div class="kicker">QGIS plugin · Version 1.8.0</div>
+    <h1>LandXML Road &amp; Terrain GIS Tools</h1>
+    <div class="sub">User Guide and Technical Manual</div>
+    <div class="meta">
+      <b>Author</b><span>Edmond Akello</span>
+      <b>Contact</b><span>francenicklaus@gmail.com</span>
+      <b>Repository</b><span>github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools</span>
+      <b>QGIS</b><span>3.44 to 4.x (Qt5 and Qt6 builds)</span>
+      <b>Licence</b><span>GNU General Public License v2 or later</span>
+      <b>Edition</b><span>October 2026</span>
+    </div>
+  </div>
+  <div class="foot">All figures in this guide were produced by the plugin from a synthetic demonstration road with invented names, coordinates and terrain. No project data is shown.</div>
+</section>
+
+<!-- ============================== CONTENTS ============================== -->
+<h2 style="margin-top:0">Contents</h2>
+<div class="toc">
+  <div class="part-title">About this guide</div>
+  <a href="#new"><span>0</span>What is new since 1.4</a>
+  <div class="part-title">Part A — Getting started</div>
+  <a href="#overview"><span>1</span>Overview</a>
+  <a href="#install"><span>2</span>Installing and updating</a>
+  <a href="#export"><span>3</span>Preparing the LandXML export</a>
+  <a href="#coords"><span>4</span>Coordinates, axis order and units</a>
+  <a href="#inspect"><span>5</span>Inspect LandXML first</a>
+  <a href="#names"><span>6</span>Choosing surfaces, alignments and profiles</a>
+  <div class="part-title">Part B — Converting data to GIS</div>
+  <a href="#complete"><span>7</span>Complete Road Design to GeoPackage</a>
+  <a href="#terrain"><span>8</span>Terrain: TIN to GeoTIFF and boundaries</a>
+  <a href="#alignments"><span>9</span>Alignments, stations and 3D centrelines</a>
+  <a href="#profiles"><span>10</span>Profiles, labels and map overlays</a>
+  <a href="#sections"><span>11</span>Cross-sections, breaklines and feature lines</a>
+  <div class="part-title">Part C — Viewing, quantities and reports</div>
+  <a href="#viewer"><span>12</span>Profile Viewer</a>
+  <a href="#cutfill"><span>13</span>Profile Cut/Fill Analysis</a>
+  <a href="#corridor"><span>14</span>Corridor Section Quantities</a>
+  <a href="#tin-diff"><span>15</span>Surface Cut/Fill (TIN difference)</a>
+  <a href="#sheets"><span>16</span>Cross-Section Sheets and Report</a>
+  <a href="#report"><span>17</span>Road Design Report</a>
+  <div class="part-title">Part D — Geometric design review</div>
+  <a href="#review"><span>18</span>What the review does</a>
+  <a href="#review-run"><span>19</span>Running a review</a>
+  <a href="#speed"><span>20</span>Design speed and speed changes</a>
+  <a href="#checks"><span>21</span>Checks and finding codes</a>
+  <a href="#phasing"><span>22</span>Alignment phasing and recommended PVIs</a>
+  <a href="#barriers"><span>23</span>Safety barriers and sight on curves</a>
+  <a href="#roundtrip"><span>24</span>Taking recommendations back to Civil 3D</a>
+  <a href="#criteria"><span>25</span>Design standards and custom criteria</a>
+  <div class="part-title">Part E — Technical reference</div>
+  <a href="#methods"><span>26</span>Computation methods</a>
+  <a href="#fields"><span>27</span>Output layers and fields</a>
+  <a href="#supported"><span>28</span>Supported LandXML content and limits</a>
+  <a href="#validation"><span>29</span>Validation</a>
+  <a href="#qc"><span>30</span>Quality-control checklist</a>
+  <a href="#trouble"><span>31</span>Troubleshooting</a>
+  <a href="#appendix"><span>A</span>Criteria tables</a>
+</div>
+
+<h2 id="new"><span class="sec">0</span>What is new since 1.4</h2>
+<p>The 1.4 guide covered conversion of LandXML to GIS layers. Versions 1.5 to 1.8 turn the plugin into a review and reporting tool for road designs:</p>
+<div class="card-grid">
+  <div class="card"><h4>1.5 · QGIS 4 and inspection</h4><p>QGIS 4 support, Inspect LandXML, explicit units and CRS handling, OpenRoads Designer terrain and breaklines, profile labels and map overlays.</p></div>
+  <div class="card"><h4>1.6 · Viewer and earthworks</h4><p>Profile Viewer dock (click a road to see existing vs design), profile, corridor and TIN cut/fill quantities, mass haul and side-slope areas for grassing.</p></div>
+  <div class="card"><h4>1.7 · Reporting</h4><p>Name dropdowns and automatic surface choice, cross-section sheets (PDF/HTML/PNG), cross-sections in the viewer, and the Road Design Report.</p></div>
+  <div class="card"><h4>1.8 · Design review</h4><p>Geometric Design Review against Kenya RDM 1.3 (2025) or AASHTO 2018: phasing, sight distance, curves, grades, superelevation, design speed changes and barrier warrants.</p></div>
+  <div class="card"><h4>1.8 · Back to Civil 3D</h4><p>Recommended PVIs and curve lengths written as a Civil 3D "Create Profile from File" text file and as LandXML.</p></div>
+  <div class="card"><h4>Fixes</h4><p>Correct placement of station-relative cross-sections, hidden TIN triangles excluded, true arc-length stationing on curves and spirals.</p></div>
+</div>
+
+<!-- ============================== PART A ============================== -->
+<h1 class="part"><span class="num">Part A</span>Getting started</h1>
+<p class="part-intro">Install the plugin, export a suitable LandXML file from the design software, decide how its coordinates map to your GIS, and check the file before converting anything.</p>
+
+<h2 id="overview"><span class="sec">1</span>Overview</h2>
+<p>LandXML Road &amp; Terrain GIS Tools is a QGIS Processing provider with a dockable profile viewer. It reads LandXML 1.0–1.2 exported by Autodesk Civil 3D, Bentley OpenRoads Designer and other design packages, and turns terrain and road design data into GIS layers, quantities, drawings and design-review reports. It needs no Python packages beyond those QGIS ships (NumPy, GDAL/OGR), and it never edits the source file.</p>
+<figure>
+  <img src="figures/fig_map.png" alt="Map of the demo road">
+  <figcaption><b>Figure 1.</b> The demonstration road in QGIS: DEM and 5 m contours from the TIN, alignment and 200 m stations from Complete Road Design, corridor section lines, and design-review findings coloured by severity (red high, orange medium, yellow low) and labelled with their codes.</figcaption>
+</figure>
+<table>
+  <thead><tr><th style="width:24%">Toolbox group</th><th>Tools</th></tr></thead>
+  <tbody>
+    <tr><td>Utilities</td><td>Inspect LandXML · Road Design Report</td></tr>
+    <tr><td>Terrain conversion</td><td>LandXML TIN to GeoTIFF</td></tr>
+    <tr><td>Vector extraction</td><td>Extract LandXML Alignments to Lines</td></tr>
+    <tr><td>Road design extraction</td><td>Extract LandXML Profiles · Create 3D Road Centerlines · Extract LandXML Cross-Sections · Create Alignment Station Points · Export Complete Road Design to GeoPackage</td></tr>
+    <tr><td>Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
+    <tr><td>Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference) · Cross-Section Sheets and Report</td></tr>
+    <tr><td>Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
+    <tr><td>Outside the Toolbox</td><td>LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
+  </tbody>
+</table>
+<h3>A typical workflow</h3>
+<ol class="steps">
+  <li><b>Export</b> the LandXML from the design software with surfaces, alignments, profiles, sample-line cross-sections and design speeds (section 3).</li>
+  <li><b>Inspect</b> the file to see what it contains and to settle units and axis order (section 5).</li>
+  <li><b>Convert</b> with Complete Road Design to get a GeoPackage, DEM and contours, and check placement against survey control (section 7).</li>
+  <li><b>View and quantify:</b> open the Profile Viewer on the road, run the earthworks tools and plot the cross-sections (Part C).</li>
+  <li><b>Review</b> the geometry against your design standard and take the recommended changes back to the design software (Part D).</li>
+  <li><b>Report:</b> combine the Road Design Report, review report, section sheets and maps into the project report.</li>
+</ol>
+
+<h2 id="install"><span class="sec">2</span>Installing and updating</h2>
+<h3>From the QGIS plugin repository</h3>
+<ol class="steps">
+  <li>Open <span class="kbd">Plugins → Manage and Install Plugins…</span></li>
+  <li>Search for <b>LandXML Road &amp; Terrain GIS Tools</b> and press <span class="kbd">Install</span> (or <span class="kbd">Upgrade</span>).</li>
+  <li>Open <span class="kbd">Processing → Toolbox</span> and expand <b>LandXML Road &amp; Terrain GIS Tools</b>. The Profile Viewer button appears on the Plugins toolbar.</li>
+</ol>
+<h3>From a ZIP file</h3>
+<p>Use <span class="kbd">Plugins → Manage and Install Plugins → Install from ZIP</span>. The ZIP contains one folder, <code>landxml_tin_to_geotiff</code>. This is the plugin's permanent folder name, kept since 1.4 so that new versions replace old ones; installing a copy under a different folder name gives two plugins side by side.</p>
+<div class="note"><b>Requirements</b>QGIS 3.44 or later, including QGIS 4 (Qt6). Metric and imperial files are both read; the design review and earthworks reports assume metric data.</div>
+
+<h2 id="export"><span class="sec">3</span>Preparing the LandXML export</h2>
+<p>The plugin can only use what the export contains. Decide what you need before exporting, and keep one export per review so results can be traced.</p>
+<table>
+  <thead><tr><th style="width:26%">To use</th><th>Include in the export</th></tr></thead>
+  <tbody>
+    <tr><td>Terrain, DEM, contours, TIN difference</td><td>Surfaces (TIN). Civil 3D marks triangles hidden by a surface boundary as invisible; the plugin excludes them.</td></tr>
+    <tr><td>Alignments, stations, 3D centrelines</td><td>Alignments with their geometry (lines, curves, clothoid spirals).</td></tr>
+    <tr><td>Profiles, Profile Viewer, cut/fill</td><td>The design profile (layout profile) and the existing-ground surface profile of each alignment.</td></tr>
+    <tr><td>Corridor quantities, section sheets, barrier and sight checks</td><td>Sample-line cross-sections with the existing-ground and corridor surfaces sampled, and the corridor shapes and links (pavement layers, Datum). Enable cross-section export in the LandXML export settings.</td></tr>
+    <tr><td>Design review by speed</td><td>Design speeds: in Civil 3D set them in <span class="kbd">Alignment Properties → Design Criteria</span> (speed stations) <i>before</i> exporting. They are written as <code>SpeedStation</code> features.</td></tr>
+    <tr><td>Superelevation diagram and checks</td><td>Alignment superelevation (Civil 3D writes transition stations and full rates).</td></tr>
+  </tbody>
+</table>
+<p>In Civil 3D the command is <span class="kbd">Output → Export to LandXML</span>; in OpenRoads Designer use the LandXML export. The plugin does not read DWG or DGN files.</p>
+<div class="tip"><b>Tip</b>Large corridor exports are fine: the plugin has been run on 75 MB files with thousands of cross-sections. Name dropdowns scan a file in under half a second.</div>
+
+<h2 id="coords"><span class="sec">4</span>Coordinates, axis order and units</h2>
+<p>Coordinate handling is explicit in every tool that writes map geometry. The plugin never guesses a CRS or transformation; a CRS declared in the LandXML is shown for reference only.</p>
+<table>
+  <thead><tr><th style="width:28%">Coordinate interpretation</th><th>Use when</th></tr></thead>
+  <tbody>
+    <tr><td>Use stored coordinates</td><td>The stored values are already easting, northing in the output CRS.</td></tr>
+    <tr><td>Swap X / Y</td><td>The file stores northing first. <b>Civil 3D does this</b>, so most Civil 3D exports need this option.</td></tr>
+    <tr><td>Apply X / Y offset</td><td>A known translation (for example a false origin) must be added.</td></tr>
+    <tr><td>Swap X / Y + offset</td><td>Both of the above.</td></tr>
+    <tr><td>2-D Helmert (similarity)</td><td>A known translation, rotation and scale relate the design grid to the map grid.</td></tr>
+    <tr><td>Reproject from source CRS</td><td>The stored coordinates are valid in a known CRS that differs from the output CRS. You must select the source CRS.</td></tr>
+  </tbody>
+</table>
+<p><b>Output CRS</b> is always chosen by you. Use the same interpretation and CRS for every layer of a project, and check one feature against known survey control before converting a whole design.</p>
+<p><b>Units.</b> Metres, international feet and US survey feet are kept distinct. When a file declares a horizontal unit, the output CRS must use the same unit or the tool stops. Vertical units are never inferred from horizontal ones; if the file does not declare them, the log says so.</p>
+
+<h2 id="inspect"><span class="sec">5</span>Inspect LandXML first</h2>
+<p><b>Inspect LandXML</b> (Utilities) reads the file without converting anything and reports: the producing software and version, horizontal and vertical units, declared CRS, an axis-order warning, surfaces with point and face counts, alignments, design and surface profiles, cross-sections, breaklines, feature lines, coordinate bounds, the elevation range and any warnings. It can save the report as JSON for the project record.</p>
+<p>Use it to confirm that the file holds what you expect (for example that cross-sections are present before running corridor tools) and to decide on the coordinate interpretation.</p>
+
+<h2 id="names"><span class="sec">6</span>Choosing surfaces, alignments and profiles</h2>
+<p>Every name field is an editable dropdown filled from the chosen file and refreshed when the file changes. You can also type: matching ignores case and accepts a unique part of a name, so <code>eg</code> finds <code>EG</code> and <code>ogl</code> finds <code>OGL-LOT_REV 0</code>. An unknown name is reported with the list of names available.</p>
+<p>Leave surface names blank to let the tool decide from evidence in the file; the choice is written to the log:</p>
+<ul>
+  <li>Existing ground is the surface named inside an existing-ground <code>ProfSurf</code>.</li>
+  <li>The design surface is a corridor surface listed by a <code>Roadway</code>, preferring the datum (bottom) surface for earthworks.</li>
+  <li>Surface Cut/Fill first uses a Civil 3D volume-surface pair (<code>SurfVolume</code>) if the file records one.</li>
+</ul>
+
+<!-- ============================== PART B ============================== -->
+<h1 class="part"><span class="num">Part B</span>Converting data to GIS</h1>
+<p class="part-intro">Turn terrain, alignments, profiles and sections into GeoPackage, GeoTIFF and 3D vector layers for mapping and analysis.</p>
+
+<h2 id="complete"><span class="sec">7</span>Complete Road Design to GeoPackage</h2>
+<p>For a first import, run <b>Export Complete Road Design to GeoPackage</b>. In one pass it writes an engineering GeoPackage and, optionally, a DEM and contours.</p>
+<table>
+  <thead><tr><th style="width:34%">Parameter</th><th class="num" style="width:16%">Default</th><th>Guidance</th></tr></thead>
+  <tbody>
+    <tr><td>Coordinate interpretation, Output CRS</td><td class="num">—</td><td>As verified in section 4.</td></tr>
+    <tr><td>Alignment / TIN surface</td><td class="num">blank = all</td><td>Pick from the dropdowns to limit the export.</td></tr>
+    <tr><td>DEM resolution</td><td class="num">5</td><td>Pixel size in map units. Finer cells do not add detail missing from the TIN.</td></tr>
+    <tr><td>Contour interval</td><td class="num">5</td><td>0 skips contours.</td></tr>
+    <tr><td>Alignment segment length</td><td class="num">5</td><td>Densification of curves and spirals.</td></tr>
+    <tr><td>Station interval</td><td class="num">20</td><td>Station points at whole multiples of the interval.</td></tr>
+    <tr><td>Profile interval</td><td class="num">5</td><td>Sampling of profile graph lines.</td></tr>
+    <tr><td>Include … toggles</td><td class="num">on</td><td>Turn off layers you do not need.</td></tr>
+  </tbody>
+</table>
+<table>
+  <thead><tr><th style="width:24%">Layer</th><th>Contents</th></tr></thead>
+  <tbody>
+    <tr><td><code>alignments</code></td><td>One line per alignment with length and start/end stations.</td></tr>
+    <tr><td><code>alignment_elements</code></td><td>Each line, curve and spiral with direction, radius, curve and spiral length.</td></tr>
+    <tr><td><code>centerlines_3d</code></td><td>3D centreline over the range covered by the design profile.</td></tr>
+    <tr><td><code>profiles</code>, <code>profile_controls</code></td><td>Profile graph lines and VPI/VPC/VPT controls in station/elevation graph coordinates (no map CRS).</td></tr>
+    <tr><td><code>station_points</code></td><td>Points with station and bearing.</td></tr>
+    <tr><td><code>cross_sections</code></td><td>Section lines (3D) for every sampled surface, placed along the alignment.</td></tr>
+    <tr><td><code>feature_lines</code>, <code>breaklines</code></td><td>Design linework with source names, codes and IDs.</td></tr>
+    <tr><td><code>surface_boundary</code></td><td>Outer edges of each TIN.</td></tr>
+    <tr><td><code>*_DEM.tif</code>, <code>*_Contours.gpkg</code></td><td>Float32 DEM and contour lines (optional).</td></tr>
+  </tbody>
+</table>
+<div class="warn"><b>Existing files</b>The tool refuses to overwrite an existing GeoPackage. Choose a new output folder for each run.</div>
+
+<h2 id="terrain"><span class="sec">8</span>Terrain: TIN to GeoTIFF and boundaries</h2>
+<p><b>LandXML TIN to GeoTIFF</b> rasterizes one TIN surface by linear interpolation inside each triangle. Choose the surface, the pixel size and a NoData value outside the elevation range. Triangles flagged invisible (<code>i="1"</code>, written by Civil 3D for triangles hidden by a boundary) are left as NoData, so the raster follows the surface boundary instead of filling holes and outer concavities.</p>
+<p><b>Extract TIN Surface Boundary</b> writes the outer edges of the visible triangles as lines.</p>
+
+<h2 id="alignments"><span class="sec">9</span>Alignments, stations and 3D centrelines</h2>
+<ul>
+  <li><b>Extract LandXML Alignments to Lines</b> writes plan geometry. Lines, circular curves and explicitly declared clothoid spirals are supported; a segment that does not connect or does not match its declared length is reported and skipped rather than forced into place.</li>
+  <li><b>Create Alignment Station Points</b> places points at whole multiples of the interval (20, 40, 60 …) even when the alignment starts at a fractional station. Stationing uses true arc length along curves and spirals.</li>
+  <li><b>Create 3D Road Centerlines</b> gives the centreline Z from the matching design profile. Where the profile covers only part of the alignment, only that part is written and the omitted range is reported; missing elevations are never set to zero.</li>
+</ul>
+
+<h2 id="profiles"><span class="sec">10</span>Profiles, labels and map overlays</h2>
+<p><b>Extract LandXML Profiles</b> writes profile graph lines and control points (VPI from the file, VPC and VPT computed for each parabolic curve). Labels show the station (<code>0+000.00</code> for metric files), elevation, incoming and outgoing grades and K. A <b>vertical exaggeration</b> scales the plotted Y while the <code>elevation</code> attribute keeps the source value.</p>
+<p>To see the profile next to the road in the map, add the <b>Map profile lines</b> output with the same coordinate interpretation and CRS as the alignment. The profile is drawn beside the alignment at the chosen offset (positive left, negative right). These are schematic graphics, not surveyed features.</p>
+<p>K is the curve length divided by the algebraic difference in grade in percent. Flat curves have no finite K.</p>
+
+<h2 id="sections"><span class="sec">11</span>Cross-sections, breaklines and feature lines</h2>
+<p><b>Extract LandXML Cross-Sections</b> handles both forms found in LandXML:</p>
+<ul>
+  <li><b>Absolute</b> sections (<code>PntList3D</code>) keep their coordinates.</li>
+  <li><b>Station-relative</b> sections (<code>CrossSectSurf/PntList2D</code> offset–elevation pairs, as Civil 3D writes for sample lines) are placed along their alignment as 3D lines, one per sampled surface. Versions before 1.6 placed these at false coordinates.</li>
+</ul>
+<p><b>Extract LandXML Breaklines</b> and <b>Extract LandXML Feature Lines</b> keep the design linework with its source names, descriptions, codes and IDs. OpenRoads breaklines carry codes and IDs but no names; the plugin keeps those without treating IDs as names.</p>
+
+<!-- ============================== PART C ============================== -->
+<h1 class="part"><span class="num">Part C</span>Viewing, quantities and reports</h1>
+<p class="part-intro">Look at the design the way a reviewer does: long-sections and cross-sections on demand, earthworks quantities and report-ready drawings.</p>
+
+<h2 id="viewer"><span class="sec">12</span>Profile Viewer</h2>
+<p>Press <span class="kbd">Pick Alignment Profile on Map</span> and click an alignment, or any layer with an <code>alignment_name</code> or <code>alignment</code> field (station points, cut/fill segments, cross-sections). The dock opens that alignment's existing-ground and design long-section with the clicked chainage marked.</p>
+<figure>
+  <img src="figures/fig_viewer_profile.png" alt="Profile viewer">
+  <figcaption><b>Figure 2.</b> Profile Viewer: existing ground (brown) against design (blue) with fill shaded green and cut orange, VPIs labelled with K, cut↔fill transitions (black dots), the depth panel and the cut/fill segment table with high-fill and deep-cut flags.</figcaption>
+</figure>
+<ul>
+  <li><b>Profiles:</b> the longest existing-ground profile and the first design profile are used by default; any profile can take either role, and <span class="kbd">Other profiles</span> overlays the rest.</li>
+  <li><b>Interaction:</b> hover for chainage, both levels and depth (the map marker follows); wheel to zoom, drag to pan, double-click to fit, click to centre the map.</li>
+  <li><b>Grade tol.</b> treats small depths as on grade so ground noise does not create transitions. <b>Exclude</b> removes structures such as bridges, e.g. <code>1200-1450; 2010-2030</code>.</li>
+  <li><b>Export:</b> PNG, SVG, PDF (A3), clipboard image, station table CSV, segment CSV and an HTML report.</li>
+</ul>
+<figure>
+  <img src="figures/fig_viewer_sections.png" alt="Cross-sections tab">
+  <figcaption><b>Figure 3.</b> The Cross-sections tab follows the profile marker: here an embankment at CH 1+240 with 1:2 slopes, the pavement layers, daylight offsets, FRL and EG levels, and the fill area. ◀ ▶ step through sections; vertical exaggeration and export are on the same row.</figcaption>
+</figure>
+<p>Layers created by the plugin remember their LandXML file in the QGIS project, so clicking them opens the right file. For other layers the viewer asks for the file once.</p>
+
+<h2 id="cutfill"><span class="sec">13</span>Profile Cut/Fill Analysis</h2>
+<p><b>Profile Cut/Fill Analysis (Existing vs Design)</b> compares the design profile with the existing-ground profile. Depth is design − ground (positive fill). Every breakpoint is kept and zero crossings are found exactly.</p>
+<figure>
+  <img src="figures/fig_cutfill_report.png" alt="Cut fill report">
+  <figcaption><b>Figure 4.</b> HTML report of Profile Cut/Fill Analysis: summary, shaded long-section and depth diagram.</figcaption>
+</figure>
+<p>Outputs: a station table at any interval, cut/fill segments with length, maximum and mean depth and <i>high fill</i> / <i>deep cut</i> flags (default 3 m), transition points on the map, and the report. A <b>formation width</b> adds a level-section estimate of volumes and side-slope areas for early design when no corridor sections exist; it ignores cross-fall, pavement depth and ditches.</p>
+
+<h2 id="corridor"><span class="sec">14</span>Corridor Section Quantities</h2>
+<p><b>Corridor Section Quantities</b> works from the station-relative sections exported from sample lines.</p>
+<figure>
+  <img src="figures/fig_quantities_top.png" alt="Corridor quantities">
+  <figcaption><b>Figure 5.</b> Corridor quantities: cut and fill volumes by average end areas, net volume with the cut factor, embankment and cut slope areas for grassing, and volumes of each corridor shape.</figcaption>
+</figure>
+<ul>
+  <li><b>Earthworks:</b> cut and fill areas between ground and design, average-end-area volumes and a mass-haul ordinate with an optional cut-to-fill factor. With <b>Use Datum</b> (default), earthworks are measured to the Datum links (bottom of pavement).</li>
+  <li><b>Materials:</b> volume of every closed corridor shape (asphalt, base, subbase…).</li>
+  <li><b>Side slopes for grassing:</b> sloped areas from the formation hinge to daylight, split into embankment and cut slopes. Segments flatter than 1:10 (shoulders, ditches, berms) are excluded; slopes steeper than 1:1.5 are reported separately as needing stabilisation beyond grassing.</li>
+  <li><b>Map layers:</b> side-slope band polygons per interval and side, and the earthworks footprint between daylight lines.</li>
+</ul>
+<figure>
+  <img src="figures/fig_masshaul.png" alt="Mass haul">
+  <figcaption><b>Figure 6.</b> Mass-haul ordinate (cumulative factored cut − fill). Rising lengths are in surplus, falling lengths in deficit.</figcaption>
+</figure>
+<p>Sections farther apart than the maximum spacing (default 100) and excluded ranges are not integrated; the report lists what was skipped. No curvature correction is applied.</p>
+
+<h2 id="tin-diff"><span class="sec">15</span>Surface Cut/Fill (TIN difference)</h2>
+<p>Grids two TINs on a shared raster and writes compare − base as a GeoTIFF styled orange (cut) to green (fill), with cut, fill and net volumes. Leave both names blank to use a recorded Civil 3D volume-surface pair, or existing ground against the corridor datum surface. When the file contains a <code>SurfVolume</code> for the same pair, the Civil 3D volumes are printed beside the grid result for comparison.</p>
+
+<h2 id="sheets"><span class="sec">16</span>Cross-Section Sheets and Report</h2>
+<p>Plots corridor sections as multi-page PDF sheets (A4, A3 or A1; 1–12 sections per sheet) with a title block and legend, an HTML report with a section table and drawings, and one PNG per section. A station range and interval select what to plot, for example every 50 m between 10000 and 12000.</p>
+<figure>
+  <img src="figures/fig_sheet.png" alt="Section sheet">
+  <figcaption><b>Figure 7.</b> An A3 sheet with 12 sections across a fill-to-cut transition: ground and design, shaded cut and fill, pavement layers, Datum, slope ratios (red when steeper than the stabilisation limit), daylight offsets, FRL/EG levels and areas.</figcaption>
+</figure>
+
+<h2 id="report"><span class="sec">17</span>Road Design Report</h2>
+<p><b>Road Design Report</b> writes one HTML page per file with a section per alignment. Print it to PDF from a browser for a paginated report; each alignment starts on a new page.</p>
+<figure>
+  <img src="figures/fig_report_top.png" alt="Report summary">
+  <figcaption><b>Figure 8.</b> Summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed and maximum superelevation.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_report_plan.png" alt="Plan">
+  <figcaption><b>Figure 9.</b> Schematic plan: lines, curves and spirals in different colours with chainage ticks, north arrow and scale bar. Choose whether the file stores northing first.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_report_curvature.png" alt="Curvature">
+  <figcaption><b>Figure 10.</b> Curvature diagram (1000/R, right positive) with radius labels and spiral transitions.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_report_gradient.png" alt="Gradient">
+  <figcaption><b>Figure 11.</b> Gradient diagram with grade labels and crest/sag curve bands.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_report_superelevation.png" alt="Superelevation">
+  <figcaption><b>Figure 12.</b> Superelevation diagram of both lanes from the transition stations and rates in the file. The normal crown is an input because LandXML does not store it.</figcaption>
+</figure>
+<p>The report also tabulates horizontal elements, vertical controls and superelevation transitions. Long alignments are split into strips (default 5,000 m per row). Select a <b>Design standard</b> to add the geometric design review (Part D) to each alignment.</p>
+
+<!-- ============================== PART D ============================== -->
+<h1 class="part"><span class="num">Part D</span>Geometric design review</h1>
+<p class="part-intro">Check the horizontal and vertical alignment, superelevation and roadside against a design standard, and get computed changes to apply in the design software.</p>
+
+<h2 id="review"><span class="sec">18</span>What the review does</h2>
+<p><b>Geometric Design Review</b> reads the alignment, design profile, existing ground, superelevation, design speeds and corridor sections from the LandXML, applies the tables of the selected standard, and reports each problem with its location, the value found, the value required, the table it comes from and a recommendation. Where a fix is a profile change, it computes new PVI stations, elevations and curve lengths.</p>
+<p>The review is limited to geometric design under the designer's control: alignment, profile, superelevation, side slopes and the design-speed plan. Pavement, drainage, structures, intersections and traffic operations are out of scope.</p>
+<div class="note"><b>A design aid</b>The review flags and quantifies; it does not approve a design. Treat each recommendation as a starting point for the designer and record any Departure from Standards in the usual way.</div>
+
+<h2 id="review-run"><span class="sec">19</span>Running a review</h2>
+<figure class="half">
+  <img src="figures/fig_dialog_review.png" alt="Review dialog">
+  <figcaption><b>Figure 13.</b> The Geometric Design Review dialog with the help panel.</figcaption>
+</figure>
+<table>
+  <thead><tr><th style="width:32%">Parameter</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Design standard</td><td>Kenya RDM 1.3 (2025) (default) or AASHTO 2018. See section 25.</td></tr>
+    <tr><td>Custom criteria file</td><td>A JSON criteria file that overrides the standard.</td></tr>
+    <tr><td>Design speed (0 = from file)</td><td>0 follows the speeds recorded in the file (recommended). A value applies one speed to the whole road.</td></tr>
+    <tr><td>Design speed by chainage</td><td>Overrides the file, e.g. <code>0-5000:60; 5000-:80</code>.</td></tr>
+    <tr><td>Terrain, Road type</td><td>Select the maximum-grade row (flat, rolling, mountainous, escarpment; rural or urban).</td></tr>
+    <tr><td>Maximum superelevation e max</td><td>4, 6 or 8 %; selects the minimum-radius and superelevation tables.</td></tr>
+    <tr><td>Maximum grade override</td><td>Required for AASHTO grade checks (AASHTO limits depend on road class).</td></tr>
+    <tr><td>Apply profile fixes … at most (m)</td><td>Fixes changing any level by more than this are reported but not applied to the recommended profile (default 1 m).</td></tr>
+    <tr><td>Use corridor cross-sections</td><td>Enables barrier warrants and sight distance on curves.</td></tr>
+    <tr><td>Section surfaces</td><td>Ground and design section surfaces (blank = detect).</td></tr>
+    <tr><td>Outputs</td><td>Findings table, findings as map points (needs a CRS), HTML report, recommended profile as Civil 3D text and as LandXML.</td></tr>
+  </tbody>
+</table>
+<figure>
+  <img src="figures/fig_review_summary.png" alt="Review summary">
+  <figcaption><b>Figure 14.</b> Review summary: findings by severity and category, and the number of profile changes applied to the recommended profile.</figcaption>
+</figure>
+<table>
+  <thead><tr><th style="width:16%">Severity</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><span class="sev h">High</span></td><td>Below an absolute minimum or a safety requirement: stopping sight distance, minimum K or radius, barrier warrant, abrupt speed change, hidden curve.</td></tr>
+    <tr><td><span class="sev m">Medium</span></td><td>Below a desirable or standard value, or needing an engineering assessment.</td></tr>
+    <tr><td><span class="sev l">Low</span></td><td>Aesthetic or advisory: appearance of the alignment, preferred values, short sections.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="speed"><span class="sec">20</span>Design speed and speed changes</h2>
+<p>Most checks depend on design speed, so the review follows the speeds recorded along each alignment: Civil 3D <code>SpeedStation</code> features (set in <span class="kbd">Alignment Properties → Design Criteria</span> before export) or Roadway <code>DesignSpeed</code> records. Where two speeds share a station, the later entry applies, as in Civil 3D.</p>
+<ul>
+  <li>Each element (curve, vertical curve, straight) is checked at the <b>highest</b> speed over its length, so an element spanning a speed change meets the faster approach.</li>
+  <li>The report tabulates the speed sections with their lengths and changes. When the whole road has one speed, it reminds you to define speed stations where the terrain changes.</li>
+  <li>The log says when file speeds are ignored because you entered a speed or ranges.</li>
+</ul>
+<figure>
+  <img src="figures/fig_review_speed.png" alt="Speed sections">
+  <figcaption><b>Figure 15.</b> Design speed sections of the demo road: 80 km/h then 60 km/h from CH 1+900.</figcaption>
+</figure>
+<p>The speed plan itself is checked (Kenya RDM 1.3 §3.10.3, §5.5, §5.14):</p>
+<table>
+  <thead><tr><th style="width:9%">Code</th><th>Check and recommendation</th></tr></thead>
+  <tbody>
+    <tr><td class="code">D1</td><td>Speed step above 20 km/h (high), or 10–20 km/h (low; acceptable but not preferred). The recommendation lists intermediate sections in 10 km/h steps with chainages, placed on the faster side so the slower section's design remains valid, e.g. "90 km/h over 0–1,000; 80 km/h over 1,000–2,000; 70 km/h over 2,000–3,000".</td></tr>
+    <tr><td class="code">D2</td><td>A transition section shorter than 1 km, or a short section between two sections of the same speed (speed oscillation). A short faster section should be merged; elements in a short slower section should be designed for the approach speed.</td></tr>
+    <tr><td class="code">D3</td><td>A curve sharper than the faster speed allows within 1 km after a speed reduction (in either direction of travel). Move the speed change, add an intermediate section or increase the radius.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="checks"><span class="sec">21</span>Checks and finding codes</h2>
+<table>
+  <thead><tr><th style="width:9%">Code</th><th style="width:40%">Check</th><th>Kenya RDM 1.3 reference</th></tr></thead>
+  <tbody>
+    <tr><td class="code">V0</td><td>Grade change without a vertical curve</td><td>Tables 6.1, 6.3, 6.4</td></tr>
+    <tr><td class="code">V1</td><td>Crest or sag K below minimum (with the length needed)</td><td>Table 6.1 (crest), Table 6.4 (sag)</td></tr>
+    <tr><td class="code">V2</td><td>Vertical curve shorter than the minimum length, including small grade changes (A &lt; 0.5 %: L ≥ 2V)</td><td>Table 6.3, S7.3</td></tr>
+    <tr><td class="code">G1–G2</td><td>Grade above the absolute or desirable maximum for terrain and road type</td><td>Table 6.5</td></tr>
+    <tr><td class="code">G3</td><td>Grade longer than its critical length</td><td>Table 6.6</td></tr>
+    <tr><td class="code">G4</td><td>Grade flatter than 0.5 % in cut (drainage)</td><td>S6.5.4</td></tr>
+    <tr><td class="code">S1</td><td>Stopping sight distance along the profile</td><td>Tables 3.13, 3.16</td></tr>
+    <tr><td class="code">S2</td><td>Sight distance on horizontal curves blocked by cut slopes</td><td>Table 3.16</td></tr>
+    <tr><td class="code">H0–H1</td><td>Radius below the absolute floor or the minimum for speed and e max</td><td>S5.8, Table 5.1</td></tr>
+    <tr><td class="code">H2–H3</td><td>Missing transition spiral, or spiral parameter A too small</td><td>Table 5.8, Eq. 5.4</td></tr>
+    <tr><td class="code">H4–H5</td><td>Curve too short, or too long</td><td>Table 5.5</td></tr>
+    <tr><td class="code">H6</td><td>Broken-back curves (short straight between same-direction curves)</td><td>S5.6, S7.8</td></tr>
+    <tr><td class="code">H7–H8</td><td>Short straight between reverse curves; long straight</td><td>Table 5.4</td></tr>
+    <tr><td class="code">H9</td><td>Isolated sharp curve after a long straight (needs 1.5 × minimum radius)</td><td>S5.4</td></tr>
+    <tr><td class="code">E1–E3</td><td>Superelevation missing, below the required rate, or above e max</td><td>Tables 5.9–5.11</td></tr>
+    <tr><td class="code">E4</td><td>Superelevation run-off too short</td><td>Table 5.7, S5.9</td></tr>
+    <tr><td class="code">E5</td><td>Combined grade √(g² + e²) too steep</td><td>S6.5.3</td></tr>
+    <tr><td class="code">P1–P7</td><td>Alignment phasing (section 22)</td><td>Chapter 7</td></tr>
+    <tr><td class="code">R1</td><td>Embankment barrier warrant (section 23)</td><td>S12.6.5, Figure 12.4, Table 12.6</td></tr>
+    <tr><td class="code">D1–D3</td><td>Design speed changes (section 20)</td><td>S3.10.3, S5.5, S5.14</td></tr>
+  </tbody>
+</table>
+<figure>
+  <img src="figures/fig_review_findings.png" alt="Findings table">
+  <figcaption><b>Figure 16.</b> Findings table (first rows): severity, category, chainage range, issue and detail, recommendation and reference.</figcaption>
+</figure>
+
+<h2 id="phasing"><span class="sec">22</span>Alignment phasing and recommended PVIs</h2>
+<p>Phasing compares horizontal and vertical curves so the road reads clearly to drivers and looks right. Following RDM 1.3 Chapter 7, the review reports:</p>
+<table>
+  <thead><tr><th style="width:9%">Code</th><th>Situation</th></tr></thead>
+  <tbody>
+    <tr><td class="code">P1</td><td>The start of a horizontal curve is hidden beyond a crest, within stopping sight distance of the crest: the driver cannot see the change of direction in time.</td></tr>
+    <tr><td class="code">P2</td><td>A crest or sag overlaps both ends of a horizontal curve without matching it.</td></tr>
+    <tr><td class="code">P3</td><td>A vertical curve overlaps only one end of a horizontal curve.</td></tr>
+    <tr><td class="code">P4</td><td>A short crest inside a sharp horizontal curve.</td></tr>
+    <tr><td class="code">P5</td><td>Horizontal and vertical curves separated by less than max(SSD/2, 30 m): separate them further or make them concurrent.</td></tr>
+    <tr><td class="code">P6</td><td>Rolling grade line: a crest and a sag within one horizontal curve; keep a constant grade through the curve.</td></tr>
+    <tr><td class="code">P7</td><td>Crest and sag without the 60–100 m of constant grade between them (rolling grade line).</td></tr>
+  </tbody>
+</table>
+<figure>
+  <img src="figures/fig_review_phasing.png" alt="Phasing diagram">
+  <figcaption><b>Figure 17.</b> Phasing diagram: horizontal curves (left purple, right teal, light ends = spirals) above vertical curves (crest orange, sag green) on a common chainage; dashed boxes mark phasing findings.</figcaption>
+</figure>
+<h3>How fixes are computed</h3>
+<p>For each phasing, K or curve-length finding the tool tries these profile changes and keeps the feasible one that changes levels least:</p>
+<ol>
+  <li><b>One end coincident</b>: change the vertical curve length so one end meets the horizontal curve's start or end (only when the horizontal curve is not sharp, R ≥ 1.5 R<sub>min</sub>).</li>
+  <li><b>Separation</b>: shorten the vertical curve to clear the horizontal curve by at least max(SSD/2, 30 m) (not used for hidden curves, P1).</li>
+  <li><b>Both ends coincident</b>: move the PVI to the middle of the horizontal curve and match its length; the preferred arrangement in Chapter 7.</li>
+</ol>
+<p>Each candidate must meet minimum K, avoid overlapping neighbouring curves and stay within grade limits. Fixes that change any level by more than the cap are reported with the change they need (redesign that section) and are not applied.</p>
+<figure>
+  <img src="figures/fig_review_delta.png" alt="Elevation change">
+  <figcaption><b>Figure 18.</b> Change in elevation of the recommended profile against the design.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_review_pvis.png" alt="Recommended PVIs">
+  <figcaption><b>Figure 19.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
+</figure>
+
+<h2 id="barriers"><span class="sec">23</span>Safety barriers and sight on curves</h2>
+<p><b>Barriers (R1).</b> From each corridor section the tool measures the embankment height from the shoulder edge to the toe and the side-slope ratio on each side. Under RDM 1.3 a barrier is warranted where the fill is at least 6 m high and steeper than 1:3 (the example stated with Figure 12.4); fills of 3–6 m steeper than 1:3, and fills of 6 m or more with slopes between 1:3 and 1:4, are reported for assessment against the chart. Adjacent sections are grouped into runs, and the recommendation gives the barrier extent per side with the run-out length of Table 12.6 added at each end.</p>
+<figure>
+  <img src="figures/fig_review_barriers.png" alt="Barrier schedule">
+  <figcaption><b>Figure 20.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
+</figure>
+<p><b>Sight on curves (S2).</b> On horizontal curves the review computes the sight-line offset needed for stopping sight distance and checks whether existing ground beyond the cut daylight line rises above the sight line (at the height set by the standard) on the inside of the curve. Only ground beyond daylight counts, so excavated material does not create false obstructions.</p>
+<div class="note"><b>Figure 12.4</b>The barrier warrant chart in RDM 1.3 is an image; only its stated example is encoded. Treat findings near the thresholds as prompts for engineering judgement.</div>
+
+<h2 id="roundtrip"><span class="sec">24</span>Taking recommendations back to Civil 3D</h2>
+<p>The recommended profile is written in two forms. Both are complete profiles: the original PVIs with the applied changes.</p>
+<h3>Text file for Create Profile from File</h3>
+<pre>0.000 1514.500
+615.000 1513.275 210.000
+820.000 1513.369 200.000
+1240.000 1499.818 140.000
+…
+3020.000 1525.166</pre>
+<ol class="steps">
+  <li>In Civil 3D choose <span class="kbd">Home → Profile → Create Profile from File</span>.</li>
+  <li>Select the alignment and the <code>.txt</code> file. Each line is station, elevation and, for intermediate PVIs, the parabolic curve length.</li>
+  <li>Compare the new profile with the original in the profile view; adjust and re-export to review again.</li>
+</ol>
+<h3>LandXML file</h3>
+<p>The LandXML output contains the original alignment geometry with the recommended profile as a new <code>ProfAlign</code>. Import it with <span class="kbd">Insert → LandXML</span> into a drawing to inspect it, or load it into the Profile Viewer next to the original.</p>
+<div class="tip"><b>Iterate</b>Run the review, apply the changes you accept in Civil 3D, export again and re-run. Findings that need more than the level-change cap are a sign that the section needs redesign rather than adjustment.</div>
+
+<h2 id="criteria"><span class="sec">25</span>Design standards and custom criteria</h2>
+<p>Two standards ship with the plugin as editable JSON files in its <code>criteria</code> folder:</p>
+<ul>
+  <li><b>Kenya RDM 1.3 (2025)</b> — Road Design Manual Volume 1 Part 3: Geometric Design of Highways, Rural Roads and Urban Roads. Values are taken from the manual's tables and every finding cites the table used. This is the default.</li>
+  <li><b>AASHTO 2018</b> — A Policy on Geometric Design of Highways and Streets (metric), the basis of Civil 3D's default design criteria. AASHTO maximum grades depend on road class and are not tabulated, so enter a <b>Maximum grade</b> for grade checks. Barrier run-out lengths are not included; the warrant still runs. Speed-change steps of 10 and 20 km/h are used as guidance without a minimum transition length.</li>
+</ul>
+<p>To use another standard, copy one of the files, change <code>id</code> and <code>name</code>, edit the tables and select it as <b>Custom criteria file</b>. Tables keyed by design speed are interpolated linearly between tabulated speeds and held constant beyond the ends. Only metric criteria are accepted.</p>
+<table>
+  <thead><tr><th style="width:34%">Key</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td><code>ssd</code>, <code>ssd_by_grade</code></td><td>Stopping sight distance by speed, optionally by grade.</td></tr>
+    <tr><td><code>eye_height</code>, <code>object_height</code>, <code>sightline_height</code></td><td>Heights for sight-distance checks.</td></tr>
+    <tr><td><code>k_crest</code>, <code>k_sag</code>, <code>min_vc_length</code></td><td>Vertical curve minimums.</td></tr>
+    <tr><td><code>max_grade</code>, <code>max_grade_length</code>, <code>min_grade_percent</code></td><td>Grade limits by road type and terrain; critical lengths.</td></tr>
+    <tr><td><code>min_radius</code>, <code>side_friction</code></td><td>Minimum radius by e max, or computed from side friction.</td></tr>
+    <tr><td><code>superelevation_rates</code></td><td>Required rate by radius and speed for each e max (NC, RC or a rate).</td></tr>
+    <tr><td><code>runoff_min</code>, <code>transition_required_radius</code>, <code>spiral_a_coefficient</code></td><td>Run-off and transition rules.</td></tr>
+    <tr><td><code>tangent_min_factor</code>, <code>tangent_max_factor</code>, <code>same_direction_tangent_min</code></td><td>Straight lengths.</td></tr>
+    <tr><td><code>crest_sag_gap</code>, <code>small_grade_change</code></td><td>Phasing and small-grade-change rules.</td></tr>
+    <tr><td><code>barrier</code></td><td>Warrant height and slope, assessment band, run-out by speed, minimum length.</td></tr>
+    <tr><td><code>speed_change</code></td><td>Preferred and maximum speed steps, minimum transition length.</td></tr>
+    <tr><td><code>references</code></td><td>Table numbers printed with each finding.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================== PART E ============================== -->
+<h1 class="part"><span class="num">Part E</span>Technical reference</h1>
+<p class="part-intro">How results are computed, what each output contains, what LandXML content is supported, and how the plugin has been validated.</p>
+
+<h2 id="methods"><span class="sec">26</span>Computation methods</h2>
+<h4>Stationing</h4>
+<p>Chainage is true arc length along lines, circular curves and clothoid spirals (curvature varying linearly with length). On a 36 km test alignment the end chainage matches the declared length to 0.1 mm; earlier chord-based stationing drifted by 0.33 m.</p>
+<h4>Profiles</h4>
+<p>Design profiles are evaluated from PVIs and symmetric parabolic curves: z = z<sub>VPC</sub> + g<sub>1</sub>x + (g<sub>2</sub> − g<sub>1</sub>)x²/2L. K = L / |A| with A in percent. Existing-ground profiles are linear between points; gaps in coverage are kept as gaps.</p>
+<h4>Earthworks</h4>
+<p>Section areas come from the polygon between the ground and design lines (to the Datum where used). Volumes use average end areas, V = (A<sub>1</sub> + A<sub>2</sub>)/2 · d, between sections no farther apart than the maximum spacing. The mass-haul ordinate is the running sum of factored cut minus fill. Side-slope areas are the sloped lengths from hinge to daylight, averaged between adjacent sections and multiplied by their spacing.</p>
+<h4>TIN rasterization and difference</h4>
+<p>Each cell centre takes the elevation of the visible triangle containing it, by barycentric interpolation. TIN difference grids both surfaces on the same cells and sums (compare − base) × cell area over cells where both exist.</p>
+<h4>Stopping sight distance on the profile (S1)</h4>
+<p>The profile is sampled every 2 m. From each station, in both directions, the line from the driver's eye (eye height above the road) to an object (object height) is extended until the road surface rises above it; the distance reached is compared with the SSD required at that speed and grade.</p>
+<h4>Superelevation lookup</h4>
+<p>For each curve the required rate is read from the table for the chosen e max, using the next smaller tabulated radius and the next higher speed column (the conservative reading); <i>NC</i> and <i>RC</i> mean normal crown and reverse crown. Where a standard has no table, e = V²/127R − f.</p>
+<h4>Barrier warrant</h4>
+<p>Fill height is measured from the shoulder edge to the toe of the embankment; the side-slope ratio is horizontal over vertical between them. Runs of warranted sections are merged and extended by the run-out length.</p>
+
+<h2 id="fields"><span class="sec">27</span>Output layers and fields</h2>
+<h4>Design review table and map points</h4>
+<table>
+  <thead><tr><th style="width:24%">Field</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td><code>alignment_name</code></td><td>Alignment.</td></tr>
+    <tr><td><code>severity</code>, <code>category</code>, <code>code</code></td><td>High/Medium/Low; Vertical, Grades, Sight distance, Horizontal, Superelevation, Phasing, Roadside safety, Design speed; finding code.</td></tr>
+    <tr><td><code>sta_start</code>, <code>sta_end</code>, <code>from_label</code>, <code>to_label</code></td><td>Chainage range (numbers and formatted labels).</td></tr>
+    <tr><td><code>side</code></td><td>left/right for barriers and curve sight.</td></tr>
+    <tr><td><code>issue</code>, <code>detail</code>, <code>recommendation</code>, <code>reference</code></td><td>Text of the finding and the criteria table.</td></tr>
+    <tr><td><code>value</code>, <code>required</code></td><td>Value found and value required (units as stated in the detail).</td></tr>
+  </tbody>
+</table>
+<h4>Profile Cut/Fill station table</h4>
+<p><code>alignment_name</code>, <code>design_profile</code>, <code>ground_profile</code>, <code>station</code>, <code>station_label</code>, <code>kind</code>, <code>design_elev</code>, <code>ground_elev</code>, <code>depth</code> (design − ground).</p>
+<h4>Corridor quantities table</h4>
+<p><code>station</code>, <code>section_name</code>, <code>ground_surface</code>, <code>design_surface</code>, <code>cut_area</code>, <code>fill_area</code>, <code>centre_depth</code>, <code>left_daylight</code>, <code>right_daylight</code>, <code>left_hinge</code>, <code>right_hinge</code>, <code>fill_slope_len</code>, <code>cut_slope_len</code>, <code>steep_len</code>, <code>datum_used</code>, and one <code>m_&lt;shape&gt;</code> area field per corridor shape.</p>
+<h4>Side-slope polygons</h4>
+<p><code>side</code>, <code>kind</code> (fill/cut/mixed), <code>sta_start</code>, <code>sta_end</code>, <code>fill_slope_area</code>, <code>cut_slope_area</code>, <code>steep_area</code>, <code>plan_area</code>.</p>
+
+<h2 id="supported"><span class="sec">28</span>Supported LandXML content and limits</h2>
+<table>
+  <thead><tr><th style="width:30%">Element</th><th>Support</th></tr></thead>
+  <tbody>
+    <tr><td><code>Surface/Definition</code> (TIN)</td><td>Points and faces; invisible faces excluded; several surfaces per file.</td></tr>
+    <tr><td><code>SurfVolume</code></td><td>Recorded Civil 3D volumes shown beside TIN difference results.</td></tr>
+    <tr><td><code>Alignment/CoordGeom</code></td><td>Line, Curve, clothoid Spiral. Other spiral types and disconnected elements are reported, not drawn.</td></tr>
+    <tr><td><code>ProfAlign</code></td><td>PVI and ParaCurve. Circular vertical curves are reported as unsupported.</td></tr>
+    <tr><td><code>ProfSurf</code></td><td>Existing-ground and other surface profiles, with gaps.</td></tr>
+    <tr><td><code>CrossSects</code></td><td>Absolute <code>PntList3D</code> and station-relative <code>PntList2D</code> sections; <code>DesignCrossSectSurf</code> shapes, links and Datum.</td></tr>
+    <tr><td><code>Superelevation</code></td><td>Transition stations and full rates (two-lane rotation about the centreline assumed).</td></tr>
+    <tr><td><code>Feature name="SpeedStation"</code>, <code>Roadway/DesignSpeed</code></td><td>Design speeds by station.</td></tr>
+    <tr><td><code>Breaklines</code>, feature lines</td><td>Geometry with names, codes and IDs.</td></tr>
+  </tbody>
+</table>
+<p><b>Not supported:</b> station equations, pipe networks, COGO points and plan features, DWG/DGN files, curvature correction of volumes, intersection and passing sight distance. XML is parsed with a hardened parser that refuses DTDs and entity expansion.</p>
+
+<h2 id="validation"><span class="sec">29</span>Validation</h2>
+<ul>
+  <li><b>Automated tests:</b> 89 tests (parser, earthworks, design review, Processing algorithms and offscreen GUI) pass on QGIS 3.44 with synthetic fixtures whose quantities have closed-form answers.</li>
+  <li><b>Civil 3D volumes:</b> on two private exports, TIN-difference volumes match the volumes Civil 3D recorded in the same files to within 0.1 m³ (for example fill 1,358.8 m³ recorded, 1,359.0 m³ computed).</li>
+  <li><b>Independent methods:</b> on a 16.7 km corridor, TIN difference gave 67,282 m³ of cut against 67,056 m³ from the corridor sections.</li>
+  <li><b>Design review:</b> run on six private Civil 3D exports (9 short to 36 km alignments) under both standards without errors; findings were checked against the manual's tables, and the phasing fix was verified on synthetic cases.</li>
+</ul>
+<p>Project names are withheld; the validation notes are in <code>docs/earthworks-validation.md</code> in the repository. Validation of the plugin is not survey-control validation of a particular project: check placement and levels against control.</p>
+
+<h2 id="qc"><span class="sec">30</span>Quality-control checklist</h2>
+<ul style="list-style:none; padding-left:0">
+  <li>☐ Inspect LandXML report saved; units and axis order understood.</li>
+  <li>☐ Coordinate interpretation and output CRS recorded and checked against survey control.</li>
+  <li>☐ Alignment lengths match the design; no geometry reported as skipped.</li>
+  <li>☐ Profiles cover the expected chainage; gaps in existing ground understood.</li>
+  <li>☐ DEM extent and elevation range plausible; hidden triangles excluded.</li>
+  <li>☐ Cross-section surfaces correctly identified (check the log).</li>
+  <li>☐ Quantities compared with the design software's reports before use.</li>
+  <li>☐ Review run with the correct standard, terrain, e max and design speeds.</li>
+  <li>☐ Each high finding resolved or recorded as a Departure from Standards.</li>
+  <li>☐ Source LandXML, parameters and outputs archived together.</li>
+</ul>
+
+<h2 id="trouble"><span class="sec">31</span>Troubleshooting</h2>
+<table>
+  <thead><tr><th style="width:32%">Symptom</th><th>Check</th></tr></thead>
+  <tbody>
+    <tr><td>Geometry in the wrong place or mirrored</td><td>Coordinate interpretation (Civil 3D usually needs Swap X / Y), offsets, CRS.</td></tr>
+    <tr><td>"Unit does not match the CRS"</td><td>Choose an output CRS in the unit the file declares (metres, feet or US survey feet).</td></tr>
+    <tr><td>Alignment element skipped</td><td>The element does not match its declared length or connect to its neighbour; check the export.</td></tr>
+    <tr><td>No cross-sections</td><td>The export has no sample-line sections, or only template data. Run Inspect LandXML.</td></tr>
+    <tr><td>Section surfaces not identified</td><td>Enter the ground and design section surface names from the dropdowns.</td></tr>
+    <tr><td>"The file records no design speed"</td><td>Define design speeds in Civil 3D before export, or enter a speed or ranges.</td></tr>
+    <tr><td>Very many findings</td><td>Check that the design speed and terrain match the road; use speed ranges where terrain changes. Read the category summary first.</td></tr>
+    <tr><td>Grade checks missing under AASHTO</td><td>Enter a maximum grade.</td></tr>
+    <tr><td>Profile Viewer opens the wrong file</td><td>Use Open… in the dock; layers from other sources are remembered per layer.</td></tr>
+    <tr><td>Complete Road Design stops</td><td>The GeoPackage already exists; choose a new folder.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================== APPENDIX ============================== -->
+<h2 id="appendix" class="pb"><span class="sec">A</span>Criteria tables</h2>
+<p>Key values of the bundled criteria files. The files contain further tables (superelevation rates, critical grade lengths, run-off) and the source of each value.</p>
+<h3>Kenya RDM 1.3 (2025)</h3>
+<table>
+  <thead><tr><th>Design speed km/h</th><th class="num">40</th><th class="num">50</th><th class="num">60</th><th class="num">70</th><th class="num">80</th><th class="num">90</th><th class="num">100</th><th class="num">110</th><th class="num">120</th></tr></thead>
+  <tbody>
+    <tr><td>SSD, level (m) — T3.16</td><td class="num">40</td><td class="num">55</td><td class="num">70</td><td class="num">85</td><td class="num">100</td><td class="num">120</td><td class="num">140</td><td class="num">165</td><td class="num">190</td></tr>
+    <tr><td>K crest — T6.1</td><td class="num">5</td><td class="num">10</td><td class="num">17</td><td class="num">30</td><td class="num">45</td><td class="num">67</td><td class="num">100</td><td class="num">140</td><td class="num">185</td></tr>
+    <tr><td>K sag — T6.4</td><td class="num">9</td><td class="num">14</td><td class="num">19</td><td class="num">25</td><td class="num">32</td><td class="num">40</td><td class="num">50</td><td class="num">60</td><td class="num">70</td></tr>
+    <tr><td>R min, e max 6 % (m) — T5.1</td><td class="num">50</td><td class="num">85</td><td class="num">130</td><td class="num">185</td><td class="num">265</td><td class="num">355</td><td class="num">465</td><td class="num">595</td><td class="num">755</td></tr>
+    <tr><td>Barrier run-out (m) — T12.6</td><td class="num">—</td><td class="num">—</td><td class="num">55</td><td class="num">—</td><td class="num">85</td><td class="num">—</td><td class="num">105</td><td class="num">120</td><td class="num">—</td></tr>
+  </tbody>
+</table>
+<table>
+  <thead><tr><th>Maximum grade % (desirable / absolute) — T6.5</th><th class="num">Flat</th><th class="num">Rolling</th><th class="num">Mountainous</th><th class="num">Escarpment</th></tr></thead>
+  <tbody>
+    <tr><td>Rural</td><td class="num">3 / 5</td><td class="num">4 / 6</td><td class="num">6 / 8</td><td class="num">7 / 9</td></tr>
+    <tr><td>Urban</td><td class="num">3 / 5</td><td class="num">6 / 8</td><td class="num">8 / 10</td><td class="num">8 / 10</td></tr>
+  </tbody>
+</table>
+<p>Other values: eye height 1.05 m, object height 0.2 m (T3.13); minimum grade 0.5 %; combined grade 10 %; straights 6V to 20V m (4 km at 100 km/h and above); same-direction straights ≥ 200 m; constant grade of 60–100 m between crest and sag; barrier warrant 6 m fill steeper than 1:3; speed steps ≤ 20 km/h (10 preferred) with ≥ 1 km transitions.</p>
+<h3>AASHTO 2018 (metric)</h3>
+<table>
+  <thead><tr><th>Design speed km/h</th><th class="num">40</th><th class="num">50</th><th class="num">60</th><th class="num">70</th><th class="num">80</th><th class="num">90</th><th class="num">100</th><th class="num">110</th><th class="num">120</th></tr></thead>
+  <tbody>
+    <tr><td>SSD (m) — T3-1</td><td class="num">50</td><td class="num">65</td><td class="num">85</td><td class="num">105</td><td class="num">130</td><td class="num">160</td><td class="num">185</td><td class="num">220</td><td class="num">250</td></tr>
+    <tr><td>K crest — T3-35</td><td class="num">4</td><td class="num">7</td><td class="num">11</td><td class="num">17</td><td class="num">26</td><td class="num">39</td><td class="num">52</td><td class="num">74</td><td class="num">95</td></tr>
+    <tr><td>K sag — T3-37</td><td class="num">9</td><td class="num">13</td><td class="num">18</td><td class="num">23</td><td class="num">30</td><td class="num">38</td><td class="num">45</td><td class="num">55</td><td class="num">63</td></tr>
+    <tr><td>Side friction f — T3-7</td><td class="num">0.23</td><td class="num">0.19</td><td class="num">0.17</td><td class="num">0.15</td><td class="num">0.14</td><td class="num">0.13</td><td class="num">0.12</td><td class="num">0.11</td><td class="num">0.09</td></tr>
+  </tbody>
+</table>
+<p>Other values: eye height 1.08 m, object height 0.6 m; minimum vertical curve length 0.6V m; minimum radius from V²/127(e + f); default e max 8 %; barrier warrant thresholds are configurable defaults (3 m fill steeper than 1:3) without run-out lengths.</p>
+
+<p style="margin-top:10mm; color:var(--muted); font-size:8.2pt">LandXML Road &amp; Terrain GIS Tools is free software released under the GNU General Public License version 2 or later, without warranty. Civil 3D is a trademark of Autodesk, Inc.; OpenRoads Designer is a trademark of Bentley Systems, Incorporated. The design criteria summarise published standards for convenience; the source documents govern.</p>
+
+</body>
+</html>

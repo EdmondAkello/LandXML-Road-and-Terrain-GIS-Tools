@@ -13,6 +13,8 @@
 - **Design speed variations.** Speed stations defined in Civil 3D are followed section by section, and each element is checked at the highest speed over its length. New checks flag speed steps above the standard (with the intermediate sections to add), short transition or oscillating speed sections, and sharp curves just past a speed reduction (RDM S3.10.3, S5.5, S5.14). The report tabulates the speed sections.
 - Design speed by chainage ranges, to override the file.
 - The Road Design Report can include the review for each alignment.
+- **User Guide and Technical Manual** (PDF, `docs/user-guide`), with figures produced by the plugin from a synthetic demonstration road (`tools/guide`).
+- `tools/build_release.py` builds the plugin repository ZIP and runs the plugins.qgis.org upload and security checks.
 
 ## 1.7.0 — unreleased
 
