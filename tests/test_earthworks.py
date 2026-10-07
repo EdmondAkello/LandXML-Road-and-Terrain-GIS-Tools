@@ -41,6 +41,7 @@ from landxml_plugin.landxml.earthworks import (
     template_estimate,
 )
 from landxml_plugin.landxml.geometry import read_alignments
+from landxml_plugin.landxml.profile import profile_control_points, read_profile_controls
 from landxml_plugin.landxml.longsection import (
     ProfileLine,
     default_pair,
@@ -304,3 +305,137 @@ class InspectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from landxml_plugin.landxml.catalog import match_name, read_catalog, suggest_terrain_pair
+from landxml_plugin.landxml.design_report import (
+    clip_series,
+    curvature_series,
+    design_report_html,
+    design_speeds,
+    grade_series,
+    horizontal_elements,
+    strip_windows,
+)
+from landxml_plugin.landxml.section_view import build_section_view, difference_regions, view_extent
+from landxml_plugin.landxml.superelevation import lane_slopes, read_superelevation
+
+SUPER_XML = """<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2"><Alignments>
+  <Alignment name="Bend" staStart="0">
+    <Superelevation staStart="40" staEnd="60">
+      <BeginRunoutSta>10</BeginRunoutSta><BeginRunoffSta>20</BeginRunoffSta><FullSuperSta>40</FullSuperSta>
+      <FullSuperelev>-5</FullSuperelev><RunoffSta>60</RunoffSta><StartofRunoutSta>80</StartofRunoutSta>
+      <EndofRunoutSta>90</EndofRunoutSta></Superelevation>
+    <Superelevation staStart="200" staEnd="210"></Superelevation>
+    <Feature name="SpeedStation" code="0"><Property label="station" value="0"/><Property label="speed" value="80"/></Feature>
+  </Alignment></Alignments></LandXML>"""
+
+
+class CatalogTests(unittest.TestCase):
+    def test_catalog_lists_names_quickly_and_suggests_surfaces(self):
+        catalog = read_catalog(str(CORRIDOR))
+        self.assertEqual(catalog.surfaces, ["EG", "Design"])
+        self.assertEqual(catalog.alignments, ["Synthetic Road"])
+        self.assertEqual(catalog.names("section_surfaces"), ["EG Surface", "Synthetic Corridor TOP"])
+        self.assertEqual(catalog.names("design_profiles"), ["Synthetic FRL"])
+        self.assertEqual(catalog.names("surface_profiles"), ["Synthetic Road_EG Surface"])
+        self.assertEqual(catalog.cross_sections["Synthetic Road"], 5)
+        self.assertEqual(catalog.roadway_surfaces, ["TOP"])
+        base, compare, reason = suggest_terrain_pair(catalog)
+        self.assertEqual((base, compare), ("EG", "Design"))
+        self.assertIn("volume surface", reason)
+
+    def test_suggestion_without_volume_record(self):
+        from landxml_plugin.landxml.catalog import Catalog
+
+        catalog = Catalog(
+            surfaces=["BOTTOM", "OGL-REV 0", "TOP"],
+            surface_profiles={"A": [("A_OGL-REV 0", "existing")]},
+            roadway_surfaces=["BOTTOM", "TOP"],
+        )
+        base, compare, _reason = suggest_terrain_pair(catalog)
+        self.assertEqual((base, compare), ("OGL-REV 0", "BOTTOM"))
+
+    def test_forgiving_name_matching(self):
+        names = ["BOTTOM", "OGL-LOT_REV 0", "TOP"]
+        self.assertEqual(match_name(names, "ogl", "surface"), "OGL-LOT_REV 0")
+        self.assertEqual(match_name(names, "top", "surface"), "TOP")
+        self.assertIsNone(match_name(names, "  ", "surface"))
+        with self.assertRaisesRegex(ValueError, "Available: 'BOTTOM'"):
+            match_name(names, "FRL", "surface")
+        with self.assertRaisesRegex(ValueError, "several"):
+            match_name(["Road A", "Road B"], "road", "alignment")
+
+
+class SectionViewTests(unittest.TestCase):
+    def test_regions_and_labels(self):
+        regions = difference_regions([(-10, -1), (10, 1)], [(-10, 0), (10, 0)])
+        self.assertEqual([kind for kind, _ in regions], ["cut", "fill"])
+        self.assertAlmostEqual(shoelace(regions[0][1]), 5)
+        document = load_document(str(CORRIDOR))
+        sections, *_ = read_corridor_sections(document.root)
+        view = build_section_view(sections[0], "EG Surface", "Synthetic Corridor TOP", 101.0)
+        self.assertAlmostEqual(view["fill_area"], 12)
+        self.assertEqual(view["daylight"], (-7, 7))
+        self.assertEqual([label["text"] for label in view["slope_labels"]], ["1:2.0", "1:2.0"])
+        self.assertEqual(view["shapes"][0][1][0], (-5, 101.0))
+        self.assertEqual(view["design_cl"], 101)
+        self.assertEqual(view_extent([view]), (-9, 9))
+        steep = build_section_view(sections[0], "EG Surface", "Synthetic Corridor TOP", 101.0, steep_ratio=2.5)
+        self.assertTrue(all(label["steep"] for label in steep["slope_labels"]))
+
+
+class DesignReportTests(unittest.TestCase):
+    def test_superelevation_lanes_and_speeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "super.xml"
+            path.write_text(SUPER_XML, encoding="utf-8")
+            alignment = load_document(str(path)).alignments()[0]
+        records = read_superelevation(alignment)
+        self.assertEqual(len(records), 1)  # the empty transition is ignored
+        left, right = lane_slopes(records, 2.0)
+        # A negative (left-curve) rate lifts the right, outside lane.
+        self.assertIn((40, 5.0), right)
+        self.assertIn((40, -5.0), left)
+        self.assertIn((20, 0.0), right)
+        self.assertIn((28, -2.0), left)  # reverse crown when the outside lane reaches +2 %
+        self.assertEqual(design_speeds(alignment), [(0.0, 80.0)])
+
+    def test_elements_curvature_grades_and_report(self):
+        road, _ = read_alignments(str(CIVIL3D), segment_length=1)
+        elements = horizontal_elements(road[0])
+        self.assertEqual([e["type"] for e in elements], ["line", "curve", "spiral"])
+        self.assertAlmostEqual(elements[1]["start"], 110)
+        self.assertAlmostEqual(elements[1]["length"], 5 * math.pi)
+        self.assertEqual(elements[1]["turn"], "right")
+        self.assertAlmostEqual(elements[2]["parameter"], math.sqrt(50 * 7.85))
+        curvature = curvature_series(elements)
+        self.assertEqual(curvature[2], (110, 100.0))
+        self.assertAlmostEqual(curvature[-1][1], 20.0)
+        document = load_document(str(CIVIL3D))
+        _name, profile = next(document.profiles())
+        controls = [c for c in profile_control_points(read_profile_controls(profile)) if c["control_type"] == "VPI"]
+        grades = grade_series(controls)
+        self.assertAlmostEqual(grades[0][1], 100 / 15)
+        self.assertEqual(strip_windows(0, 12000, 5000), [(0, 5000), (5000, 10000), (10000, 12000)])
+        self.assertEqual(strip_windows(0, 5500, 5000), [(0, 5500)])
+        self.assertEqual(clip_series([(0, 0), (10, 10)], 2, 5), [(2, 2), (5, 5)])
+        item = {
+            "name": "Road A",
+            "alignment": road[0],
+            "elements": elements,
+            "controls": controls,
+            "profile_name": "Design",
+            "ground_name": "",
+            "runs": [],
+            "transitions": [],
+            "speeds": [],
+            "superelevation": [],
+            "slopes": ([], []),
+            "swap": False,
+        }
+        html_text = design_report_html([item], "meter", "Synthetic", "road_minimal.xml")
+        for heading in ("Plan", "Curvature diagram", "Gradient diagram", "Horizontal elements", "Vertical controls"):
+            self.assertIn(heading, html_text)
+        self.assertIn("R10", html_text)
+        self.assertIn("<td>1</td>", html_text)

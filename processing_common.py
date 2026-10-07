@@ -8,6 +8,7 @@ from qgis.core import (
     QgsProcessingLayerPostProcessorInterface,
 )
 
+from .landxml.catalog import match_name, read_catalog
 from .landxml.parser import load_document
 
 
@@ -149,3 +150,14 @@ def attach_post_processor(context, destination, apply=None, source_path=None):
     context._landxml_post_processors = processors
     context.layerToLoadOnCompletionDetails(destination).setPostProcessor(processor)
     return processor
+
+
+def resolve_name(path, kind, value, label):
+    """Resolve a typed source name forgivingly; blank stays blank."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        return match_name(read_catalog(path).names(kind), value, label)
+    except (OSError, ValueError) as exc:
+        raise QgsProcessingException(str(exc)) from exc

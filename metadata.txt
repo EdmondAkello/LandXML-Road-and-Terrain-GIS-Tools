@@ -3,10 +3,10 @@ name=LandXML Road & Terrain GIS Tools
 qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
 description=LandXML terrain and road data from Civil 3D, OpenRoads Designer and generic exporters in QGIS: TIN GeoTIFF, road geometry, profiles, an interactive existing-vs-design profile viewer, cut/fill and corridor quantities, inspection and GeoPackage export.
-version=1.6.0
+version=1.7.0
 author=Edmond Akello
 email=francenicklaus@gmail.com
-about=Inspects and imports LandXML TIN surfaces, existing-ground profiles, corridor cross-sections, alignments, profiles, cross-sections, station points, boundaries, feature lines and breaklines. Profiles can be plotted with vertical exaggeration and labeled VPC/VPI/VPT controls, tangent grades and K values; optional schematic map profile layers appear beside the alignment using an explicitly selected CRS. OpenRoads Designer terrain structures were examined in private exports and reproduced in a synthetic regression fixture; one private OpenRoads alignment/profile export was exercised in QGIS 3.44 without redistribution or survey-control validation. Includes a Complete Road Design GeoPackage export. A Profile Viewer dock opens the existing-ground vs design long-section of an alignment clicked in the map, with shaded cut/fill, transitions and PNG/SVG/PDF/CSV/HTML export. Earthworks tools report centreline cut/fill segments and transitions, Civil 3D corridor section cut/fill volumes, material quantities, mass haul and side-slope areas for grassing, and TIN-to-TIN cut/fill rasters and volumes.
+about=Inspects and imports LandXML TIN surfaces, existing-ground profiles, corridor cross-sections, alignments, profiles, cross-sections, station points, boundaries, feature lines and breaklines. Profiles can be plotted with vertical exaggeration and labeled VPC/VPI/VPT controls, tangent grades and K values; optional schematic map profile layers appear beside the alignment using an explicitly selected CRS. OpenRoads Designer terrain structures were examined in private exports and reproduced in a synthetic regression fixture; one private OpenRoads alignment/profile export was exercised in QGIS 3.44 without redistribution or survey-control validation. Includes a Complete Road Design GeoPackage export. A Profile Viewer dock opens the existing-ground vs design long-section of an alignment clicked in the map, with shaded cut/fill, transitions and PNG/SVG/PDF/CSV/HTML export. Earthworks tools report centreline cut/fill segments and transitions, Civil 3D corridor section cut/fill volumes, material quantities, mass haul and side-slope areas for grassing, and TIN-to-TIN cut/fill rasters and volumes. Cross-section sheets (PDF/HTML/PNG) and a Road Design Report with plan, curvature, gradient, long-section and superelevation diagrams support reporting. Name fields offer dropdowns of the surfaces, alignments and profiles in the chosen file.
 
     Coordinate interpretation and transformation (stored coordinates, axis swap, offset, 2-D Helmert, or reprojection) are explicit and controlled by the user. LandXML-declared CRS is shown for reference only. US survey feet, international feet and meters remain distinct.
 
@@ -17,6 +17,6 @@ homepage=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 changelog=See CHANGELOG.md
 experimental=False
 deprecated=False
-tags=LandXML,TIN,earthworks,cut and fill,quantities,mass haul,long section,DTM,DEM,GeoTIFF,Civil 3D,OpenRoads Designer,road design,alignment,profile,cross-section,feature line,breakline,GeoPackage,QGIS,Processing
+tags=LandXML,TIN,earthworks,cross-section sheets,superelevation,design report,cut and fill,quantities,mass haul,long section,DTM,DEM,GeoTIFF,Civil 3D,OpenRoads Designer,road design,alignment,profile,cross-section,feature line,breakline,GeoPackage,QGIS,Processing
 category=Vector
 icon=icon.png

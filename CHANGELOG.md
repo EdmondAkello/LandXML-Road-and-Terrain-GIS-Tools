@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.0 — unreleased
+
+### Added
+- **Name dropdowns and forgiving matching.** Surface, alignment, profile and section-surface fields list the names in the chosen LandXML file and refresh when the file changes. Typed names match case-insensitively or by a unique part (`ogl`). Unknown names are reported with the available list. A fast catalog scans start tags only (0.2–0.4 s on 45–75 MB exports).
+- **Automatic surface choice.** Surface Cut/Fill can leave both names blank. It then uses a recorded Civil 3D volume-surface pair, or the existing-ground profile surface against the Roadway corridor surface (datum/bottom preferred), and logs the reason.
+- **Cross-Section Sheets and Report.** Multi-page PDF sheets (A4/A3/A1, 1–12 per sheet), an HTML report with a section table and drawings, and one PNG per section. Drawings show ground and design lines, cut/fill shading, pavement layers, the Datum, slope ratios with steep-slope highlighting, daylight offsets, centreline levels and areas. A station range and interval select which sections to plot.
+- **Cross-sections tab in the Profile Viewer**, synchronised with the profile chainage, the map marker and section navigation, with PNG/SVG/PDF export.
+- **Road Design Report.** A schematic plan, curvature, gradient, long-section/depth and superelevation diagrams, horizontal, vertical and superelevation tables, summary cards and design speeds, with long alignments split into chart strips.
+- Alignment elements now carry their true length and spiral radii, and superelevation transitions are parsed.
+
+### Changed
+- Tables in HTML reports show whole numbers without decimals, and chainage labels at chart edges stay inside the drawing.
+
 ## 1.6.0 — unreleased
 
 ### Added

@@ -73,7 +73,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 14)
+        self.assertEqual(len(self.algorithms), 16)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_plugin_unload_after_provider_is_deleted(self):
@@ -622,6 +622,69 @@ class QgisProcessingTests(unittest.TestCase):
         )
         layer = self._post_process(result["OUTPUT"])
         self.assertEqual(layer.customProperty("landxml/source_path"), CORRIDOR)
+
+    def test_surface_cut_fill_detects_and_matches_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(CORRIDOR, "EPSG:32637")
+            params.update(RESOLUTION=1, OUTPUT=str(Path(directory) / "auto.tif"))
+            result = self.algorithms["landxml_surface_cut_fill"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            self.assertAlmostEqual(result["fill_volume"], 100)
+            params.update(BASE_SURFACE="eg", COMPARE_SURFACE="desi", OUTPUT=str(Path(directory) / "typed.tif"))
+            result = self.algorithms["landxml_surface_cut_fill"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            self.assertAlmostEqual(result["fill_volume"], 100)
+            params["COMPARE_SURFACE"] = "FRL"
+            with self.assertRaisesRegex(QgsProcessingException, "Available: 'EG', 'Design'"):
+                self.algorithms["landxml_surface_cut_fill"].processAlgorithm(params, self.context, self.feedback)
+
+    def test_existing_tools_accept_partial_names(self):
+        params = self._params(CORRIDOR, "EPSG:32637")
+        params.update(OUTPUT="memory:", ALIGNMENT="synthetic")
+        result = self.algorithms["landxml_alignments_to_vector"].processAlgorithm(
+            params, self.context, self.feedback
+        )
+        self.assertEqual(self.context.getMapLayer(result["OUTPUT"]).featureCount(), 1)
+
+    def test_cross_section_sheets_pdf_report_and_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            params = {
+                "INPUT": CORRIDOR,
+                "GROUND_SURFACE": "eg surf",
+                "OUTPUT": str(Path(directory) / "sheets.pdf"),
+                "REPORT": str(Path(directory) / "sections.html"),
+                "PNG_FOLDER": str(Path(directory) / "png"),
+                "PER_PAGE": 2,
+                "TITLE": "Synthetic sheets",
+            }
+            result = self.algorithms["landxml_cross_section_sheets"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            self.assertEqual(result["SECTION_COUNT"], 5)
+            self.assertEqual(result["PAGE_COUNT"], 2)
+            self.assertEqual(Path(params["OUTPUT"]).read_bytes()[:5], b"%PDF-")
+            report = Path(params["REPORT"]).read_text(encoding="utf-8")
+            self.assertIn("0+150.00", report)
+            self.assertGreaterEqual(report.count("<svg"), 5)
+            self.assertEqual(len(list(Path(params["PNG_FOLDER"]).glob("*.png"))), 5)
+            params.update(RANGE="40-160", INTERVAL=50, OUTPUT=str(Path(directory) / "range.pdf"), REPORT="", PNG_FOLDER="")
+            result = self.algorithms["landxml_cross_section_sheets"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            self.assertEqual(result["SECTION_COUNT"], 3)
+
+    def test_design_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory) / "report.html")
+            result = self.algorithms["landxml_design_report"].processAlgorithm(
+                {"INPUT": CORRIDOR, "OUTPUT": output, "PLAN_AXES": 1}, self.context, self.feedback
+            )
+            self.assertEqual(result["ALIGNMENT_COUNT"], 1)
+            text = Path(output).read_text(encoding="utf-8")
+            for heading in ("Plan", "Curvature diagram", "Gradient diagram", "Long-section", "Horizontal elements"):
+                self.assertIn(heading, text)
 
 
 if __name__ == "__main__":

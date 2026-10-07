@@ -154,6 +154,33 @@ class ProfileViewerTests(unittest.TestCase):
         self.dock.cleanup()
         self.dock.canvas = None
 
+    def test_cross_section_tab_and_exports(self):
+        self.assertTrue(self.dock.tabs.isTabEnabled(1))
+        self.dock.tabs.setCurrentIndex(1)
+        panel = self.dock.section_panel
+        self.assertEqual(panel.ground_combo.currentText(), "EG Surface")
+        self.assertEqual(panel.design_combo.currentText(), "Synthetic Corridor TOP")
+        self.assertEqual(len(panel.chart.views), 5)
+        self.dock.chart.stationClicked.emit(140.0)
+        self.assertEqual(panel.chart.current()["station"], 150)
+        panel.chart.step(1)
+        self.assertEqual(self.dock.chart.marker_station, 200)
+        with tempfile.TemporaryDirectory() as directory:
+            png = Path(directory) / "section.png"
+            self.assertTrue(panel.write_png(str(png)))
+            self.assertEqual(png.read_bytes()[:4], b"\x89PNG")
+            svg = Path(directory) / "section.svg"
+            self.assertTrue(panel.write_svg(str(svg)))
+            self.assertIn("CH 0+200.00", svg.read_text(encoding="utf-8"))
+            pdf = Path(directory) / "sheets.pdf"
+            self.assertEqual(panel.write_sheets(str(pdf), per_page=4), 2)
+
+    def test_name_dropdown_source(self):
+        from landxml_plugin.processing_widgets import names_for
+
+        self.assertEqual(names_for(CORRIDOR, "surfaces"), ["EG", "Design"])
+        self.assertEqual(names_for("", "surfaces"), [])
+
 
 class PluginGuiTests(unittest.TestCase):
     def test_plugin_actions_with_interface_stub(self):

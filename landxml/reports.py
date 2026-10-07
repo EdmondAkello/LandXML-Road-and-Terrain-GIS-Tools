@@ -39,7 +39,11 @@ def write_csv(path, header, rows):
 def _fmt(value, digits=2):
     if value is None:
         return "–"
-    if isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, int):
+        return f"{value:,d}"
+    if isinstance(value, float):
         return f"{value:,.{digits}f}"
     return html.escape(str(value))
 
@@ -83,6 +87,15 @@ def _document(title, body):
         f"<h1>{html.escape(title)}</h1><div class='meta'>Generated {stamp} by LandXML Road &amp; Terrain GIS Tools</div>"
         f"{body}</body></html>"
     )
+
+
+def _anchor(position, width, edge=40):
+    """Keep chainage labels at the chart edges inside the drawing."""
+    if position > width - edge:
+        return "end"
+    if position < edge:
+        return "start"
+    return "middle"
 
 
 def _decimate(run, max_points):
@@ -137,7 +150,7 @@ def profile_svg(runs, horizontal_unit=None, width=1000, height=380, max_points=1
     for tick in _axis_ticks(s0, s1, 8):
         parts.append(f"<line y1='{top}' y2='{top + ph}' x1='{x(tick):.1f}' x2='{x(tick):.1f}' stroke='#eef0f3'/>")
         parts.append(
-            f"<text x='{x(tick):.1f}' y='{height - 18}' font-size='11' text-anchor='middle' fill='#5b6575'>{html.escape(station_label(tick, horizontal_unit))}</text>"
+            f"<text x='{x(tick):.1f}' y='{height - 18}' font-size='11' text-anchor='{_anchor(x(tick), width)}' fill='#5b6575'>{html.escape(station_label(tick, horizontal_unit))}</text>"
         )
     per_run = max(50, max_points // max(1, len(runs)))
     for run in runs:
@@ -199,7 +212,7 @@ def depth_svg(runs, horizontal_unit=None, width=1000, height=220, max_points=200
         parts.append(f"<text x='{left - 6}' y='{y(tick) + 4:.1f}' font-size='11' text-anchor='end' fill='#5b6575'>{tick:+.1f}</text>")
     for tick in _axis_ticks(s0, s1, 8):
         parts.append(
-            f"<text x='{x(tick):.1f}' y='{height - 14}' font-size='11' text-anchor='middle' fill='#5b6575'>{html.escape(station_label(tick, horizontal_unit))}</text>"
+            f"<text x='{x(tick):.1f}' y='{height - 14}' font-size='11' text-anchor='{_anchor(x(tick), width)}' fill='#5b6575'>{html.escape(station_label(tick, horizontal_unit))}</text>"
         )
     per_run = max(50, max_points // max(1, len(runs)))
     for run in runs:
@@ -237,7 +250,7 @@ def line_svg(points, horizontal_unit=None, label="", width=1000, height=260, col
         parts.append(f"<text x='{left - 6}' y='{y(tick) + 4:.1f}' font-size='11' text-anchor='end' fill='#5b6575'>{tick:,.0f}</text>")
     for tick in _axis_ticks(s0, s1, 8):
         parts.append(
-            f"<text x='{x(tick):.1f}' y='{height - 18}' font-size='11' text-anchor='middle' fill='#5b6575'>{html.escape(station_label(tick, horizontal_unit))}</text>"
+            f"<text x='{x(tick):.1f}' y='{height - 18}' font-size='11' text-anchor='{_anchor(x(tick), width)}' fill='#5b6575'>{html.escape(station_label(tick, horizontal_unit))}</text>"
         )
     parts.append(f"<line x1='{left}' x2='{width - right}' y1='{y(0):.1f}' y2='{y(0):.1f}' stroke='#9aa5b5'/>")
     path = " ".join(f"{x(s):.1f},{y(v):.1f}" for s, v in points)

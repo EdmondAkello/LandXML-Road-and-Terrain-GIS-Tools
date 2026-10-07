@@ -11,7 +11,6 @@ from qgis.core import (
     QgsProcessingParameterEnum,
     QgsProcessingParameterFile,
     QgsProcessingParameterFolderDestination,
-    QgsProcessingParameterString,
 )
 from .core import (
     read_tin,
@@ -27,6 +26,8 @@ from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
 from .processing_common import coordinate_choices
 from .params import number_param
+from .processing_widgets import name_param
+from .processing_common import resolve_name
 
 
 def _ogr_srs(crs):
@@ -151,20 +152,10 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
         )
         _param_common_local(self)
         self.addParameter(
-            QgsProcessingParameterString(
-                "ALIGNMENT",
-                "Alignment name (blank = all)",
-                defaultValue="",
-                optional=True,
-            )
+            name_param("ALIGNMENT", "Alignment name (blank = all)", "alignments")
         )
         self.addParameter(
-            QgsProcessingParameterString(
-                "SURFACE",
-                "TIN surface name (blank = all)",
-                defaultValue="",
-                optional=True,
-            )
+            name_param("SURFACE", "TIN surface name (blank = all)", "surfaces")
         )
         self.addParameter(
             number_param(
@@ -247,8 +238,8 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException("Input LandXML file does not exist.")
         m, crs, src, tp, document = coordinate_choices(self, p, c, fb, path)
         os.makedirs(out, exist_ok=True)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
-        surface_filter = self.parameterAsString(p, "SURFACE", c).strip() or None
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
+        surface_filter = resolve_name(path, "surfaces", self.parameterAsString(p, "SURFACE", c), "surface") or None
         if surface_filter:
             matches = [
                 surface

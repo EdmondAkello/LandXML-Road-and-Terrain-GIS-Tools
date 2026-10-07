@@ -22,6 +22,17 @@ def _float_attr(node, name, default=None):
     return float(v)
 
 
+def _radius(value):
+    """Spiral radius attribute as a float; None means infinite (tangent)."""
+    if value in (None, "") or str(value).strip().upper() == "INF":
+        return None
+    try:
+        radius = float(value)
+    except ValueError:
+        return None
+    return radius if radius > 0 and math.isfinite(radius) else None
+
+
 def regular_station_distances(start_station, length, interval, include_end=False):
     """Return (distance from start, station) pairs on the station interval grid."""
     if interval <= 0:
@@ -220,6 +231,10 @@ def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
                         if tag in {"Curve", "Spiral"}
                         else None,
                         "station_start": _float_attr(geom, "staStart"),
+                        # True element length (arc length on curves/spirals).
+                        "length": d[-1] if d else None,
+                        "radius_start": _radius(geom.attrib.get("radiusStart")) if tag == "Spiral" else None,
+                        "radius_end": _radius(geom.attrib.get("radiusEnd")) if tag == "Spiral" else None,
                     }
                 )
                 offset = vertex_distances[-1] if vertex_distances else 0.0

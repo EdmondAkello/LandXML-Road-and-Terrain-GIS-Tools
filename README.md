@@ -4,6 +4,7 @@ A QGIS Processing provider for inspecting and importing LandXML terrain and road
 
 ## Compatibility and validation
 
+- **Version 1.7.0 (QGIS 3.44):** 72 tests pass on Linux QGIS 3.44.14, including the new cross-section sheets, design report, name catalog and dropdown sources. The dropdown widget was also exercised in a real QGIS Processing dialog, and every new tool ran on the six private Civil 3D exports. Desktop QGIS 4 checks remain outstanding.
 - **Version 1.6.0 (QGIS 3.44):** the 60-test suite — parser, earthworks engine, headless Processing and offscreen profile-viewer GUI — passes on Linux QGIS 3.44.14 (conda-forge build). Six private Civil 3D 2022–2026 exports (alignments, design and existing-ground profiles, corridor sections, TIN surfaces and volume surfaces; project names withheld) were run through every tool; see [the earthworks validation notes](docs/earthworks-validation.md). Two TIN-difference results reproduce the volumes Civil 3D recorded in the same files to within 0.1 m³. The profile chart widget was also exercised under PyQt6 6.11 (the Qt binding used by QGIS 4), and every Qt enum used by the new GUI code resolves in PyQt6; a QGIS 4 runtime was not available for 1.6.0, so desktop QGIS 4 checks remain outstanding.
 - **Version 1.5.0 — QGIS 4.2.2:** the updated PR branch passed all 31 parser and headless Processing tests with the macOS QGIS 4.2.2 runtime. The developer also reports that the QGIS 4 desktop regression workflow completed successfully after the profile and stationing changes. An earlier desktop check inspected a private OpenRoads terrain export and created and displayed its TIN GeoTIFF. These visual checks are not survey-control validation.
 - **Version 1.5.0 — QGIS 3.44:** the parser and 31 headless Processing tests pass in a Windows QGIS 3.44.3 runtime, including provider registration, unload, profile labels, map profile placement and saved-output loading. A private OpenRoads road export was also exercised through the 3D centerline, station-point and profile tools. Survey-control and visual checks remain necessary. Metadata declares 3.44–4.99 to allow testing on both series.
@@ -27,7 +28,8 @@ The examined OpenRoads terrain exports contain `Surfaces/Surface/Definition/Pnts
 | Vector extraction | Horizontal alignments |
 | Road design extraction | Labeled vertical profile graph, optional map profile overlay and VPC/VPI/VPT controls with vertical exaggeration; 3D centerlines; cross sections and optional points; station points; Complete Road Design to GeoPackage |
 | Surface extraction | TIN surface boundary; feature lines; breaklines |
-| Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference) |
+| Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference); Cross-Section Sheets and Report |
+| Reports | Road Design Report: plan, curvature, gradient, long-section and superelevation diagrams with element tables (under Utilities) |
 
 Outside the Processing Toolbox, the **LandXML Profile Viewer** dock and the **Pick Alignment Profile on Map** toolbar button (menu **Plugins → LandXML Road & Terrain**) show existing-ground and design profiles for an alignment you click in the map.
 
@@ -45,6 +47,12 @@ To see the profile **near its actual alignment in the map**, choose **Map profil
 
 [FHWA defines K](https://highways.fhwa.dot.gov/safety/speed-management/speed-concepts-informational-guide/chapter-4-engineering-and-technical) as parabolic curve length divided by the absolute algebraic difference between grades in percent. Here K is in source station units per 1% grade change. A flat curve has no finite K and receives no K label. If horizontal or vertical units are undeclared or differ, verify the computed grades and K before design use; the plugin does not convert vertical units.
 
+## Choosing surfaces, alignments and profiles
+
+Name fields in every tool are editable dropdowns that list the names found in the selected LandXML file (surfaces, alignments, design and surface profiles, or cross-section surfaces), refreshed when you change the file. You can also type: matching is case-insensitive and accepts a unique part of a name, so `ogl` finds `OGL-LOT_REV 0`. A name that is not found is reported with the list of available names. In scripts and models these parameters stay plain text.
+
+Blank surface names are filled from evidence in the file, and the choice is printed in the log. Surface Cut/Fill uses a Civil 3D volume-surface pair if one is recorded. Otherwise the base is the surface named in an existing-ground profile and the comparison is a `Roadway` corridor surface, preferring the datum/bottom surface for earthworks. Section tools use the same rule for section surfaces.
+
 ## Profile Viewer: click to view profiles
 
 Press **Pick Alignment Profile on Map** and click an alignment line (or station points, cut/fill segments, cross-sections — any layer with an `alignment_name` or `alignment` field). The dock opens the alignment's long-section with the clicked chainage marked:
@@ -53,6 +61,7 @@ Press **Pick Alignment Profile on Map** and click an alignment line (or station 
 - **Cut/fill:** the area between the lines is shaded (fill green, cut orange), with a depth panel below, VPIs labelled with K values, and black dots at cut↔fill transitions. A table lists every cut/fill segment; selecting one zooms to it and marks its deepest point.
 - **Interaction:** hover for chainage, both elevations and depth; the same chainage is marked on the map. Wheel to zoom, drag to pan, double-click to fit, click to centre the map there. **Grade tol.** treats small depths as on grade so ground noise does not create transitions; **Exclude** removes structure ranges such as bridges (`1200-1450; 2010-2030`).
 - **Export:** PNG, SVG, PDF (A3 landscape), clipboard image, station table CSV at any interval, cut/fill segment CSV, and a self-contained HTML report.
+- **Cross-sections tab:** when the alignment has corridor sections, the tab shows the section nearest the clicked chainage (or follows the cursor), with ◀ ▶ navigation, vertical exaggeration and PNG, SVG or PDF-sheet export. Stepping through sections moves the profile and map markers.
 
 Layers created by this plugin's Processing tools remember their LandXML file as a layer property stored in the QGIS project (never in the output data), so clicking them opens the right file. For other layers — for example a GeoPackage loaded later — the viewer uses the file already open in the dock, or asks for it once and remembers it for that layer. Map positions come from the clicked feature's own geometry and its `sta_start`/`station_start`, `sta_end`/`station_end` or `length` attributes, so the marker follows whatever coordinate interpretation produced the layer.
 
@@ -71,7 +80,23 @@ All three tools keep source units (volumes in cubic source units) and label thei
 
 Section surfaces are identified from source evidence when the names are left blank: existing ground is the section surface named inside an existing-ground `ProfSurf`, and the design surface matches a `Roadway@surfaceRefs` corridor surface. If either cannot be identified, the tool says so and you enter the name; material quantities are still reported. Sections farther apart than the maximum spacing (default 100) and excluded station ranges are not integrated, and the report lists what was skipped. No curvature correction is applied.
 
+**Cross-Section Sheets and Report** plots corridor sections as multi-page PDF sheets (A4, A3 or A1; 1–12 sections per sheet) with a title block and legend, an optional HTML report (a table of every section plus drawings) and one PNG per section. Each drawing shows ground and design lines, shaded cut and fill, pavement layers from the corridor shapes, the Datum, side-slope ratios (red when steeper than the stabilisation threshold), daylight offsets, centreline FRL and EG levels, and cut/fill areas. Each section fits its own width at the chosen vertical exaggeration (default 2) unless a fixed half-width is set. A station range and interval select, for example, every 50 m between 10000 and 12000.
+
 **Surface Cut/Fill (TIN Difference)** grids two TINs on a shared raster and writes compare − base as a GeoTIFF (styled cut-orange/fill-green), with cut, fill and net volumes and areas. Triangles hidden by a surface boundary are excluded. When the LandXML contains a Civil 3D `SurfVolume` for the same pair, its recorded volumes are printed and tabulated beside the grid result.
+
+## Road Design Report
+
+**Road Design Report** writes one HTML page per file, with a section for each alignment:
+
+- Summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed (from Civil 3D speed stations or Roadway speeds) and maximum superelevation.
+- A schematic plan with lines, curves and spirals in different colours, chainage ticks, start and end marks, a north arrow and a scale bar. Choose whether the file stores northing first (Civil 3D) or easting first. The plan is not georeferenced.
+- Curvature diagram (1000/R, right +, left −) with radius labels and spiral bands.
+- Gradient diagram with grade labels and crest/sag vertical curve bands.
+- Long-section against existing ground with a cut/fill depth diagram.
+- Superelevation diagram of left and right lane cross-slopes, built from the transition stations and full rates in the file. LandXML does not store the normal crown rate, so it is an input (default 2.5%).
+- Tables of horizontal elements (length, radius, spiral radii and A), vertical controls (grades, curve length, K) and superelevation transitions.
+
+On long alignments, charts are split into strips (default 5,000 units per row). Print the page to PDF for a paginated report: each alignment starts on a new page and tables print in full.
 
 ## Coordinate and unit handling
 
@@ -90,7 +115,7 @@ LandXML numeric coordinates are kept in stored order. The plugin does not infer 
 - 3D centerlines use the station range covered by a matching vertical profile. When a profile covers only part of an alignment, the covered segment is exported and the omitted range is reported; missing Z values are not filled with zero.
 - Alignment station points follow whole multiples of the requested interval (for example, 20, 40, 60) even when the alignment starts at a fractional station. The individual tool can optionally add an off-interval alignment endpoint; this is off by default. Complete Road Design exports interval points only.
 
-Current limits: earthworks volumes use average end areas without curvature correction; superelevation, pipe networks, COGO points and plan features are not imported yet; circular vertical curves and non-clothoid spirals are reported as unsupported; station equations and semantic terrain void/hole classification are not implemented; 2D and 3D line records must be exported separately through individual Processing tools. OpenRoads road behavior beyond the one private alignment/profile export, including corridors, needs further validation. LandXML export from QGIS was considered separately and is not included in this release. GeoPackage, GeoTIFF and 3D vector output are supported; no DGN writer is attempted.
+Current limits: the superelevation diagram assumes the usual two-lane rotation about the centreline; earthworks volumes use average end areas without curvature correction; superelevation, pipe networks, COGO points and plan features are not imported yet; circular vertical curves and non-clothoid spirals are reported as unsupported; station equations and semantic terrain void/hole classification are not implemented; 2D and 3D line records must be exported separately through individual Processing tools. OpenRoads road behavior beyond the one private alignment/profile export, including corridors, needs further validation. LandXML export from QGIS was considered separately and is not included in this release. GeoPackage, GeoTIFF and 3D vector output are supported; no DGN writer is attempted.
 
 ## Install the development plugin
 

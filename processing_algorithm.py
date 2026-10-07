@@ -3,7 +3,6 @@ import os
 from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingParameterFile,
-    QgsProcessingParameterString,
     QgsProcessingParameterEnum,
     QgsProcessingParameterCrs,
     QgsProcessingParameterRasterDestination,
@@ -19,6 +18,8 @@ from .core import (
     write_geotiff,
 )
 from .params import number_param
+from .processing_widgets import name_param
+from .processing_common import resolve_name
 from .processing_common import coordinate_choices
 
 PRESETS_KEY = "LandXMLTinToGeoTIFF/presets"
@@ -93,12 +94,7 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(p)
         self.addParameter(
-            QgsProcessingParameterString(
-                self.SURFACE,
-                self.tr("TIN surface name"),
-                defaultValue="",
-                optional=True,
-            )
+            name_param(self.SURFACE, self.tr("TIN surface name"), "surfaces")
         )
         self.addParameter(
             number_param(
@@ -179,7 +175,7 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException("Input LandXML file does not exist.")
 
         surface = (
-            self.parameterAsString(parameters, self.SURFACE, context).strip() or None
+            resolve_name(path, "surfaces", self.parameterAsString(parameters, self.SURFACE, context), "surface") or None
         )
         try:
             available = list_surfaces(path)

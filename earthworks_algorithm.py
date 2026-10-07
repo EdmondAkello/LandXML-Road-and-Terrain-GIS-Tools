@@ -61,6 +61,7 @@ from .landxml.earthworks import (
     summarize_segments,
     template_estimate,
 )
+from .landxml.catalog import match_name, read_catalog, suggest_terrain_pair
 from .landxml.geometry import read_alignments
 from .landxml.longsection import default_pair, find_profile, read_alignment_profiles
 from .landxml.parser import load_document
@@ -75,6 +76,7 @@ from .landxml.reports import (
 from .landxml.stationing import StationedPolyline
 from .params import number_param
 from .processing_common import attach_post_processor, coordinate_choices
+from .processing_widgets import name_param
 from .road_features import _param_coordinates
 
 GROUP = "Earthworks and quantities"
@@ -97,6 +99,31 @@ def _string(algorithm, name, label, default=""):
     algorithm.addParameter(
         QgsProcessingParameterString(name, label, defaultValue=default, optional=True)
     )
+
+
+def _resolve(candidates, requested, label, required=True):
+    """Forgiving name lookup (exact, case-insensitive, unique partial)."""
+    try:
+        return match_name(candidates, requested, label)
+    except ValueError as exc:
+        if required:
+            raise QgsProcessingException(str(exc)) from exc
+        return None
+
+
+def _resolve_alignment(algorithm, parameters, context, path):
+    requested = algorithm.parameterAsString(parameters, "ALIGNMENT", context).strip()
+    if not requested:
+        return ""
+    return _resolve(read_catalog(path).alignments, requested, "alignment")
+
+
+def _profile(profiles, requested, kind, label, required):
+    if not requested:
+        return None
+    candidates = [item.name for item in profiles if kind is None or item.kind == kind]
+    name = _resolve(candidates, requested, label, required)
+    return find_profile(profiles, name, kind) if name else None
 
 
 def _exclusions(algorithm, parameters, context):
@@ -258,9 +285,9 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
         _input_param(self)
-        _string(self, "ALIGNMENT", "Alignment name (blank = all)")
-        _string(self, "DESIGN_PROFILE", "Design profile name (blank = first ProfAlign)")
-        _string(self, "GROUND_PROFILE", "Existing-ground profile name (blank = longest ProfSurf)")
+        self.addParameter(name_param("ALIGNMENT", "Alignment (blank = all)", "alignments"))
+        self.addParameter(name_param("DESIGN_PROFILE", "Design profile (blank = first ProfAlign)", "profiles"))
+        self.addParameter(name_param("GROUND_PROFILE", "Existing-ground profile (blank = longest ProfSurf)", "surface_profiles"))
         self.addParameter(number_param("INTERVAL", "Table station interval", 20, 0.01, 100000, decimals=2))
         self.addParameter(number_param("TOLERANCE", "On-grade tolerance (vertical units)", 0, 0, 100, decimals=3))
         self.addParameter(number_param("HIGH_FILL", "Flag fills deeper than", 3, 0, 1000, decimals=2))
@@ -311,7 +338,7 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = _resolve_alignment(self, p, c, path)
         design_name = self.parameterAsString(p, "DESIGN_PROFILE", c).strip()
         ground_name = self.parameterAsString(p, "GROUND_PROFILE", c).strip()
         interval = self.parameterAsDouble(p, "INTERVAL", c)
@@ -332,13 +359,13 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
                 continue
             profiles = read_alignment_profiles(alignment, 5.0, warnings)
             design, ground = default_pair(profiles)
-            try:
-                if design_name:
-                    design = find_profile(profiles, design_name)
-                if ground_name:
-                    ground = find_profile(profiles, ground_name)
-            except ValueError as exc:
-                raise QgsProcessingException(str(exc)) from exc
+            # With one alignment a wrong name is an error; across all
+            # alignments, an alignment without that profile is skipped.
+            required = bool(alignment_filter)
+            if design_name:
+                design = _profile(profiles, design_name, None, "design profile", required)
+            if ground_name:
+                ground = _profile(profiles, ground_name, None, "ground profile", required)
             if design is None or ground is None:
                 fb.pushInfo(f"Alignment '{name}': no design/ground profile pair; skipped.")
                 continue
@@ -551,10 +578,10 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
 
     def initAlgorithm(self, config=None):
         _input_param(self)
-        _string(self, "ALIGNMENT", "Alignment name (blank = all with cross-sections)")
-        _string(self, "GROUND_SURFACE", "Existing-ground section surface (blank = detect)")
-        _string(self, "DESIGN_SURFACE", "Design section surface (blank = detect)")
-        _string(self, "DESIGN_PROFILE", "Design profile for Datum elevations (blank = first ProfAlign)")
+        self.addParameter(name_param("ALIGNMENT", "Alignment (blank = all with cross-sections)", "alignments"))
+        self.addParameter(name_param("GROUND_SURFACE", "Existing-ground section surface (blank = detect)", "section_surfaces"))
+        self.addParameter(name_param("DESIGN_SURFACE", "Design section surface (blank = detect)", "section_surfaces"))
+        self.addParameter(name_param("DESIGN_PROFILE", "Design profile for Datum elevations (blank = first ProfAlign)", "design_profiles"))
         self.addParameter(
             QgsProcessingParameterBoolean("USE_DATUM", "Measure earthworks to the Datum where exported", defaultValue=True)
         )
@@ -597,7 +624,7 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = _resolve_alignment(self, p, c, path)
         ground_override = self.parameterAsString(p, "GROUND_SURFACE", c).strip()
         design_override = self.parameterAsString(p, "DESIGN_SURFACE", c).strip()
         profile_override = self.parameterAsString(p, "DESIGN_PROFILE", c).strip()
@@ -612,6 +639,8 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
                 "sections from the design software, or use Profile Cut/Fill Analysis for a centreline estimate."
             )
         fb.pushInfo(f"Section surfaces: {', '.join(surface_names) or 'none'}; shapes: {', '.join(shape_names) or 'none'}.")
+        ground_override = _resolve(surface_names, ground_override, "ground section surface") or ""
+        design_override = _resolve(surface_names, design_override, "design section surface") or ""
         refs = roadway_surface_refs(doc.root)
         by_alignment = {}
         for section in sections:
@@ -625,12 +654,7 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
             profiles = read_alignment_profiles(alignment, 2.0)
             design_profile, _ground = default_pair(profiles)
             if profile_override:
-                try:
-                    design_profile = find_profile(profiles, profile_override, "design")
-                except ValueError as exc:
-                    raise QgsProcessingException(str(exc)) from exc
-                if design_profile is None:
-                    raise QgsProcessingException(f"{name}: design profile '{profile_override}' was not found.")
+                design_profile = _profile(profiles, profile_override, "design", "design profile", bool(alignment_filter))
             ground_guess, design_guess = guess_surfaces(group, [x for x in profiles if x.kind == "surface"], refs)
             ground_surface = ground_override or ground_guess
             design_surface = design_override or design_guess
@@ -908,13 +932,16 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
             "(positive fill, negative cut) as a GeoTIFF, with cut, fill and net volumes. Triangles hidden by a "
             "source surface boundary are excluded. When the LandXML records a Civil 3D SurfVolume for the same "
             "pair, its volumes are listed for comparison. Volumes are in output horizontal units squared × "
-            "source vertical units."
+            "source vertical units.\n\nLeave the surface names blank to choose them from the file's evidence: a Civil 3D "
+            "volume surface pair, the existing-ground profile surface as base and a Roadway corridor surface as "
+            "comparison (the datum/bottom surface is preferred for earthworks). Typed names may be partial and are "
+            "case-insensitive, e.g. 'ogl'."
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
-        self.addParameter(QgsProcessingParameterString("BASE_SURFACE", "Base (existing) surface name"))
-        self.addParameter(QgsProcessingParameterString("COMPARE_SURFACE", "Comparison (design) surface name"))
+        self.addParameter(name_param("BASE_SURFACE", "Base (existing) surface (blank = detect)", "surfaces"))
+        self.addParameter(name_param("COMPARE_SURFACE", "Comparison (design) surface (blank = detect)", "surfaces"))
         self.addParameter(number_param("RESOLUTION", "Grid cell size (output CRS units)", 1, 0.01, 10000, decimals=3))
         self.addParameter(number_param("NODATA", "NoData value", -9999, -3.4e38, 3.4e38, decimals=3))
         _param_coordinates(self)
@@ -928,8 +955,21 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
-        base_name = self.parameterAsString(p, "BASE_SURFACE", c).strip()
-        compare_name = self.parameterAsString(p, "COMPARE_SURFACE", c).strip()
+        catalog = read_catalog(path)
+        base_name = _resolve(catalog.surfaces, self.parameterAsString(p, "BASE_SURFACE", c), "base surface")
+        compare_name = _resolve(catalog.surfaces, self.parameterAsString(p, "COMPARE_SURFACE", c), "comparison surface")
+        if not base_name or not compare_name:
+            base_guess, compare_guess, reason = suggest_terrain_pair(catalog)
+            base_name = base_name or base_guess
+            compare_name = compare_name or (compare_guess if compare_guess != base_name else None)
+            if not base_name or not compare_name:
+                raise QgsProcessingException(
+                    "Could not choose both surfaces from the file's evidence; pick them in the dropdowns. "
+                    f"Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
+                )
+            fb.pushInfo(f"Surfaces chosen automatically: base '{base_name}', comparison '{compare_name}' ({reason}).")
+        if base_name == compare_name:
+            raise QgsProcessingException("Base and comparison surfaces must differ.")
         resolution = self.parameterAsDouble(p, "RESOLUTION", c)
         nodata = self.parameterAsDouble(p, "NODATA", c)
         surfaces = []

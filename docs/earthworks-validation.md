@@ -38,3 +38,10 @@ Design vs existing-ground comparison ran on every alignment in A–E. In E the l
 ## Regression of existing tools
 
 Alignments, profile graphs and map overlays, 3D centerlines, station points and the Complete Road Design GeoPackage (including TIN boundary and DEM for E) were run on B–E with an explicit X/Y swap and a project CRS. Feature counts and elevation ranges were consistent with the source profiles. These runs do not validate survey control or the source CRS.
+
+## 1.7.0 additions
+
+- **Name catalog:** on A, E and F the start-tag scan lists the same surfaces, alignments, profiles and section surfaces as the full parser, in 0.18–0.39 s instead of 3.0–4.5 s. In a QGIS 3.44 Processing dialog, choosing export A filled the surface dropdown with its three surfaces.
+- **Automatic surfaces:** for A, Surface Cut/Fill picked the existing-ground surface named in the ground profile and the Roadway datum (bottom) surface. Over the TIN overlap it gave cut 67,282 m³, against 67,056 m³ from the independent corridor-section method over the 6.15 km covered by ground sections. Fill differs by about 15%, which reflects the 50 m section spacing and the different coverage of the two methods. For F, the recorded Civil 3D volume pair was used.
+- **Superelevation:** in B, every negative full rate belongs to a counter-clockwise (left) curve and every positive rate to a clockwise (right) curve, so the diagram lifts the outside lane accordingly. Transition stations come from the file. The 2.5% normal crown is an assumption the user can change.
+- **Sheets and reports:** cross-section sheets were produced for A (125 sections with ground; also a 2 km range at every section). Design reports were produced for all six exports, from nine short straight alignments to the 36 km alignment with 275 elements and 42 superelevation transitions.

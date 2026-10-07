@@ -46,6 +46,8 @@ from .landxml.geometry import read_alignments, regular_station_distances
 from .core import read_tin
 from .landxml.profile import read_vertical_profile
 from .params import number_param
+from .processing_widgets import name_param
+from .processing_common import resolve_name
 
 METHODS = [
     "Use stored coordinates",
@@ -66,9 +68,7 @@ def _xy(text):
 
 def _param_common(a):
     a.addParameter(
-        QgsProcessingParameterString(
-            "ALIGNMENT", "Alignment name (blank = all)", defaultValue="", optional=True
-        )
+        name_param("ALIGNMENT", "Alignment name (blank = all)", "alignments")
     )
     _param_coordinates(a)
 
@@ -251,17 +251,10 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
-            QgsProcessingParameterString(
-                "ALIGNMENT",
-                "Alignment name (blank = all)",
-                defaultValue="",
-                optional=True,
-            )
+            name_param("ALIGNMENT", "Alignment name (blank = all)", "alignments")
         )
         self.addParameter(
-            QgsProcessingParameterString(
-                "PROFILE", "Profile name (blank = all)", defaultValue="", optional=True
-            )
+            name_param("PROFILE", "Profile name (blank = all)", "design_profiles")
         )
         self.addParameter(
             number_param(
@@ -328,8 +321,8 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
-        profile_filter = self.parameterAsString(p, "PROFILE", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
+        profile_filter = resolve_name(path, "design_profiles", self.parameterAsString(p, "PROFILE", c), "profile")
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
@@ -659,7 +652,7 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         seg = self.parameterAsDouble(p, "SEGMENT", c)
         fields = QgsFields()
         for n, ln in (
@@ -812,12 +805,7 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
         )
         _param_common(self)
         self.addParameter(
-            QgsProcessingParameterString(
-                "SURFACE",
-                "Surface name (blank = first)",
-                defaultValue="",
-                optional=True,
-            )
+            name_param("SURFACE", "Surface name (blank = first)", "surfaces")
         )
         self.addParameter(
             QgsProcessingParameterFeatureSink(
@@ -829,7 +817,7 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
-        surf = self.parameterAsString(p, "SURFACE", c) or None
+        surf = resolve_name(path, "surfaces", self.parameterAsString(p, "SURFACE", c), "surface") or None
         xyz, faces, meta = read_tin(path, surf)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
         xyz = transform_vertices(xyz, method=m, **tp)
@@ -962,7 +950,7 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         include_end = self.parameterAsBoolean(p, "INCLUDE_ENDPOINT", c)
         fields = QgsFields()
         for n in ("alignment", "station", "bearing_deg"):
@@ -1065,7 +1053,7 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         doc = load_document(path)
         records, warnings = read_cross_sections(doc.root)
         records = [

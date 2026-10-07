@@ -34,6 +34,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -49,6 +50,7 @@ from ..landxml.earthworks import (
     regular_rows,
     summarize_segments,
 )
+from ..landxml.common import descendants
 from ..landxml.longsection import default_pair, read_alignment_profiles
 from ..landxml.parser import load_document
 from ..landxml.profile import profile_control_points, read_profile_controls
@@ -63,6 +65,7 @@ from ..landxml.reports import (
 )
 from .map_tool import SOURCE_PROPERTY, AlignmentPickTool, alignment_field
 from .profile_chart import EXTRA_COLORS, ProfileChart
+from .section_panel import SectionPanel
 
 try:  # QtSvg is optional in some Qt builds.
     from qgis.PyQt.QtSvg import QSvgGenerator
@@ -210,7 +213,13 @@ class ProfileViewerDock(QgsDockWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self.segment_selected)
         lower_layout.addWidget(self.table)
-        splitter.addWidget(lower)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(lower, "Cut/fill segments")
+        self.section_panel = SectionPanel()
+        self.tabs.addTab(self.section_panel, "Cross-sections")
+        self.tabs.setTabEnabled(1, False)
+        self.tabs.currentChanged.connect(self._tab_changed)
+        splitter.addWidget(self.tabs)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
@@ -227,6 +236,10 @@ class ProfileViewerDock(QgsDockWidget):
         self.controls_check.toggled.connect(self._toggle_view)
         self.chart.stationHovered.connect(self.show_map_marker)
         self.chart.stationClicked.connect(self.center_map)
+        self.chart.stationClicked.connect(self._show_section)
+        self.chart.stationHovered.connect(self.section_panel.hover_station)
+        self.section_panel.stationChanged.connect(self._section_station)
+        self.section_panel.message.connect(lambda text: self._message(text, Qgis.MessageLevel.Success))
         self._update_summary()
 
     def _toggle_view(self):
@@ -291,7 +304,41 @@ class ProfileViewerDock(QgsDockWidget):
                 combo.setCurrentIndex(self.profiles.index(kind_default) + 1)
             combo.blockSignals(False)
         self.chart.set_marker(None)
+        self._sections_stale = True
+        has_sections = element is not None and next(descendants(element, "CrossSect"), None) is not None
+        self.tabs.setTabEnabled(1, has_sections)
+        self.tabs.setTabToolTip(1, "" if has_sections else "This alignment has no cross-sections in the LandXML file.")
+        if not has_sections and self.tabs.currentIndex() == 1:
+            self.tabs.setCurrentIndex(0)
         self.refresh()
+        if has_sections and self.tabs.currentIndex() == 1:
+            self._load_sections()
+
+    def _load_sections(self):
+        if not getattr(self, "_sections_stale", False) or not self.tabs.isTabEnabled(1):
+            return
+        self._sections_stale = False
+        design = next((p for p in self.profiles if p.kind == "design"), None)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.section_panel.set_alignment(self.document, self.alignment_combo.currentText(), self.profiles, design)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _tab_changed(self, index):
+        if index == 1:
+            self._load_sections()
+            if self.chart.marker_station is not None:
+                self.section_panel.show_station(self.chart.marker_station)
+
+    def _show_section(self, station):
+        if self.tabs.isTabEnabled(1):
+            self._load_sections()
+            self.section_panel.show_station(station)
+
+    def _section_station(self, station):
+        self.chart.set_marker(station)
+        self.show_map_marker(station)
 
     def _selected(self, combo):
         index = combo.currentData()
@@ -446,6 +493,8 @@ class ProfileViewerDock(QgsDockWidget):
         if station is not None:
             self.chart.set_marker(station)
             self.show_map_marker(station)
+            if self.tabs.currentIndex() == 1:
+                self._show_section(station)
 
     def station_for(self, layer, feature, layer_point):
         """Station from attributes and position along the clicked line."""
