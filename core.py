@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from osgeo import gdal, osr
+import osgeo
 
 from .landxml.common import child, descendants, first_descendant
 from .landxml.parser import load_document
@@ -182,8 +182,8 @@ def transform_vertices(vertices, method="stored", **params):
         out[:, 1] = ty + scale * (s * x + c * y)
         return out
     if method == "reproject":
-        src = osr.SpatialReference()
-        dst = osr.SpatialReference()
+        src = osgeo.osr.SpatialReference()
+        dst = osgeo.osr.SpatialReference()
         if params.get("src_wkt") and params.get("dst_wkt"):
             if (
                 src.ImportFromWkt(params["src_wkt"]) != 0
@@ -197,9 +197,9 @@ def transform_vertices(vertices, method="stored", **params):
             dst_epsg = int(params["dst_epsg"])
             if src.ImportFromEPSG(src_epsg) != 0 or dst.ImportFromEPSG(dst_epsg) != 0:
                 raise ValueError("Could not load one of the specified EPSG codes.")
-        src.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        dst.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        ct = osr.CoordinateTransformation(src, dst)
+        src.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+        dst.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+        ct = osgeo.osr.CoordinateTransformation(src, dst)
         transformed = np.empty_like(out)
         for i in range(len(out)):
             xx, yy, zz = ct.TransformPoint(float(x[i]), float(y[i]), 0.0)
@@ -240,6 +240,7 @@ def rasterize_tin(
     progress=None,
     cancel=None,
     max_cells=None,
+    grid=None
 ):
     """Rasterize TIN faces; ``grid=(xmin, ymax, cols, rows)`` forces a shared grid."""
     if resolution <= 0:
@@ -307,10 +308,10 @@ def rasterize_tin(
 def _crs_from_epsg(epsg):
     if not epsg:
         return None
-    srs = osr.SpatialReference()
+    srs = osgeo.osr.SpatialReference()
     if srs.ImportFromEPSG(int(epsg)) != 0:
         return None
-    srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    srs.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
     return srs.ExportToWkt()
 
 
@@ -332,8 +333,8 @@ def write_geotiff(
         "PREDICTOR=2",
         "BIGTIFF=IF_SAFER",
     ]
-    drv = gdal.GetDriverByName("GTiff")
-    ds = drv.Create(path, cols, rows, 1, gdal.GDT_Float32, options=options)
+    drv = osgeo.gdal.GetDriverByName("GTiff")
+    ds = drv.Create(path, cols, rows, 1, osgeo.gdal.GDT_Float32, options=options)
     if ds is None:
         raise IOError(f"Could not create output GeoTIFF: {path}")
     ds.SetGeoTransform((xmin, resolution, 0.0, ymax, 0.0, -resolution))
