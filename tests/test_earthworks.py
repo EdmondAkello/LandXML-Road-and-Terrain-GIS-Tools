@@ -461,6 +461,86 @@ def element(kind, start, end, radius=None, turn=""):
 
 
 class CriteriaTests(unittest.TestCase):
+    def test_us_customary_tables_and_survey_feet(self):
+        us = load_criteria("aashto_2018_us_customary")
+        self.assertIn(us.id, [item[0] for item in list_standards()])
+        self.assertEqual([item[0] for item in list_standards()][:2], ["kenya_rdm13_2025", "aashto_2018"])
+        self.assertEqual((us.length_unit, us.speed_unit), ("ft", "mph"))
+        self.assertEqual(us.ssd(60), 570)
+        self.assertEqual(us.ssd(60, -6), 638)
+        self.assertEqual(us.ssd(60, 6), 515)
+        self.assertEqual(us.k_crest(60), 151)
+        self.assertEqual(us.k_sag(60), 136)
+        self.assertEqual(us.min_vc_length(60), 180)
+        self.assertEqual(us.min_radius(60, 6), 1330)
+        self.assertEqual(us.min_radius(80, 8), 2670)
+        self.assertEqual(us.required_superelevation(7230, 60, 6), (2.2, "2.2%"))
+        self.assertEqual(us.required_superelevation(11100, 60, 6), (-2.0, "NC"))
+        self.assertEqual(us.required_superelevation(1, 60, 6), (None, None))
+        self.assertEqual(us.runoff_min(60, 6), 160)
+        self.assertEqual(us.runoff_min(80, 8), 274)
+        us.set_linear_unit("usSurveyFoot")
+        scale = 0.3048 / (1200 / 3937)
+        self.assertAlmostEqual(us.ssd(60), 570 * scale)
+        self.assertAlmostEqual(us.min_radius(60, 6), 1330 * scale)
+        self.assertAlmostEqual(us.k_crest(60), 151 * scale)
+        self.assertAlmostEqual(us.runoff_min(60, 6), 160 * scale)
+        self.assertAlmostEqual(us.eye_height, 3.5 * scale)
+        with self.assertRaisesRegex(ValueError, "requires feet"):
+            us.set_linear_unit("meter")
+        with self.assertRaisesRegex(ValueError, "matching horizontal and vertical"):
+            us.set_linear_unit("foot", "usSurveyFoot")
+        us.set_linear_unit("foot")
+        for speed, emax in ((85, 8), (65, 4)):
+            with self.assertRaisesRegex(ValueError, "mph"):
+                review_alignment({"sta_start": 0, "segments": []}, [], us, design_speed=speed, emax=emax)
+
+    def test_us_customary_review_findings_and_export(self):
+        us = load_criteria("aashto_2018_us_customary")
+        review = Review(us, speed_function([], 60))
+        model = ProfileModel([
+            {"station": 0, "elevation": 100, "length": 0},
+            {"station": 1000, "elevation": 140, "length": 200},
+            {"station": 2000, "elevation": 100, "length": 0},
+        ])
+        review.check_vertical(model)
+        f = next(f for f in review.findings if f["code"] == "V1")
+        self.assertEqual(f["required"], 151)
+        self.assertIn("60 mph", f["detail"])
+        self.assertIn(" ft", f["detail"])
+        self.assertNotIn("km/h", f["detail"])
+        review.check_phasing(model, curve_groups([element("curve", 500, 1500, 1300, "left")]))
+        phasing = [f for f in review.findings if f["category"] == "Phasing"]
+        self.assertTrue(phasing)
+        self.assertTrue(all("S7." not in f["reference"] for f in phasing))
+        corrected, _ = recommended_profile(model, review.findings, max_change=0, length_unit="ft")
+        self.assertIn(" ft", f["recommendation"])
+        document = load_document(str(CORRIDOR))
+        for unit in ("foot", "usSurveyFoot"):
+            xml = recommended_landxml(document.alignments()[0], corrected, "US review", unit)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "recommended.xml"
+                path.write_text(xml, encoding="utf-8")
+                reread = load_document(str(path))
+                self.assertEqual(reread.horizontal_unit, unit)
+                self.assertIn("<Imperial", xml)
+                _, profile = next(reread.profiles())
+                self.assertEqual(read_profile_controls(profile)[1]["station"], 1000)
+
+    def test_us_recorded_speed_unit_conversion(self):
+        from landxml_plugin.landxml.design_report import design_speeds
+        from landxml_plugin.safe_xml import fromstring
+
+        root = fromstring(
+            '<LandXML><Units><Imperial linearUnit="usSurveyFoot" speedUnit="kilometersPerHour"/></Units>'
+            '<Alignments><Alignment name="US"><Feature name="SpeedStation">'
+            '<Property label="station" value="100"/><Property label="speed" value="96.56064"/>'
+            '</Feature></Alignment></Alignments></LandXML>'
+        )
+        speeds = design_speeds(root.find("Alignments/Alignment"), root)
+        self.assertEqual(speeds[0][0], 100)
+        self.assertAlmostEqual(speeds[0][1], 60)
+
     def test_kenya_rdm_tables(self):
         kenya = load_criteria("kenya_rdm13_2025")
         self.assertEqual(kenya.ssd(100, 0), 140)  # Table 3.16

@@ -80,6 +80,7 @@ def phasing_svg(groups, curves, findings, window, unit=None, width=1000, height=
 
 
 def review_section_html(name, result, unit=None, settings="", strip=5000.0):
+    criteria = result["criteria"]
     findings = result["findings"]
     groups = result["groups"]
     model, recommended = result["model"], result["recommended"]
@@ -87,6 +88,9 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0):
     counts = {s: sum(1 for f in findings if f["severity"] == s) for s in ("High", "Medium", "Low")}
     parts = [f"<h3>Geometric design review — {html.escape(result['criteria'].name)}</h3>"]
     parts.append(f"<p class='meta'>{html.escape(settings)}</p>")
+    parts.append(f"<p class='meta'>Lengths: {html.escape(unit or criteria.length_unit)}; design speeds: {criteria.speed_unit}; K: {criteria.length_unit}/%.</p>")
+    if criteria.units == "us_customary":
+        parts.extend(f"<p class='note'>{html.escape(note)}</p>" for note in criteria.get("notes", []))
     parts.append(
         "<p class='note'>Recommendations are computed values to apply and verify in the design software; the source design is not changed. "
         "Each finding cites its criteria table. Only geometric elements under the designer's control are checked.</p>"
@@ -115,7 +119,7 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0):
         for index, (low, high, speed) in enumerate(speed_sections):
             step = speed - speed_sections[index - 1][2] if index else None
             rows.append((station_label(low, unit), station_label(high, unit), high - low, speed, f"{step:+g}" if step else "—"))
-        parts.append(_table(["From", "To", "Length", "Design speed km/h", "Change km/h"], rows, 0))
+        parts.append(_table(["From", "To", "Length", f"Design speed {criteria.speed_unit}", f"Change {criteria.speed_unit}"], rows, 0))
         if len(speed_sections) == 1:
             parts.append("<p class='note'>One design speed applies to the whole alignment. Define speed stations in Civil 3D "
                          "(Alignment Properties → Design Criteria) before exporting, or enter speeds by chainage, where terrain changes.</p>")
@@ -133,7 +137,7 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0):
         for low, high in strip_windows(start, end, strip):
             clipped = clip_series(delta, low, high)
             if clipped and max(abs(v) for _s, v in clipped) > 1e-3:
-                parts.append(chart_svg([("Recommended − design", "#1f5fbf", clipped, True)], unit, "Δ elevation (m)", fmt="{:+.2f}"))
+                parts.append(chart_svg([("Recommended − design", "#1f5fbf", clipped, True)], unit, f"Δ elevation ({criteria.length_unit})", fmt="{:+.2f}"))
         rows = []
         original = {round(p["station"], 3): p for p in model.pvis}
         for index, p in enumerate(recommended.pvis):
@@ -217,10 +221,13 @@ def recommended_landxml(alignment_element, model, profile_name, unit="meter"):
     now = datetime.now()
     geometry = next((child for child in alignment_element if local_name(child.tag) == "CoordGeom"), None)
     attributes = {k: v for k, v in alignment_element.attrib.items() if local_name(k) in ("name", "length", "staStart", "desc")}
+    imperial = (unit or "meter").lower() in ("foot", "internationalfoot", "ussurveyfoot")
+    units = (f'<Imperial linearUnit={quoteattr(unit)} areaUnit="squareFoot" volumeUnit="cubicFoot" speedUnit="milesPerHour"'
+             if imperial else f'<Metric linearUnit={quoteattr(unit or "meter")} areaUnit="squareMeter" volumeUnit="cubicMeter" speedUnit="kilometersPerHour"')
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2" date="{now:%Y-%m-%d}" time="{now:%H:%M:%S}">',
-        f'  <Units><Metric linearUnit={quoteattr(unit or "meter")} areaUnit="squareMeter" volumeUnit="cubicMeter" angularUnit="decimal degrees" directionUnit="decimal degrees"/></Units>',
+        f'  <Units>{units} angularUnit="decimal degrees" directionUnit="decimal degrees"/></Units>',
         '  <Application name="LandXML Road &amp; Terrain GIS Tools" desc="Geometric design review: recommended profile"/>',
         "  <Alignments>",
         "    <Alignment" + "".join(f" {k}={quoteattr(str(v))}" for k, v in attributes.items()) + ">",

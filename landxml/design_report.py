@@ -115,6 +115,16 @@ def design_speeds(alignment, root=None):
     latest = {}
     for station, speed in sorted(speeds, key=lambda pair: pair[0]):
         latest[station] = speed
+    if root is not None:
+        units = next((e for e in descendants(root, "Units") for e in e if local_name(e.tag) in ("Metric", "Imperial")), None)
+        if units is not None:
+            imperial = (units.attrib.get("linearUnit") or "").lower() in ("foot", "internationalfoot", "ussurveyfoot")
+            declared = units.attrib.get("speedUnit", "milesPerHour" if imperial else "kilometersPerHour")
+            factors = {"milesPerHour": 0.44704, "kilometersPerHour": 1 / 3.6, "metersPerSecond": 1.0}
+            if declared not in factors:
+                raise ValueError(f"Unsupported LandXML speed unit '{declared}'.")
+            scale = factors[declared] / (0.44704 if imperial else 1 / 3.6)
+            latest = {s: v * scale for s, v in latest.items()}
     return sorted(latest.items())
 
 
@@ -490,6 +500,7 @@ def clip_runs(runs, low, high):
 
 
 def design_report_html(items, unit, title, source_file, normal_crown=2.5, strip=0.0):
+    speed_unit = "mph" if (unit or "").lower() in ("foot", "internationalfoot", "ussurveyfoot") else "km/h"
     rows = []
     for item in items:
         elements = item["elements"]
@@ -513,7 +524,7 @@ def design_report_html(items, unit, title, source_file, normal_crown=2.5, strip=
         PRINT_STYLE,
         f"<p class='meta'>Source: {html.escape(source_file)} · {len(items)} alignment(s)</p>",
         "<h2>Alignments in this report</h2>",
-        _table(["Alignment", "Start", "End", "Length", "Design speed km/h", "Findings H / M / L"], rows, 1),
+        _table(["Alignment", "Start", "End", "Length", f"Design speed {speed_unit}", "Findings H / M / L"], rows, 1),
     ]
     body += [alignment_section(item, unit, normal_crown, strip) for item in items]
     return _document(title or "Road design report", "".join(body))

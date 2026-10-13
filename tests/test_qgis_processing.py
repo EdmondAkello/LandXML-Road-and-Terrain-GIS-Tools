@@ -726,6 +726,42 @@ class QgisProcessingTests(unittest.TestCase):
             with self.assertRaisesRegex(QgsProcessingException, "design speed"):
                 self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
 
+    def test_us_customary_review_and_design_report(self):
+        from landxml_plugin.landxml.criteria import list_standards
+        from landxml_plugin.landxml.parser import load_document
+
+        index = [item[0] for item in list_standards()].index("aashto_2018_us_customary")
+        source = Path(CORRIDOR).read_text(encoding="utf-8")
+        for unit in ("foot", "usSurveyFoot"):
+            with self.subTest(unit=unit), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "feet.xml"
+                xml = source.replace('<Metric linearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/>',
+                                     f'<Imperial linearUnit="{unit}" speedUnit="milesPerHour"/>')
+                xml = xml.replace('<Profile name="Synthetic Road">',
+                                  '<Feature name="SpeedStation"><Property label="station" value="0"/>'
+                                  '<Property label="speed" value="60"/></Feature><Profile name="Synthetic Road">')
+                path.write_text(xml, encoding="utf-8")
+                params = {
+                    "INPUT": str(path), "STANDARD": index, "OUTPUT": "memory:",
+                    "REPORT": str(Path(directory) / "review.html"),
+                    "PROFILE_LANDXML": str(Path(directory) / "profile.xml"),
+                    "PROFILE_TXT": str(Path(directory) / "profile.txt"),
+                }
+                self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+                text = Path(params["REPORT"]).read_text(encoding="utf-8")
+                self.assertIn("Design speed mph", text)
+                self.assertNotIn("km/h", text)
+                self.assertEqual(load_document(params["PROFILE_LANDXML"]).horizontal_unit, unit)
+                self.assertEqual(Path(params["PROFILE_TXT"]).read_text().splitlines()[0], "0.000 101.000")
+                report = str(Path(directory) / "design.html")
+                self.algorithms["landxml_design_report"].processAlgorithm(
+                    {"INPUT": str(path), "STANDARD": index + 1, "OUTPUT": report}, self.context, self.feedback
+                )
+                self.assertIn("Design speed mph", Path(report).read_text(encoding="utf-8"))
+                params["INPUT"] = CORRIDOR
+                with self.assertRaisesRegex(QgsProcessingException, "requires feet"):
+                    self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+
     def test_design_report_with_review(self):
         with tempfile.TemporaryDirectory() as directory:
             output = str(Path(directory) / "report.html")

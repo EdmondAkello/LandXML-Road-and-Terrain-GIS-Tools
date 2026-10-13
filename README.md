@@ -107,12 +107,15 @@ On long alignments, charts are split into strips (default 5,000 units per row). 
 
 **Geometric Design Review** checks the horizontal alignment, vertical profile and corridor sections in a LandXML file against a selectable standard. It only reviews what the designer controls in the geometric design (alignment, profile, superelevation and side slopes); pavement, drainage and structures are out of scope.
 
-**Standards.** Two criteria files ship in `criteria/`:
+**Standards.** Three criteria files ship in `criteria/`:
 
 - **Kenya RDM 1.3 (2025), Geometric Design of Highways, Rural and Urban Roads** (default). Values are taken from the manual's tables and referenced in every finding (for example Table 3.16 stopping sight distance, Table 6.1/6.4 K values, Table 5.1 minimum radii, Tables 5.9–5.11 superelevation, Chapter 7 phasing, Figure 12.4 and Table 12.6 barriers).
 - **AASHTO Green Book 2018**, the basis of Civil 3D's default design criteria. AASHTO maximum grades depend on road class and are not tabulated in the file, so enter a **Maximum grade %** for grade checks. AASHTO run-out lengths for barriers are not included; the barrier warrant still runs.
+- **AASHTO Green Book 2018 (US customary: ft, mph)** for LandXML declared in `foot`, `internationalFoot` or `usSurveyFoot`. Includes the US customary stopping sight distance (level and grades), crest/sag K, minimum radius, superelevation and one-lane runoff tables, checked against the 2018 Green Book and Civil 3D's Imperial (2018) criteria. Supports 15–80 mph with e max 6% or 8%, and 15–60 mph with e max 4%. Barrier thresholds and speed-step limits remain explicitly configurable advisory defaults.
 
-Choose a **Custom criteria file** to use another standard: copy one of the JSON files and edit the tables. Only metric criteria and metric LandXML files are supported.
+Choose a **Custom criteria file** to use another standard: copy one of the JSON files and edit the tables. Criteria and LandXML must use the same unit family: metric with metres, US customary with feet. US survey feet and international feet are distinguished when comparing geometry with the criteria; explicitly mixed horizontal and vertical units are rejected.
+
+**Feet/mph workflow.** Select **AASHTO Green Book 2018 (US customary: ft, mph)** in Geometric Design Review or the review section of Road Design Report. Enter speeds in mph and speed-range chainages in the file's feet, or leave speed at 0 to use the recorded speeds (the declared LandXML speed unit is respected). The maximum profile level change uses source length units: a value of 1 means 1 ft for a foot-based file. Findings and reports use ft, mph and ft/% for K; recommended profile text and LandXML preserve the source stations, elevations and foot type.
 
 **Checks** (each finding has a code, severity, chainage range, the value found, the value required, the source table and a recommendation):
 
@@ -130,7 +133,7 @@ Choose a **Custom criteria file** to use another standard: copy one of the JSON 
 
 **Design speed.** The review follows the design speeds recorded along each alignment, so a road whose speed changes with terrain is checked section by section. Define them in Civil 3D before exporting (**Alignment Properties → Design Criteria**, adding speed stations); the export writes them as `SpeedStation` features, and Roadway `DesignSpeed` records are also read. Where Civil 3D lists two speeds at one station, the later one applies. Each element (curve, vertical curve, straight) is checked at the highest speed over its length, so an element spanning a speed change meets the faster approach. The report lists the speed sections. Leave **Design speed** at 0 to use the file; a single speed, or **Design speed by chainage** such as `0-5000:60; 5000-:80`, overrides it, and the log says when file speeds are ignored. Terrain, road type and e max (4, 6 or 8 %) select the table rows.
 
-**Back to Civil 3D.** For each phasing, K and length finding the tool searches PVI moves and curve lengths (one end coincident, both ends coincident, or a clear separation) that satisfy K, overlap and grade limits, and picks the one that changes levels least. Fixes that change any level by more than **Apply profile fixes … at most (m)** (default 1 m) are reported but not applied. The recommended profile is written as:
+**Back to Civil 3D.** For each phasing, K and length finding the tool searches PVI moves and curve lengths (one end coincident, both ends coincident, or a clear separation) that satisfy K, overlap and grade limits, and picks the one that changes levels least. Fixes that change any level by more than **Apply profile fixes … at most (source length units)** (default 1 m or 1 ft) are reported but not applied. The recommended profile is written as:
 
 - a text file for **Profiles → Create Profile from File** (station, elevation, curve length), and
 - a LandXML file with the original alignment and the recommended profile, for **Insert → LandXML**.

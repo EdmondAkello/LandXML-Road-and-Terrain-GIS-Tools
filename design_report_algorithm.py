@@ -79,7 +79,7 @@ class DesignReportAlgorithm(QgsProcessingAlgorithm):
                 defaultValue=0,
             )
         )
-        self.addParameter(number_param("DESIGN_SPEED", "Review: design speed km/h (0 = from file)", 0, 0, 200, decimals=0))
+        self.addParameter(number_param("DESIGN_SPEED", "Review: design speed (km/h for metric; mph for US customary; 0 = from file)", 0, 0, 200, decimals=0))
         self.addParameter(
             QgsProcessingParameterString("SPEED_RANGES", "Review: design speed by chainage, e.g. 0-5000:60; 5000-:80", defaultValue="", optional=True)
         )
@@ -172,7 +172,7 @@ class DesignReportAlgorithm(QgsProcessingAlgorithm):
             except ValueError as exc:
                 raise QgsProcessingException(str(exc)) from exc
             settings = f"Terrain {terrain} · e max {emax:g}% · design speed " + (
-                self.parameterAsString(p, "SPEED_RANGES", c) or (f"{self.parameterAsDouble(p, 'DESIGN_SPEED', c):g} km/h" if self.parameterAsDouble(p, "DESIGN_SPEED", c) else "from file")
+                self.parameterAsString(p, "SPEED_RANGES", c) or (f"{self.parameterAsDouble(p, 'DESIGN_SPEED', c):g} {criteria.speed_unit}" if self.parameterAsDouble(p, "DESIGN_SPEED", c) else "from file")
             )
             by_name = {r["name"]: r for r in reviews}
             for item in items:

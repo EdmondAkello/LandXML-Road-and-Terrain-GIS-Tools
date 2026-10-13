@@ -2,6 +2,9 @@
 
 ## 1.8.1 — unreleased
 
+### Added
+- AASHTO 2018 US customary criteria (ft, mph) alongside metric criteria, including grade-dependent stopping sight distance, crest/sag K, radius, superelevation and runoff tables. Design Review and Road Design Report support international-foot and US survey-foot LandXML; findings, speed inputs and recommended-profile exports retain the appropriate units.
+
 ### Changed
 - **Printable reports.** All HTML reports now print to PDF from Chrome or Edge with A4 page layout, the report title and page numbers in the footer, chart colours and legend swatches kept, headings kept with their charts, and long tables split across pages with repeated headers. Previously, long tables were moved whole to the next page, leaving blank pages (a 4-alignment design report went from 89 to 54 pages), and the first page held only the title.
 - Tables align numbers and chainages right and text left.

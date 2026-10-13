@@ -219,7 +219,7 @@ class Review:
         self.road_type = road_type
         self.terrain = terrain
         self.max_grade_override = max_grade
-        self.lane_width = lane_width or float(criteria.get("lane_width", 3.5))
+        self.lane_width = lane_width or float(criteria.get("lane_width", criteria.metres(3.5)))
         self.findings = []
         self.changes = []
 
@@ -257,24 +257,24 @@ class Review:
             if curve["length"] <= 0:
                 self.add("Vertical", "High" if curve["A"] > 0.5 else "Low", curve["station"], curve["station"],
                          f"{label}: no vertical curve", f"Grade change {curve['A']:.2f}% without a curve.", ref_k,
-                         f"Insert a parabolic curve of at least {round_up(needed):.0f} m.", value=0.0, required=needed, code="V0")
+                         f"Insert a parabolic curve of at least {round_up(needed):.0f} {self.c.length_unit}.", value=0.0, required=needed, code="V0")
             elif kmin and curve["K"] is not None and curve["K"] < kmin - 1e-6:
                 self.add("Vertical", "High", curve["start"], curve["end"], f"{label}: K below minimum",
-                         f"K = {curve['K']:.1f} (L {curve['length']:.1f} m, A {curve['A']:.2f}%) at {speed:g} km/h; minimum K {kmin:g}.",
-                         ref_k, f"Lengthen to L ≥ {round_up(needed):.0f} m (K {round_up(needed) / curve['A']:.1f}).",
+                         f"K = {curve['K']:.1f} (L {curve['length']:.1f} {self.c.length_unit}, A {curve['A']:.2f}%) at {speed:g} {self.c.speed_unit}; minimum K {kmin:g}.",
+                         ref_k, f"Lengthen to L ≥ {round_up(needed):.0f} {self.c.length_unit} (K {round_up(needed) / curve['A']:.1f}).",
                          value=curve["K"], required=kmin, code="V1")
             elif curve["length"] < needed - 1e-6:
                 reason = c.ref("small_grade_change") if c.get("small_grade_change") and curve["A"] < c.get("small_grade_change")["threshold_percent"] else c.ref("min_vc_length")
                 self.add("Vertical", "Medium" if curve["A"] >= 0.5 else "Low", curve["start"], curve["end"],
-                         f"{label}: shorter than the minimum length", f"L = {curve['length']:.1f} m; minimum {needed:.0f} m at {speed:g} km/h.",
-                         reason, f"Lengthen to L ≥ {round_up(needed):.0f} m.", value=curve["length"], required=needed, code="V2")
+                         f"{label}: shorter than the minimum length", f"L = {curve['length']:.1f} {self.c.length_unit}; minimum {needed:.0f} {self.c.length_unit} at {speed:g} {self.c.speed_unit}.",
+                         reason, f"Lengthen to L ≥ {round_up(needed):.0f} {self.c.length_unit}.", value=curve["length"], required=needed, code="V2")
         gap = self.c.get("crest_sag_gap")
         if gap and gap.get("min"):
             for a, b in zip(curves, curves[1:]):
                 if {a["kind"], b["kind"]} == {"crest", "sag"} and b["start"] - a["end"] < gap["min"] - 1e-6:
                     self.add("Phasing", "Low", a["end"], b["start"], "Crest and sag share an end (dropped road / hump effect)",
-                             f"Straight grade between the curves is {max(0.0, b['start'] - a['end']):.1f} m.", self.c.ref("crest_sag_gap"),
-                             f"Insert {gap['min']:g}–{gap['max']:g} m of constant grade by shortening or moving the curves.", code="P7")
+                             f"Straight grade between the curves is {max(0.0, b['start'] - a['end']):.1f} {self.c.length_unit}.", self.c.ref("crest_sag_gap"),
+                             f"Insert {gap['min']:g}–{gap['max']:g} {self.c.length_unit} of constant grade by shortening or moving the curves.", code="P7")
         return curves
 
     def check_grades(self, model, ground=None):
@@ -302,9 +302,9 @@ class Review:
             limit = self.c.max_grade_length(abs(grade))
             if limit and end - start > limit + 1e-6:
                 self.add("Grades", "Medium", start, end, f"{abs(grade):.2f}% grade longer than {limit:.0f} m",
-                         f"Length {end - start:.0f} m.", self.c.ref("max_grade_length"),
+                         f"Length {end - start:.0f} {self.c.length_unit}.", self.c.ref("max_grade_length"),
                          "Break the grade or consider a climbing lane.", value=end - start, required=limit, code="G3")
-            if min_grade and abs(grade) < min_grade - 1e-9 and end - start > 20:
+            if min_grade and abs(grade) < min_grade - 1e-9 and end - start > self.c.metres(20):
                 in_cut = None
                 if ground is not None:
                     mid = (start + end) / 2.0
@@ -313,12 +313,13 @@ class Review:
                 severity = "Medium" if in_cut else "Low"
                 where = " in cut" if in_cut else ""
                 self.add("Grades", severity, start, end, f"Flat grade {grade:+.2f}%{where}",
-                         f"Below the {min_grade:g}% minimum for longitudinal drainage over {end - start:.0f} m.", self.c.ref("min_grade"),
+                         f"Below the {min_grade:g}% minimum for longitudinal drainage over {end - start:.0f} {self.c.length_unit}.", self.c.ref("min_grade"),
                          f"Use at least {min_grade:g}% or provide side drains with independent falls.", value=grade, required=min_grade, code="G4")
 
     def check_sight(self, model, step=5.0):
-        samples = model.samples(2.0)
-        stride = max(1, int(step / 2.0))
+        sample_step = self.c.metres(2.0)
+        samples = model.samples(sample_step)
+        stride = max(1, int(step / sample_step))
         eye, target = self.c.eye_height, self.c.object_height
         bad = []
         for index in range(0, len(samples), stride):
@@ -351,7 +352,7 @@ class Review:
                 worst = min(group, key=lambda g: g[2] / g[3])
                 label = "increasing" if direction > 0 else "decreasing"
                 self.add("Sight distance", "High", group[0][0], group[-1][0], f"Stopping sight distance not met (travel in {label} chainage)",
-                         f"Lowest available {worst[2]:.0f} m against {worst[3]:.0f} m required at {worst[0]:.0f}.",
+                         f"Lowest available {worst[2]:.0f} {self.c.length_unit} against {worst[3]:.0f} {self.c.length_unit} required at {worst[0]:.0f}.",
                          self.c.ref("ssd"), "Lengthen the crest curve (higher K) or flatten the grades at this crest.",
                          value=worst[2], required=worst[3], code="S1")
 
@@ -383,40 +384,40 @@ class Review:
                     speeds = speeds[::-1]
                     spans = [(b0 + length * k, b0 + length * (k + 1)) for k in range(desirable)]
                 if length:
-                    plan = "; ".join(f"{v:g} km/h over {x0:,.0f}–{x1:,.0f}" for v, (x0, x1) in zip(speeds, spans))
+                    plan = "; ".join(f"{v:g} {self.c.speed_unit} over {x0:,.0f}–{x1:,.0f}" for v, (x0, x1) in zip(speeds, spans))
                 else:
-                    plan = ", ".join(f"{v:g}" for v in speeds) + " km/h"
-                self.add("Design speed", "High", min(a1, b0), max(a1, b0), f"Abrupt design speed change {va:g} → {vb:g} km/h",
-                         f"A change of {step:g} km/h; steps above {maximum:g} km/h are poor design and at least {needed} "
-                         f"intermediate section(s) are needed ({desirable} at the preferred {preferred:g} km/h steps).",
+                    plan = ", ".join(f"{v:g}" for v in speeds) + " {self.c.speed_unit}"
+                self.add("Design speed", "High", min(a1, b0), max(a1, b0), f"Abrupt design speed change {va:g} → {vb:g} {self.c.speed_unit}",
+                         f"A change of {step:g} {self.c.speed_unit}; steps above {maximum:g} {self.c.speed_unit} are poor design and at least {needed} "
+                         f"intermediate section(s) are needed ({desirable} at the preferred {preferred:g} {self.c.speed_unit} steps).",
                          c.ref("speed_change"),
-                         f"Add design speed sections in Civil 3D on the {high:g} km/h side: {plan}; then re-check the curves in them.",
+                         f"Add design speed sections in Civil 3D on the {high:g} {self.c.speed_unit} side: {plan}; then re-check the curves in them.",
                          value=step, required=maximum, code="D1")
             elif step > preferred + 1e-6:
-                self.add("Design speed", "Low", min(a1, b0), max(a1, b0), f"Design speed change {va:g} → {vb:g} km/h",
-                         f"A change of {step:g} km/h is acceptable but steps of {preferred:g} km/h or less are preferred.",
+                self.add("Design speed", "Low", min(a1, b0), max(a1, b0), f"Design speed change {va:g} → {vb:g} {self.c.speed_unit}",
+                         f"A change of {step:g} {self.c.speed_unit} is acceptable but steps of {preferred:g} {self.c.speed_unit} or less are preferred.",
                          c.ref("speed_change"),
-                         f"Consider an intermediate {(high + low) / 2:g} km/h section"
-                         + (f" of at least {transition:g} m." if transition else "."),
+                         f"Consider an intermediate {(high + low) / 2:g} {self.c.speed_unit} section"
+                         + (f" of at least {transition:g} {self.c.length_unit}." if transition else "."),
                          value=step, required=preferred, code="D1")
         if transition:
             for (a0, a1, va), (b0, b1, vb), (c0, c1, vc) in zip(parts, parts[1:], parts[2:]):
                 if min(va, vc) < vb < max(va, vc) and b1 - b0 < transition - 1e-6:
-                    self.add("Design speed", "Medium", b0, b1, f"Short {vb:g} km/h transition section",
-                             f"{b1 - b0:.0f} m between {va:g} and {vc:g} km/h sections; at least {transition:g} m lets drivers adjust speed.",
-                             c.ref("speed_change"), f"Lengthen the {vb:g} km/h section to ≥ {transition:g} m.",
+                    self.add("Design speed", "Medium", b0, b1, f"Short {vb:g} {self.c.speed_unit} transition section",
+                             f"{b1 - b0:.0f} {self.c.length_unit} between {va:g} and {vc:g} {self.c.speed_unit} sections; at least {transition:g} {self.c.length_unit} lets drivers adjust speed.",
+                             c.ref("speed_change"), f"Lengthen the {vb:g} {self.c.speed_unit} section to ≥ {transition:g} {self.c.length_unit}.",
                              value=b1 - b0, required=transition, code="D2")
                 elif va == vc != vb and b1 - b0 < transition - 1e-6:
                     if vb > va:
-                        title = f"Short {vb:g} km/h section between {va:g} km/h sections"
-                        advice = (f"Drivers cannot settle at {vb:g} km/h within {b1 - b0:.0f} m. Merge it into the {va:g} km/h sections, "
-                                  f"or lengthen it to ≥ {transition:g} m.")
+                        title = f"Short {vb:g} {self.c.speed_unit} section between {va:g} {self.c.speed_unit} sections"
+                        advice = (f"Drivers cannot settle at {vb:g} {self.c.speed_unit} within {b1 - b0:.0f} {self.c.length_unit}. Merge it into the {va:g} {self.c.speed_unit} sections, "
+                                  f"or lengthen it to ≥ {transition:g} {self.c.length_unit}.")
                     else:
-                        title = f"Short {vb:g} km/h section between {va:g} km/h sections"
-                        advice = (f"Drivers arriving at {va:g} km/h will not slow within {b1 - b0:.0f} m: design its elements for {va:g} km/h, "
-                                  f"or lengthen it to ≥ {transition:g} m with speed transitions.")
+                        title = f"Short {vb:g} {self.c.speed_unit} section between {va:g} {self.c.speed_unit} sections"
+                        advice = (f"Drivers arriving at {va:g} {self.c.speed_unit} will not slow within {b1 - b0:.0f} m: design its elements for {va:g} {self.c.speed_unit}, "
+                                  f"or lengthen it to ≥ {transition:g} {self.c.length_unit} with speed transitions.")
                     self.add("Design speed", "Low", b0, b1, title,
-                             f"{b1 - b0:.0f} m long; speed oscillation between short sections is inherently unsafe.",
+                             f"{b1 - b0:.0f} {self.c.length_unit} long; speed oscillation between short sections is inherently unsafe.",
                              c.ref("speed_change"), advice, value=b1 - b0, required=transition, code="D2")
         reach = transition or 0.0
         nearest = {}
@@ -444,12 +445,12 @@ class Review:
                     self.findings = [f for f in self.findings if not (f["code"] == "D3" and (f["start"], f["end"]) == key)]
                 nearest[key] = distance
                 self.add("Design speed", "Medium", group["start"], group["end"],
-                         f"Sharp curve R{group['radius']:,.0f} close to a speed reduction ({high:g} → {min(va, vb):g} km/h)",
-                         (f"The curve is {distance:.0f} m from the speed change, within the {reach:g} m drivers need to slow; " if distance > 0.5 else "The curve spans the speed change, so drivers enter it at the higher speed; ")
-                         + f"R{group['radius']:,.0f} is below the {high:g} km/h minimum ({rmin_high:.0f} m).",
+                         f"Sharp curve R{group['radius']:,.0f} close to a speed reduction ({high:g} → {min(va, vb):g} {self.c.speed_unit})",
+                         (f"The curve is {distance:.0f} {self.c.length_unit} from the speed change, within the {reach:g} {self.c.length_unit} drivers need to slow; " if distance > self.c.metres(0.5) else "The curve spans the speed change, so drivers enter it at the higher speed; ")
+                         + f"R{group['radius']:,.0f} is below the {high:g} {self.c.speed_unit} minimum ({rmin_high:.0f} {self.c.length_unit}).",
                          c.ref("speed_change"),
-                         f"Move the speed change at least {reach:g} m before the curve, add an intermediate speed section, "
-                         f"or increase the radius to ≥ {round_up(rmin_high):.0f} m.",
+                         f"Move the speed change at least {reach:g} {self.c.length_unit} before the curve, add an intermediate speed section, "
+                         f"or increase the radius to ≥ {round_up(rmin_high):.0f} {self.c.length_unit}.",
                          value=group["radius"], required=rmin_high, code="D3")
         return parts
 
@@ -464,11 +465,11 @@ class Review:
             label = f"{group['turn'] or ''} curve R{radius:,.0f}".strip()
             if floor and radius < floor:
                 self.add("Horizontal", "High", group["start"], group["end"], f"{label}: below the absolute minimum radius",
-                         f"Absolute minimum {floor:g} m.", c.ref("radius_floor"), "Increase the radius.", value=radius, required=floor, code="H0")
+                         f"Absolute minimum {floor:g} {self.c.length_unit}.", c.ref("radius_floor"), "Increase the radius.", value=radius, required=floor, code="H0")
             elif rmin and radius < rmin - 1e-6:
                 self.add("Horizontal", "High", group["start"], group["end"], f"{label}: radius below minimum",
-                         f"Minimum {rmin:.0f} m at {speed:g} km/h, e max {self.emax:g}%.", c.ref("min_radius"),
-                         f"Increase the radius to ≥ {round_up(rmin):.0f} m or reduce the design speed with signing.",
+                         f"Minimum {rmin:.0f} {self.c.length_unit} at {speed:g} {self.c.speed_unit}, e max {self.emax:g}%.", c.ref("min_radius"),
+                         f"Increase the radius to ≥ {round_up(rmin):.0f} {self.c.length_unit} or reduce the design speed with signing.",
                          value=radius, required=rmin, code="H1")
             required_a = None
             transition_radius = c.transition_required_radius(speed)
@@ -476,8 +477,8 @@ class Review:
             if transition_radius and radius < transition_radius and not spiral_lengths:
                 required_a = c.spiral_min_parameter(speed, radius)
                 self.add("Horizontal", "Medium", group["start"], group["end"], f"{label}: transition curve required",
-                         f"Transitions are required below R{transition_radius:.0f} at {speed:g} km/h.", c.ref("transition"),
-                         f"Add clothoids with A ≥ {required_a:.0f} (L ≥ {required_a ** 2 / radius:.0f} m)." if required_a else "Add transition curves.",
+                         f"Transitions are required below R{transition_radius:.0f} at {speed:g} {self.c.speed_unit}.", c.ref("transition"),
+                         f"Add clothoids with A ≥ {required_a:.0f} (L ≥ {required_a ** 2 / radius:.0f} {self.c.length_unit})." if required_a else "Add transition curves.",
                          value=0.0, required=required_a, code="H2")
             elif spiral_lengths:
                 required_a = c.spiral_min_parameter(speed, radius)
@@ -487,20 +488,20 @@ class Review:
                     if required_a and element["parameter"] < required_a - 1e-6:
                         self.add("Horizontal", "Medium", element["start"], element["end"], f"{label}: transition too short",
                                  f"A = {element['parameter']:.0f}; minimum {required_a:.0f}.", c.ref("transition"),
-                                 f"Lengthen the transition to L ≥ {required_a ** 2 / radius:.0f} m.",
+                                 f"Lengthen the transition to L ≥ {required_a ** 2 / radius:.0f} {self.c.length_unit}.",
                                  value=element["parameter"], required=required_a, code="H3")
             factor = c.get("curve_length_factor")
             arc = group["arc_end"] - group["arc_start"] + (group["spiral_in"] + group["spiral_out"]) / 2.0
             if factor and arc < factor * speed - 1e-6 and group["deflection_deg"] >= 5:
                 self.add("Horizontal", "Low", group["start"], group["end"], f"{label}: short curve",
-                         f"Curve length {arc:.0f} m (arc + half transitions); minimum {factor * speed:.0f} m for major roads.",
+                         f"Curve length {arc:.0f} {self.c.length_unit} (arc + half transitions); minimum {factor * speed:.0f} {self.c.length_unit} for major roads.",
                          c.ref("curve_length"), "Lengthen the curve (larger radius) to avoid a kinked appearance.",
                          value=arc, required=factor * speed, code="H4")
             maximum = c.get("curve_length_max")
             if maximum and group["arc_end"] - group["arc_start"] > maximum:
                 self.add("Horizontal", "Low", group["start"], group["end"], f"{label}: circular curve longer than {maximum:g} m",
                          "Long curves reduce overtaking opportunities.", c.ref("curve_length"),
-                         f"Keep the circular arc ≤ {c.get('curve_length_preferred_max', maximum):g} m where practicable.",
+                         f"Keep the circular arc ≤ {c.get('curve_length_preferred_max', maximum):g} {self.c.length_unit} where practicable.",
                          value=group["arc_end"] - group["arc_start"], required=maximum, code="H5")
             self.check_superelevation(group, speed, superelevation, label)
         self.check_tangents(groups)
@@ -514,13 +515,13 @@ class Review:
             minimum_same = c.get("same_direction_tangent_min")
             if same and minimum_same and tangent < minimum_same - 1e-6:
                 self.add("Phasing", "Medium", a["end"], b["start"], "Broken-back curve",
-                         f"Same-direction curves separated by {tangent:.0f} m of straight (minimum {minimum_same:g} m).",
+                         f"Same-direction curves separated by {tangent:.0f} {self.c.length_unit} of straight (minimum {minimum_same:g} {self.c.length_unit}).",
                          c.ref("same_direction_tangent"), "Replace both curves by a single larger-radius curve, or lengthen the straight.",
                          value=tangent, required=minimum_same, code="H6")
             minimum = c.get("tangent_min_factor")
             if minimum and not same and 0 < tangent < minimum * speed - 1e-6:
                 self.add("Horizontal", "Low", a["end"], b["start"], "Short straight between reverse curves",
-                         f"{tangent:.0f} m; Table guidance {minimum * speed:.0f} m (6V) when a curve is followed by the next curve.",
+                         f"{tangent:.0f} {self.c.length_unit}; Table guidance {minimum * speed:.0f} {self.c.length_unit} (6V) when a curve is followed by the next curve.",
                          c.ref("tangents"), "Check that superelevation reversal and run-off fit, or join with a reverse spiral.",
                          value=tangent, required=minimum * speed, code="H7")
         maximum = c.get("tangent_max_factor")
@@ -531,14 +532,14 @@ class Review:
                 limit = c.get("tangent_max_cap_high_speed", 4000) if speed >= 100 else maximum * speed
                 if tangent > limit:
                     self.add("Horizontal", "Low", a["end"], b["start"], "Long straight",
-                             f"{tangent:.0f} m; maximum {limit:.0f} m.", c.ref("tangents"),
+                             f"{tangent:.0f} {self.c.length_unit}; maximum {limit:.0f} {self.c.length_unit}.", c.ref("tangents"),
                              "Introduce gentle curvature to limit speeding and fatigue.", value=tangent, required=limit, code="H8")
                 factor = c.get("isolated_curve_factor")
                 rmin = c.min_radius(self.speed(b["start"], b["end"]), self.emax)
                 if factor and rmin and tangent > limit and b["radius"] < factor * rmin:
                     self.add("Horizontal", "Medium", b["start"], b["end"], f"Isolated curve R{b['radius']:,.0f} after a long straight",
-                             f"Isolated curves need {factor:g} × the minimum radius ({factor * rmin:.0f} m).", c.ref("isolated_curve"),
-                             f"Increase the radius to ≥ {round_up(factor * rmin):.0f} m.", value=b["radius"], required=factor * rmin, code="H9")
+                             f"Isolated curves need {factor:g} × the minimum radius ({factor * rmin:.0f} {self.c.length_unit}).", c.ref("isolated_curve"),
+                             f"Increase the radius to ≥ {round_up(factor * rmin):.0f} {self.c.length_unit}.", value=b["radius"], required=factor * rmin, code="H9")
 
     def check_superelevation(self, group, speed, records, label):
         c = self.c
@@ -550,15 +551,15 @@ class Review:
             required, text = self.emax, f"e max {self.emax:g}% (radius below the table)"
         if text not in ("NC",) and provided is None and required > 0:
             self.add("Superelevation", "High", group["start"], group["end"], f"{label}: no superelevation transition",
-                     f"{text} required at {speed:g} km/h, e max {self.emax:g}%.", c.ref("superelevation"),
-                     f"Apply {text} superelevation with run-off ≥ {c.runoff_min(speed, required, self.lane_width):.0f} m.",
+                     f"{text} required at {speed:g} {self.c.speed_unit}, e max {self.emax:g}%.", c.ref("superelevation"),
+                     f"Apply {text} superelevation with run-off ≥ {c.runoff_min(speed, required, self.lane_width):.0f} {self.c.length_unit}.",
                      value=None, required=required, code="E1")
             return
         if provided is None:
             return
         if text != "NC" and provided < required - 0.25:
             self.add("Superelevation", "High", group["start"], group["end"], f"{label}: superelevation below the required rate",
-                     f"{provided:g}% provided; {text} required at {speed:g} km/h, e max {self.emax:g}%.", c.ref("superelevation"),
+                     f"{provided:g}% provided; {text} required at {speed:g} {self.c.speed_unit}, e max {self.emax:g}%.", c.ref("superelevation"),
                      f"Increase full superelevation to {required:.1f}%.", value=provided, required=required, code="E2")
         if provided > self.emax + 1e-6:
             self.add("Superelevation", "Medium", group["start"], group["end"], f"{label}: superelevation above e max",
@@ -566,10 +567,10 @@ class Review:
                      value=provided, required=self.emax, code="E3")
         runoff = min(record["full_start"] - record["begin_runoff"], record["end_runoff"] - record["full_end"])
         needed = c.runoff_min(speed, provided, self.lane_width)
-        if needed and runoff < needed - 0.5:
+        if needed and runoff < needed - self.c.metres(0.5):
             self.add("Superelevation", "Medium", record["begin_runoff"], record["end_runoff"], f"{label}: run-off too short",
-                     f"{runoff:.1f} m provided; minimum {needed:.0f} m at {speed:g} km/h.", c.ref("runoff"),
-                     f"Lengthen the run-off to ≥ {round_up(needed):.0f} m.", value=runoff, required=needed, code="E4")
+                     f"{runoff:.1f} {self.c.length_unit} provided; minimum {needed:.0f} {self.c.length_unit} at {speed:g} {self.c.speed_unit}.", c.ref("runoff"),
+                     f"Lengthen the run-off to ≥ {round_up(needed):.0f} {self.c.length_unit}.", value=runoff, required=needed, code="E4")
 
     def check_combined_grade(self, model, records):
         limit = self.c.get("max_combined_grade_percent")
@@ -597,16 +598,15 @@ class Review:
                 start_in = curve["start"] < group["start"] < curve["end"]
                 end_in = curve["start"] < group["end"] < curve["end"]
                 tag = f"{curve['kind']} PVI {curve['station']:.0f} / curve R{group['radius']:,.0f}"
-                ref = self.c.ref("phasing")
                 if overlap <= 0:
                     gap = max(group["start"] - curve["end"], curve["start"] - group["end"])
                     if curve["kind"] == "crest" and 0 <= group["start"] - curve["station"] <= curve["length"] / 2 + ssd:
                         self._phasing(curve, group, "P1", "High", f"Start of horizontal curve hidden beyond a crest ({tag})",
                                       "The curve starts on the down grade after the crest, within stopping sight distance.",
                                       "S7.11/7.12", model)
-                    elif 0 < gap < max(ssd / 2.0, 30.0):
+                    elif 0 < gap < max(ssd / 2.0, self.c.metres(30.0)):
                         self.add("Phasing", "Low", min(curve["end"], group["end"]), max(curve["start"], group["start"]),
-                                 f"Insufficient separation ({tag})", f"Only {gap:.0f} m between the curves.", f"{ref} (S7.13)",
+                                 f"Insufficient separation ({tag})", f"Only {gap:.0f} {self.c.length_unit} between the curves.", self.phasing_ref("S7.13"),
                                  "Separate the curves further or make them concurrent.", code="P5")
                     continue
                 if start_in and end_in:
@@ -621,7 +621,7 @@ class Review:
                     detail = ("The change of direction is perceived late because the crest limits sight distance."
                               if curve["kind"] == "crest" else "An apparent kink appears where the sag overlaps the curve end.")
                     if curve["kind"] == "sag" and abs(curve["end"] - group["start"]) < curve["length"] / 2:
-                        detail = "A sag at the start of the horizontal curve exaggerates its sharpness (S7.5)."
+                        detail = "A sag at the start of the horizontal curve exaggerates its sharpness."
                     self._phasing(curve, group, "P3", severity, f"Vertical curve overlaps one end of the horizontal curve ({tag})",
                                   detail, "S7.12", model)
                 else:
@@ -634,13 +634,17 @@ class Review:
             kinds = [c["kind"] for c in within]
             if len(within) >= 2 and "crest" in kinds and "sag" in kinds:
                 self.add("Phasing", "Low", group["start"], group["end"], f"Rolling grade line on curve R{group['radius']:,.0f}",
-                         f"{len(within)} vertical curves within one horizontal curve.", f"{self.c.ref('phasing')} (S7.9)",
+                         f"{len(within)} vertical curves within one horizontal curve.", self.phasing_ref("S7.9"),
                          "Maintain a constant grade through the horizontal curve.", code="P6")
+
+    def phasing_ref(self, section):
+        ref = self.c.ref("phasing")
+        return f"{ref} ({section})" if self.c.id == "kenya_rdm13_2025" else ref
 
     def _phasing(self, curve, group, code, severity, title, detail, section, model):
         recommendation, fix = self.phase_fix(model, curve, group, allow_separation=code != "P1")
         self.add("Phasing", severity, min(curve["start"], group["start"]), max(curve["end"], group["end"]), title, detail,
-                 f"{self.c.ref('phasing')} ({section})", recommendation, code=code)
+                 self.phasing_ref(section), recommendation, code=code)
         if fix:
             self.findings[-1]["fix"] = fix
 
@@ -663,7 +667,7 @@ class Review:
                 candidates.append(("start of the vertical curve on the start of the horizontal curve", pvi, 2 * (pvi - group["start"])))
             if pvi < group["end"]:
                 candidates.append(("end of the vertical curve on the end of the horizontal curve", pvi, 2 * (group["end"] - pvi)))
-        margin = max((self.c.ssd(speed, 0.0) or 0.0) / 2.0, 30.0)
+        margin = max((self.c.ssd(speed, 0.0) or 0.0) / 2.0, self.c.metres(30.0))
         if allow_separation and pvi < group["start"] - margin:
             candidates.append(("separate the curves (vertical curve ends half an SSD before the horizontal curve)", pvi, 2 * (group["start"] - margin - pvi)))
         if allow_separation and pvi > group["end"] + margin:
@@ -678,14 +682,14 @@ class Review:
         canonical = [e for e in evaluated if e["label"].startswith("both ends")]
         best = feasible[0] if feasible else (canonical[0] if canonical else min(evaluated, key=lambda e: (len(e["problems"]), e["max_change"])))
         text = (
-            f"{best['label'][0].upper() + best['label'][1:]}: PVI {best['station']:.2f} (elev {best['elevation']:.3f}), L = {best['length']:.0f} m "
-            f"(K {best['K']:.1f}); grades {best['g1']:+.3f}% / {best['g2']:+.3f}%; profile changes by up to {best['max_change']:.2f} m."
+            f"{best['label'][0].upper() + best['label'][1:]}: PVI {best['station']:.2f} (elev {best['elevation']:.3f}), L = {best['length']:.0f} {self.c.length_unit} "
+            f"(K {best['K']:.1f}); grades {best['g1']:+.3f}% / {best['g2']:+.3f}%; profile changes by up to {best['max_change']:.2f} {self.c.length_unit}."
         )
         if best["problems"]:
             text += " Not achievable as is: " + "; ".join(best["problems"]) + "."
         others = [e for e in (feasible[1:] if feasible else []) if e is not best][:1]
         for other in others:
-            text += f" Alternative — {other['label']}: PVI {other['station']:.2f}, L {other['length']:.0f} m (change {other['max_change']:.2f} m)."
+            text += f" Alternative — {other['label']}: PVI {other['station']:.2f}, L {other['length']:.0f} {self.c.length_unit} (change {other['max_change']:.2f} {self.c.length_unit})."
         fix = {key: best[key] for key in ("station", "elevation", "length", "g1", "g2", "K", "max_change", "feasible")}
         fix.update(pvi_index=i, old_station=pvi, old_elevation=curve["elevation"], old_length=curve["length"], label=best["label"])
         return text, fix
@@ -710,7 +714,7 @@ class Review:
         p["length"] = length
         problems = []
         if length < needed - 1e-6:
-            problems.append(f"L {length:.0f} m is below the {needed:.0f} m required at {speed:g} km/h")
+            problems.append(f"L {length:.0f} {self.c.length_unit} is below the {needed:.0f} {self.c.length_unit} required at {speed:g} {self.c.speed_unit}")
         if not trial.fits(i):
             problems.append("it would overlap a neighbouring vertical curve")
         new_curve = trial.curves()[i - 1]
@@ -765,7 +769,7 @@ class Review:
                     continue
                 height = hinge[1] - outer[1]
                 run = abs(outer[0] - hinge[0])
-                if height <= 0.5 or run <= 0:
+                if height <= self.c.metres(0.5) or run <= 0:
                     continue
                 ratio = run / height
                 warrant = None
@@ -781,7 +785,7 @@ class Review:
             rows = sorted(f for f in flagged if f[1] == side)
             groups, current = [], []
             for row in rows:
-                if current and row[0] - current[-1][0] > 60:
+                if current and row[0] - current[-1][0] > self.c.metres(60):
                     groups.append(current)
                     current = []
                 current.append(row)
@@ -798,12 +802,12 @@ class Review:
                 worst = max(group, key=lambda g: g[3])
                 recommendation = (
                     f"Provide a {side}-side safety barrier from {start - (runout or 0):.0f} to {end + (runout or 0):.0f} "
-                    f"(≈ {total:.0f} m including {runout:.0f} m run-out each end)." if runout
-                    else f"Provide a {side}-side safety barrier over {start:.0f}–{end:.0f} plus run-out per the standard (≥ {barrier.get('min_length', 30):g} m)."
+                    f"(≈ {total:.0f} {self.c.length_unit} including {runout:.0f} {self.c.length_unit} run-out each end)." if runout
+                    else f"Provide a {side}-side safety barrier over {start:.0f}–{end:.0f} plus run-out per the standard (≥ {barrier.get('min_length', 30):g} {self.c.length_unit})."
                 )
                 self.add("Roadside safety", "High" if warranted else "Medium", start, end,
                          f"Embankment barrier {'warranted' if warranted else 'to be assessed'} ({side})",
-                         f"Fill height up to {worst[3]:.1f} m with side slope 1:{worst[4]:.1f}.", self.c.ref("barrier"),
+                         f"Fill height up to {worst[3]:.1f} {self.c.length_unit} with side slope 1:{worst[4]:.1f}.", self.c.ref("barrier"),
                          recommendation if warranted else "Assess against the barrier warrant chart; " + recommendation,
                          side=side, value=worst[3], required=barrier["warrant_height"], code="R1")
 
@@ -844,8 +848,8 @@ class Review:
             if worst:
                 self.add("Sight distance", "Medium", group["arc_start"], group["arc_end"],
                          f"Cut slope limits sight on curve R{radius:,.0f} ({group['turn']})",
-                         f"Clearance {worst[1]:.1f} m from the inside lane centre at {worst[0]:.0f}; {hso:.1f} m needed for SSD {ssd:.0f} m.",
-                         self.c.ref("ssd"), f"Bench or flatten the inside cut to clear {hso:.1f} m from the inside lane centre (offset {sign * (lane + hso):+.1f} m).",
+                         f"Clearance {worst[1]:.1f} {self.c.length_unit} from the inside lane centre at {worst[0]:.0f}; {hso:.1f} {self.c.length_unit} needed for SSD {ssd:.0f} {self.c.length_unit}.",
+                         self.c.ref("ssd"), f"Bench or flatten the inside cut to clear {hso:.1f} {self.c.length_unit} from the inside lane centre (offset {sign * (lane + hso):+.1f} {self.c.length_unit}).",
                          side="right" if sign > 0 else "left", value=worst[1], required=hso, code="S2")
 
     def sorted_findings(self):
@@ -920,7 +924,7 @@ def _change(before, after, low, high):
     return max(abs(after.elevation(s) - before.elevation(s)) for s in stations)
 
 
-def recommended_profile(model, findings, max_change=1.0):
+def recommended_profile(model, findings, max_change=1.0, length_unit="m"):
     """Apply feasible fixes whose profile change stays within ``max_change``.
 
     Larger corrections are left for redesign and flagged on the finding.
@@ -930,7 +934,7 @@ def recommended_profile(model, findings, max_change=1.0):
     for item in sorted((f for f in findings if f.get("fix") and f["fix"]["feasible"]), key=lambda f: f["fix"]["old_station"]):
         fix = item["fix"]
         if max_change is not None and fix["max_change"] > max_change + 1e-9:
-            item["recommendation"] += f" Not applied to the recommended profile (change above {max_change:g} m: redesign this section)."
+            item["recommendation"] += f" Not applied to the recommended profile (change above {max_change:g} {length_unit}: redesign this section)."
             continue
         index = fix["pvi_index"]
         p = result.pvis[index]
@@ -958,9 +962,9 @@ def recommended_profile(model, findings, max_change=1.0):
                 item["recommendation"] += " It does not fit between the neighbouring curves: move or flatten them first."
             elif max_change is not None and change > max_change + 1e-9:
                 p["length"] = old
-                item["recommendation"] += f" Profile change {change:.2f} m exceeds {max_change:g} m: not applied (redesign)."
+                item["recommendation"] += f" Profile change {change:.2f} {length_unit} exceeds {max_change:g} {length_unit}: not applied (redesign)."
             else:
-                item["recommendation"] += f" Applied in the recommended profile (change {change:.2f} m)."
+                item["recommendation"] += f" Applied in the recommended profile (change {change:.2f} {length_unit})."
                 applied.append(item)
     return result, applied
 
@@ -999,25 +1003,32 @@ def review_alignment(
     speed_at = speed_function(list(speeds), design_speed)
     if speed_at(record and float(record.get("sta_start") or 0.0)) is None:
         raise ValueError("No design speed: the file records none, so enter one.")
-    review = Review(criteria, speed_at, emax, road_type, terrain, max_grade)
     elements = horizontal_elements(record)
     groups = curve_groups(elements)
     model = ProfileModel.from_controls(controls) if len(controls) >= 2 else None
+    start = float(record.get("sta_start") or (elements[0]["start"] if elements else 0.0)) if record else 0.0
+    end = elements[-1]["end"] if elements else (model.pvis[-1]["station"] if model is not None else start)
+    if criteria.units == "us_customary":
+        limits = criteria.data.get("min_radius", {}).get(str(int(emax))) or criteria.data["ssd"]
+        low, high = min(map(float, limits)), max(map(float, limits))
+        # Vertical and runoff tables start at 15 mph.
+        for _low, _high, speed in speed_at.sections(start, end):
+            if speed is not None and not max(15, low) <= speed <= high:
+                raise ValueError(f"US customary criteria with e max {emax:g}% support {max(15, low):g}-{high:g} mph.")
+    review = Review(criteria, speed_at, emax, road_type, terrain, max_grade)
     if model is not None:
         review.check_vertical(model)
         review.check_grades(model, ground)
-        review.check_sight(model, sight_step)
+        review.check_sight(model, criteria.metres(sight_step))
         review.check_phasing(model, groups)
         review.check_combined_grade(model, superelevation)
     review.check_horizontal(elements, groups, superelevation)
-    start = float(record.get("sta_start") or (elements[0]["start"] if elements else 0.0)) if record else 0.0
-    end = elements[-1]["end"] if elements else (model.pvis[-1]["station"] if model is not None else start)
     speed_sections = review.check_speed_changes(start, end, groups)
     if section_views:
         review.check_barriers(section_views)
         review.check_curve_sight(groups, section_views)
     findings = review.sorted_findings()
-    recommended, applied = (recommended_profile(model, findings, max_change) if model is not None else (None, []))
+    recommended, applied = (recommended_profile(model, findings, max_change, criteria.length_unit) if model is not None else (None, []))
     return {
         "findings": findings,
         "groups": groups,
