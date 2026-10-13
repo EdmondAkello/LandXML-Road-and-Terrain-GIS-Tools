@@ -169,9 +169,11 @@ In QGIS, choose **Settings → User Profiles → Open Active Profile Folder**. I
 From the repository root:
 
 ```
-pip install bandit detect-secrets flake8
+python -m pip install bandit detect-secrets flake8
 python tools/build_release.py
 ```
+
+The build script runs these tools through the same Python interpreter, so their executable launchers do not need to be on `PATH`. On Windows, pip's warning that its Scripts folder is not on `PATH` can be ignored for this workflow.
 
 This writes `dist/landxml_tin_to_geotiff-<version>.zip` from committed files (the plugin runtime only; tests and developer documents are left out) and runs the checks plugins.qgis.org applies on upload: the package layout, forbidden and hidden files, required metadata, LICENSE, executable permissions, Bandit with the repository's enabled rules, detect-secrets and flake8. In QGIS, choose **Plugins → Manage and Install Plugins → Install from ZIP**, select the ZIP, and enable **LandXML Road & Terrain GIS Tools**. Search the **Processing Toolbox** for **Inspect LandXML** to confirm it loaded.
 

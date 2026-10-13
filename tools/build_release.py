@@ -11,7 +11,7 @@ out. The checks mirror plugins.qgis.org: the upload validator (layout,
 forbidden files, required metadata, LICENSE, package name), and the security
 scan (Bandit with the repository's enabled rules, detect-secrets, flake8 with
 the enabled codes, executable and hidden files). Bandit, detect-secrets and
-flake8 must be installed (``pip install bandit detect-secrets flake8``).
+flake8 must be installed (``python -m pip install bandit detect-secrets flake8``).
 """
 
 import argparse
@@ -130,7 +130,7 @@ def check(path):
         try:
             archive.extractall(temp)  # nosec B202 - our own archive, names checked above
             folder = os.path.join(temp, PACKAGE)
-            bandit = run(["bandit", "-r", folder, "-f", "json", "--quiet", "-t", BANDIT_TESTS])
+            bandit = run([sys.executable, "-m", "bandit", "-r", folder, "-f", "json", "--quiet", "-t", BANDIT_TESTS])
             try:
                 results = json.loads(bandit.stdout or "{}").get("results", [])
             except ValueError:
@@ -138,7 +138,7 @@ def check(path):
                 problems.append("Bandit did not run: " + (bandit.stderr or bandit.stdout)[:200])
             for issue in results or []:
                 problems.append(f"Bandit {issue['test_id']} {issue['filename'].replace(folder, '')}:{issue['line_number']} {issue['issue_text']}")
-            secrets = run(["detect-secrets", "scan", "--all-files", "--exclude-files", r"metadata\.txt", "."], cwd=folder)
+            secrets = run([sys.executable, "-m", "detect_secrets", "scan", "--all-files", "--exclude-files", r"metadata\.txt", "."], cwd=folder)
             try:
                 found = json.loads(secrets.stdout).get("results", {})
             except ValueError:
@@ -148,7 +148,7 @@ def check(path):
                 for item in items:
                     problems.append(f"secret {item['type']} in {filename}:{item['line_number']}")
             python_files = [os.path.join(r, f) for r, _d, fs in os.walk(folder) for f in fs if f.endswith(".py")]
-            flake8 = run(["flake8", "--max-line-length=120", "--select", FLAKE8_SELECT] + python_files)
+            flake8 = run([sys.executable, "-m", "flake8", "--max-line-length=120", "--select", FLAKE8_SELECT] + python_files)
             if flake8.returncode not in (0, 1):
                 problems.append("flake8 did not run: " + flake8.stderr[:200])
             for line in flake8.stdout.splitlines():
