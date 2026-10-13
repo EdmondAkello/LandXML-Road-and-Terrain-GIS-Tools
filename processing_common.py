@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from qgis.core import Qgis, QgsProcessingException
+from qgis.core import (
+    Qgis,
+    QgsProcessingException,
+    QgsProcessingLayerPostProcessorInterface,
+)
 
+from .landxml.catalog import match_name, read_catalog
 from .landxml.parser import load_document
 
 
@@ -106,3 +111,53 @@ def coordinate_choices(algorithm, parameters, context, feedback, path):
     if method != "stored":
         feedback.pushInfo(f"Explicit coordinate operation: {method}")
     return method, out, src, params, document
+
+
+SOURCE_PROPERTY = "landxml/source_path"
+
+
+class LayerPostProcessor(QgsProcessingLayerPostProcessorInterface):
+    """Style a loaded result layer and remember its LandXML source.
+
+    The source path is stored as a layer custom property (saved in the QGIS
+    project, not in the output data) so the profile viewer can reopen the
+    LandXML file when the user clicks a feature.
+    """
+
+    def __init__(self, apply=None, source_path=None):
+        super().__init__()
+        self.apply = apply
+        self.source_path = source_path
+
+    def postProcessLayer(self, layer, context, feedback):
+        if self.source_path:
+            layer.setCustomProperty(SOURCE_PROPERTY, self.source_path)
+        if self.apply is not None:
+            self.apply(layer)
+        layer.triggerRepaint()
+        processors = getattr(context, "_landxml_post_processors", None)
+        if processors is not None and self in processors:
+            processors.remove(self)
+
+
+def attach_post_processor(context, destination, apply=None, source_path=None):
+    """Attach to an output that Processing will load; never force loading."""
+    if not destination or not context.willLoadLayerOnCompletion(destination):
+        return None
+    processor = LayerPostProcessor(apply, source_path)
+    processors = getattr(context, "_landxml_post_processors", [])
+    processors.append(processor)
+    context._landxml_post_processors = processors
+    context.layerToLoadOnCompletionDetails(destination).setPostProcessor(processor)
+    return processor
+
+
+def resolve_name(path, kind, value, label):
+    """Resolve a typed source name forgivingly; blank stays blank."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        return match_name(read_catalog(path).names(kind), value, label)
+    except (OSError, ValueError) as exc:
+        raise QgsProcessingException(str(exc)) from exc

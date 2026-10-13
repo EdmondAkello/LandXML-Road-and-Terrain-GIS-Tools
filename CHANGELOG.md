@@ -1,5 +1,66 @@
 # Changelog
 
+## 1.8.1 — unreleased
+
+### Changed
+- **Printable reports.** All HTML reports now print to PDF from Chrome or Edge with A4 page layout, the report title and page numbers in the footer, chart colours and legend swatches kept, headings kept with their charts, and long tables split across pages with repeated headers. Previously, long tables were moved whole to the next page, leaving blank pages (a 4-alignment design report went from 89 to 54 pages), and the first page held only the title.
+- Tables align numbers and chainages right and text left.
+- Review findings are grouped by category, with severity, code and chainage range in compact columns and wider issue and recommendation columns.
+- The Road Design Report opens with a table of its alignments (chainage, length, design speeds, findings).
+- User guide: where to find the Profile Viewer (Plugins menu and toolbar, not the Processing Toolbox) and how to save reports as PDF.
+
+### Fixed
+- The design-speed card listed speeds recorded beyond the end of an alignment.
+- A curve that spans a speed change is described as such instead of "0 m from the speed change".
+
+## 1.8.0 — unreleased
+
+### Fixed
+- Where Civil 3D records two speeds at the same station, the later one is used (previously the higher).
+
+### Added
+- **Geometric Design Review.** Checks alignment phasing, stopping sight distance (on the profile and on horizontal curves), crest and sag K, vertical curve length, grades and critical lengths, radii, transition spirals, tangents, broken-back and isolated curves, superelevation and run-off, combined grade, and safety barrier warrants from embankment height and side slope.
+- **Selectable standards:** Kenya RDM 1.3 (2025) Geometric Design manual (default) and AASHTO 2018 (Civil 3D's default basis), as editable JSON criteria files. Every finding cites its table.
+- **Recommended profile for Civil 3D:** phasing and K fixes are computed as PVI moves and curve lengths, capped by a maximum level change, and written as a Create Profile from File text file and a LandXML profile.
+- Findings table, findings on the map, and an HTML report with a phasing diagram, level-change chart, recommended PVI table and barrier schedule.
+- **Design speed variations.** Speed stations defined in Civil 3D are followed section by section, and each element is checked at the highest speed over its length. New checks flag speed steps above the standard (with the intermediate sections to add), short transition or oscillating speed sections, and sharp curves just past a speed reduction (RDM S3.10.3, S5.5, S5.14). The report tabulates the speed sections.
+- Design speed by chainage ranges, to override the file.
+- The Road Design Report can include the review for each alignment.
+- **User Guide and Technical Manual** (PDF, `docs/user-guide`), with figures produced by the plugin from a synthetic demonstration road (`tools/guide`).
+- `tools/build_release.py` builds the plugin repository ZIP and runs the plugins.qgis.org upload and security checks.
+
+## 1.7.0 — unreleased
+
+### Added
+- **Name dropdowns and forgiving matching.** Surface, alignment, profile and section-surface fields list the names in the chosen LandXML file and refresh when the file changes. Typed names match case-insensitively or by a unique part (`ogl`). Unknown names are reported with the available list. A fast catalog scans start tags only (0.2–0.4 s on 45–75 MB exports).
+- **Automatic surface choice.** Surface Cut/Fill can leave both names blank. It then uses a recorded Civil 3D volume-surface pair, or the existing-ground profile surface against the Roadway corridor surface (datum/bottom preferred), and logs the reason.
+- **Cross-Section Sheets and Report.** Multi-page PDF sheets (A4/A3/A1, 1–12 per sheet), an HTML report with a section table and drawings, and one PNG per section. Drawings show ground and design lines, cut/fill shading, pavement layers, the Datum, slope ratios with steep-slope highlighting, daylight offsets, centreline levels and areas. A station range and interval select which sections to plot.
+- **Cross-sections tab in the Profile Viewer**, synchronised with the profile chainage, the map marker and section navigation, with PNG/SVG/PDF export.
+- **Road Design Report.** A schematic plan, curvature, gradient, long-section/depth and superelevation diagrams, horizontal, vertical and superelevation tables, summary cards and design speeds, with long alignments split into chart strips.
+- Alignment elements now carry their true length and spiral radii, and superelevation transitions are parsed.
+
+### Changed
+- Tables in HTML reports show whole numbers without decimals, and chainage labels at chart edges stay inside the drawing.
+
+## 1.6.0 — unreleased
+
+### Added
+- **LandXML Profile Viewer** dock and **Pick Alignment Profile on Map** tool: click an alignment-based layer to open its existing-ground vs design long-section at that chainage. Shaded cut/fill, depth panel, VPI/K labels, transition markers, segment table, hover readout linked to a map marker, zoom/pan, on-grade tolerance and structure exclusions. Exports PNG, SVG, PDF (A3), clipboard image, station-table and segment CSV, and an HTML report. Drawn with QPainter; no plotting dependency.
+- **Profile Cut/Fill Analysis (Existing vs Design)**: depth table, cut/fill segments with high-fill/deep-cut flags, cut↔fill transition points on the map, optional level-section earthworks and side-slope estimate, HTML report with long-section and depth diagrams.
+- **Corridor Section Quantities**: from Civil 3D sample-line cross-sections — cut/fill areas, average-end-area volumes, mass-haul ordinate with shrink/bulk factor, Datum-based earthworks, corridor material (shape) volumes, embankment and cut side-slope areas for grassing with steep-slope flags, side-slope and footprint polygons along the alignment, and an HTML report.
+- **Surface Cut/Fill (TIN Difference)**: shared-grid TIN difference GeoTIFF with cut/fill/net volumes and a comparison with any Civil 3D `SurfVolume` recorded in the file.
+- Existing-ground (`ProfSurf`) profile parsing with gap handling; Inspect LandXML now lists surface profiles and recorded Civil 3D surface volumes.
+- Processing outputs remember their LandXML source as a QGIS project layer property (not in the data) so the viewer can reopen it; new map outputs are styled on load.
+
+### Fixed
+- **Station-relative cross-sections were placed at false map coordinates.** `CrossSectSurf/PntList2D` holds offset/elevation pairs, but they were written as map X/Y (sections appeared near X = offset, Y = elevation). They are now positioned along their alignment as 3D lines, one per section surface; previously only the first surface of each section was read.
+- **Hidden TIN triangles were rasterized.** Faces flagged `i="1"` (Civil 3D triangles hidden by surface boundaries) are now excluded from GeoTIFFs, boundaries and volumes. On a private export this changed a TIN-difference fill volume from 1,423 to 1,359 m³, matching the 1,358.8 m³ Civil 3D recorded.
+- **Chainage drift on curves.** Station points, 3D centerlines and map profile overlays used chord lengths between densified vertices; on a 36 km private alignment the end station was 0.33 m short. True arc lengths now match declared alignment lengths to 0.1 mm.
+- Profile control labels use `0+000.00` chainage for metric files (previously `1+00.00` style for all units).
+
+### Validation
+- 60 tests (parser, earthworks with closed-form expectations, Processing and offscreen GUI) pass on Linux QGIS 3.44.14. Six private Civil 3D exports were run through every tool (names withheld; see `docs/earthworks-validation.md`). The chart widget was exercised under PyQt6 6.11; desktop QGIS 4 checks remain outstanding. Ruff (`F,E4,E7,E9`) and Bandit report no findings.
+
 ## 1.5.0 — unreleased
 
 - Removed the default 250-million-cell cap from TIN rasterization for both TIN to GeoTIFF and Complete Road Design exports, allowing the requested pixel size on larger surfaces.
@@ -39,13 +100,13 @@
 - **3D centerlines always reported `z_source: "No profile; Z=0"` even when a matching profile existed.** `Centerline3DAlgorithm` and the Complete Road Design export both looked for an `alignment=` attribute on `<ProfAlign>` to associate a profile with its alignment, but real `<ProfAlign>` elements carry no such attribute — the owning alignment's name lives on the parent `<Alignment>` element, with `<Profile><ProfAlign>` nested inside it. Fixed by walking `<Alignment>` elements and searching within each for its nested profile, with a fallback pass for any `ProfAlign` that does carry an explicit `alignment=` reference. Verified: centerlines now correctly report `z_source: "Vertical profile"` with Z-values matching the source profile's elevation range.
 
 ### Known limitation (documented, not fixed)
-- **Design-template cross-sections (`DesignCrossSectSurf`/`CrossSectPnt`) are not extracted.** Only absolute-coordinate `CrossSectSurf`/`PntList2D`|`PntList3D` cross-sections were ever supported. In the Olkaria sample, 3,235 of 3,569 `CrossSect` records are design-template-only and are skipped. Full support would require reconstructing XY geometry from alignment station + offset, which is a larger feature than a bug fix and was not attempted here to avoid an unverified, rushed change. `CrossSectionsAlgorithm` and the Complete Road Design export now emit an explicit `pushWarning()` reporting the skipped count instead of silently dropping the data, and the limitation is documented in the tool's help text.
+- **Design-template cross-sections (`DesignCrossSectSurf`/`CrossSectPnt`) are not extracted.** Only absolute-coordinate `CrossSectSurf`/`PntList2D`|`PntList3D` cross-sections were ever supported. In one private sample, 3,235 of 3,569 `CrossSect` records are design-template-only and are skipped. Full support would require reconstructing XY geometry from alignment station + offset, which is a larger feature than a bug fix and was not attempted here to avoid an unverified, rushed change. `CrossSectionsAlgorithm` and the Complete Road Design export now emit an explicit `pushWarning()` reporting the skipped count instead of silently dropping the data, and the limitation is documented in the tool's help text.
 
 ### Changed
 - Trademark/branding review for this release: no ArcGIS/ArcHydro/ESRI references were found in this plugin. "Civil 3D" file-format-origin references were kept, since they describe the source file format rather than a comparison claim.
 
 ### Verification
-All 10 Processing algorithms were run end-to-end against both real sample LandXML files (`Proposed Nithi Bridge Realignment.xml`, `Olkaria LOT 3-design alignment 09.07.2026.xml`), including `Complete Road Design` run twice per sample mirroring the exact parameter combinations from the reported crash. Verification used a QGIS test stub whose parameter-reading and sink/geometry glue is backed by real `osgeo.gdal`/`ogr`/`osr` bindings rather than mocks, so algorithms ran to completion and produced real, inspectable GeoTIFF/GeoPackage output — not just "no exception raised." Final run: 22/22 cases passed, with output feature counts, geometries, and elevation ranges checked directly against the source XML.
+All 10 Processing algorithms were run end-to-end against two private sample LandXML files (project names withheld), including `Complete Road Design` run twice per sample mirroring the exact parameter combinations from the reported crash. Verification used a QGIS test stub whose parameter-reading and sink/geometry glue is backed by real `osgeo.gdal`/`ogr`/`osr` bindings rather than mocks, so algorithms ran to completion and produced real, inspectable GeoTIFF/GeoPackage output — not just "no exception raised." Final run: 22/22 cases passed, with output feature counts, geometries, and elevation ranges checked directly against the source XML.
 
 ## 1.4.8 — 2026-08-23
 

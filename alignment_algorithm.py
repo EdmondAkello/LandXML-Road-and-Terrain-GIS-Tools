@@ -8,7 +8,6 @@ from qgis.core import (
     QgsProcessingParameterCrs,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterEnum,
-    QgsProcessingParameterString,
     QgsProcessingException,
     QgsFeature,
     QgsGeometry,
@@ -21,8 +20,10 @@ from .compat import FIELD_STRING, FIELD_DOUBLE
 
 from .core import transform_vertices
 from .landxml.geometry import read_alignments
-from .processing_common import BoundsTracker, coordinate_choices
+from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices
 from .params import number_param
+from .processing_widgets import name_param
+from .processing_common import resolve_name
 
 METHODS = [
     "Use stored coordinates",
@@ -133,12 +134,7 @@ class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
-            QgsProcessingParameterString(
-                self.ALIGNMENT,
-                "Alignment name (blank = all)",
-                defaultValue="",
-                optional=True,
-            )
+            name_param(self.ALIGNMENT, "Alignment name (blank = all)", "alignments")
         )
         self.addParameter(
             number_param(
@@ -167,9 +163,7 @@ class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
             self, parameters, context, feedback, path
         )
         seg = self.parameterAsDouble(parameters, self.SEGMENT, context)
-        alignment_filter = self.parameterAsString(
-            parameters, self.ALIGNMENT, context
-        ).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(parameters, self.ALIGNMENT, context), "alignment")
 
         fields = QgsFields()
         fields.append(QgsField("name", FIELD_STRING, len=254))
@@ -273,4 +267,5 @@ class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException(
                 f"Alignment import failed for '{os.path.basename(path)}': {exc}"
             ) from exc
+        attach_post_processor(context, dest_id, source_path=path)
         return {self.OUTPUT: dest_id, "ALIGNMENT_COUNT": len(alignments)}

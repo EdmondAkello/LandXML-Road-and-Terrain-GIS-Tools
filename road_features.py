@@ -10,7 +10,10 @@ from .landxml.profile import (
     profile_control_points,
 )
 from .landxml.sections import read_cross_sections
-from .processing_common import BoundsTracker, coordinate_choices
+from .landxml.corridor import placed_section_surfaces, read_corridor_sections
+from .landxml.stationing import StationedPolyline
+from .landxml.reports import station_label
+from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
@@ -43,6 +46,8 @@ from .landxml.geometry import read_alignments, regular_station_distances
 from .core import read_tin
 from .landxml.profile import read_vertical_profile
 from .params import number_param
+from .processing_widgets import name_param
+from .processing_common import resolve_name
 
 METHODS = [
     "Use stored coordinates",
@@ -63,9 +68,7 @@ def _xy(text):
 
 def _param_common(a):
     a.addParameter(
-        QgsProcessingParameterString(
-            "ALIGNMENT", "Alignment name (blank = all)", defaultValue="", optional=True
-        )
+        name_param("ALIGNMENT", "Alignment name (blank = all)", "alignments")
     )
     _param_coordinates(a)
 
@@ -142,20 +145,32 @@ def _alignment_parts(path, segment_length=5.0, alignment_filter=""):
                 alignment["sta_end"],
                 [segment["points"] for segment in alignment["segments"]],
                 unsupported,
+                alignment["vertex_distances"],
             )
         )
     return result
 
 
-def _profile_station_label(station):
-    rounded = round(station, 2)
-    hundreds = math.floor(rounded / 100)
-    return f"{hundreds}+{rounded - 100 * hundreds:05.2f}"
+def _stationed_alignments(path, feedback=None, segment_length=2.0):
+    """Map alignment name to a StationedPolyline in source coordinates."""
+    try:
+        alignments, unsupported = read_alignments(path, segment_length)
+    except ValueError:
+        return {}
+    if feedback is not None:
+        for message in unsupported[:20]:
+            feedback.pushWarning(message)
+    result = {}
+    for alignment in alignments:
+        polyline = StationedPolyline.from_alignment(alignment)
+        if polyline is not None and alignment["name"] not in result:
+            result[alignment["name"]] = polyline
+    return result
 
 
-def _profile_control_label(point):
+def _profile_control_label(point, horizontal_unit=None):
     lines = [
-        f"{point['control_type']} {_profile_station_label(point['station'])}",
+        f"{point['control_type']} {station_label(point['station'], horizontal_unit)}",
         f"Elev {point['elevation']:.2f}",
     ]
     if point["grade_in"] is not None:
@@ -236,17 +251,10 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
-            QgsProcessingParameterString(
-                "ALIGNMENT",
-                "Alignment name (blank = all)",
-                defaultValue="",
-                optional=True,
-            )
+            name_param("ALIGNMENT", "Alignment name (blank = all)", "alignments")
         )
         self.addParameter(
-            QgsProcessingParameterString(
-                "PROFILE", "Profile name (blank = all)", defaultValue="", optional=True
-            )
+            name_param("PROFILE", "Profile name (blank = all)", "design_profiles")
         )
         self.addParameter(
             number_param(
@@ -313,8 +321,8 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
-        profile_filter = self.parameterAsString(p, "PROFILE", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
+        profile_filter = resolve_name(path, "design_profiles", self.parameterAsString(p, "PROFILE", c), "profile")
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
@@ -350,6 +358,7 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
                     source_xy,
                     transformed[:, :2],
                     float(alignment["sta_start"]),
+                    alignment["vertex_distances"],
                 )
             fb.pushInfo(
                 "Map profile layers are schematic: station follows the alignment and elevation "
@@ -498,9 +507,13 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
                     )
                 else:
                     try:
+                        source_xy, mapped_xy, station_start, distances = alignment
                         placement = ProfileMapPlacement(
-                            *alignment,
+                            source_xy,
+                            mapped_xy,
+                            station_start,
                             elevation_datum=pts[0][1],
+                            distances=distances,
                             offset=self.parameterAsDouble(p, "MAP_OFFSET", c),
                             exaggeration=exaggeration,
                         )
@@ -533,7 +546,7 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
                         os.path.basename(path),
                         prof.attrib.get("name"),
                         prof.attrib.get("desc"),
-                        _profile_control_label(control),
+                        _profile_control_label(control, doc.horizontal_unit),
                         control["station"],
                         control["elevation"],
                         control["elevation"] * exaggeration,
@@ -639,7 +652,7 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         seg = self.parameterAsDouble(p, "SEGMENT", c)
         fields = QgsFields()
         for n, ln in (
@@ -689,7 +702,9 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
             return samples[-1][1]
 
         parts_all = _alignment_parts(path, seg, alignment_filter)
-        for ai, (name, desc, sta0, sta1, parts, unsupported) in enumerate(parts_all):
+        for ai, (name, desc, sta0, sta1, parts, unsupported, distances) in enumerate(
+            parts_all
+        ):
             if fb.isCanceled():
                 break
             pts = []
@@ -703,12 +718,7 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
             import numpy as np
 
             raw = np.asarray([[x, y, 0] for x, y in pts], dtype=float)
-            cum = [0.0]
-            for i in range(1, len(raw)):
-                cum.append(
-                    cum[-1]
-                    + math.hypot(raw[i, 0] - raw[i - 1, 0], raw[i, 1] - raw[i - 1, 1])
-                )
+            cum = list(distances)
             if not sta0:
                 fb.pushWarning(
                     f"Skipped 3D centerline '{name}': alignment start station is missing."
@@ -761,6 +771,7 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
                     "the profile does not cover the remaining alignment."
                 )
             fb.setProgress(int(100 * (ai + 1) / max(1, len(parts_all))))
+        attach_post_processor(c, dest, source_path=path)
         return {"OUTPUT": dest}
 
 
@@ -794,12 +805,7 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
         )
         _param_common(self)
         self.addParameter(
-            QgsProcessingParameterString(
-                "SURFACE",
-                "Surface name (blank = first)",
-                defaultValue="",
-                optional=True,
-            )
+            name_param("SURFACE", "Surface name (blank = first)", "surfaces")
         )
         self.addParameter(
             QgsProcessingParameterFeatureSink(
@@ -811,7 +817,7 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
-        surf = self.parameterAsString(p, "SURFACE", c) or None
+        surf = resolve_name(path, "surfaces", self.parameterAsString(p, "SURFACE", c), "surface") or None
         xyz, faces, meta = read_tin(path, surf)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
         xyz = transform_vertices(xyz, method=m, **tp)
@@ -890,6 +896,7 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
                 ]
             )
             sink.addFeature(f)
+        attach_post_processor(c, dest, source_path=path)
         return {"OUTPUT": dest}
 
 
@@ -943,7 +950,7 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         include_end = self.parameterAsBoolean(p, "INCLUDE_ENDPOINT", c)
         fields = QgsFields()
         for n in ("alignment", "station", "bearing_deg"):
@@ -952,7 +959,7 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
             )
         sink, dest = _sink(self, p, c, fields, QgsWkbTypes.Type.Point)
         interval = self.parameterAsDouble(p, "INTERVAL", c)
-        for name, desc, sta0, sta1, parts, _ in _alignment_parts(
+        for name, desc, sta0, sta1, parts, _, distances in _alignment_parts(
             path, 5.0, alignment_filter
         ):
             if not sta0:
@@ -968,12 +975,8 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
             import numpy as np
 
             raw = np.asarray([[x, y, 0] for x, y in pts], dtype=float)
-            cum = [0.0]
-            for i in range(1, len(raw)):
-                cum.append(
-                    cum[-1]
-                    + math.hypot(raw[i, 0] - raw[i - 1, 0], raw[i, 1] - raw[i - 1, 1])
-                )
+            # True distance along the geometry (arc length), not chord sums.
+            cum = list(distances)
             stations = regular_station_distances(
                 float(sta0), cum[-1], interval, include_end
             )
@@ -998,6 +1001,7 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
                 )
                 f.setAttributes([name, station, bearing])
                 sink.addFeature(f)
+        attach_post_processor(c, dest, source_path=path)
         return {"OUTPUT": dest}
 
 
@@ -1018,7 +1022,7 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         return "road_design_extraction"
 
     def shortHelpString(self):
-        return "Extracts LandXML CrossSect geometry as line features. Supports PntList3D/PntList2D-style section point lists and station attributes where present. CrossSect records that only carry station-relative DesignCrossSectSurf/CrossSectPnt design-template geometry (pavement/subbase layers etc.), without an absolute-coordinate point list, are skipped and reported in Processing messages rather than being placed at a fabricated position."
+        return "Extracts LandXML CrossSect geometry as 3D line features. Absolute PntList3D sections keep their coordinates. Station-relative CrossSectSurf offset/elevation sections (Civil 3D sample-line exports) are positioned along their own alignment with true arc-length stationing, one line per surface, before the explicit coordinate interpretation is applied. Corridor design links and shapes (DesignCrossSectSurf) are summarized by the Corridor Section Quantities tool rather than drawn here."
 
     def initAlgorithm(self, config=None):
         self.addParameter(
@@ -1049,7 +1053,7 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
         m, out, src, tp = _transform_params(p, c, self, fb, path)
-        alignment_filter = self.parameterAsString(p, "ALIGNMENT", c).strip()
+        alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         doc = load_document(path)
         records, warnings = read_cross_sections(doc.root)
         records = [
@@ -1057,12 +1061,54 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
             for record in records
             if not alignment_filter or record.alignment_name == alignment_filter
         ]
-        dimensions = {len(record.points[0]) for record in records}
+        # Station-relative (offset/elevation) surface sections are positioned
+        # along their own alignment; they are never read as map X/Y.
+        sections, section_warnings, _names, _shapes = read_corridor_sections(
+            doc.root, alignment_filter or None
+        )
+        warnings.extend(section_warnings)
+        placed = []
+        if any(section.surfaces for section in sections):
+            placed, unplaced = placed_section_surfaces(
+                sections, _stationed_alignments(path, fb)
+            )
+            if unplaced:
+                fb.pushWarning(
+                    f"{unplaced} station-relative section surface(s) were not placed: "
+                    "their alignment has no usable geometry or start station, or the "
+                    "section lies outside the alignment station range."
+                )
+        rows = [
+            (
+                record.alignment_name,
+                record.name,
+                record.description,
+                record.surface_name,
+                "absolute",
+                record.station,
+                record.points,
+                None,
+            )
+            for record in records
+        ] + [
+            (
+                item["alignment_name"],
+                item["name"],
+                None,
+                item["surface_name"],
+                "station-offset",
+                item["station"],
+                item["points"],
+                item["offsets"],
+            )
+            for item in placed
+        ]
+        dimensions = {len(row[6][0]) for row in rows}
         if len(dimensions) > 1:
             raise QgsProcessingException(
                 "Selected cross sections mix 2D and 3D coordinates; export them separately."
             )
-        dim = 3 if dimensions == {3} else 2
+        dim = 3 if dimensions in ({3}, set()) else 2
         fields = QgsFields()
         for name in (
             "alignment_name",
@@ -1070,6 +1116,8 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
             "source_description",
             "source_vendor",
             "source_file",
+            "surface_name",
+            "placement",
         ):
             fields.append(QgsField(name, FIELD_STRING, len=254))
         fields.append(QgsField("station", FIELD_DOUBLE))
@@ -1079,7 +1127,13 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         if sink is None:
             raise QgsProcessingException("Could not create cross-section line layer.")
         point_fields = QgsFields()
-        for name in ("alignment_name", "source_name", "source_vendor", "source_file"):
+        for name in (
+            "alignment_name",
+            "source_name",
+            "source_vendor",
+            "source_file",
+            "surface_name",
+        ):
             point_fields.append(QgsField(name, FIELD_STRING, len=254))
         for name in ("station", "offset", "elevation"):
             point_fields.append(QgsField(name, FIELD_DOUBLE))
@@ -1097,12 +1151,19 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         import numpy as np
 
         transformed_bounds = BoundsTracker()
-        for record in records:
+        for (
+            alignment_name,
+            source_name,
+            description,
+            surface_name,
+            placement,
+            station,
+            points,
+            offsets,
+        ) in rows:
             if fb.isCanceled():
                 raise QgsProcessingException("Cross-section extraction cancelled.")
-            arr = transform_vertices(
-                np.asarray(record.points, dtype=float), method=m, **tp
-            )
+            arr = transform_vertices(np.asarray(points, dtype=float), method=m, **tp)
             transformed_bounds.add(arr)
             geom = (
                 QgsGeometry.fromPolyline([QgsPoint(*map(float, row)) for row in arr])
@@ -1115,13 +1176,15 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
             feature.setGeometry(geom)
             feature.setAttributes(
                 [
-                    record.alignment_name,
-                    record.name,
-                    record.description,
+                    alignment_name,
+                    source_name,
+                    description,
                     doc.vendor,
                     os.path.basename(path),
-                    record.station,
-                    len(record.points),
+                    surface_name,
+                    placement,
+                    station,
+                    len(points),
                 ]
             )
             sink.addFeature(feature)
@@ -1135,12 +1198,13 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
                     )
                     point.setAttributes(
                         [
-                            record.alignment_name,
-                            record.name,
+                            alignment_name,
+                            source_name,
                             doc.vendor,
                             os.path.basename(path),
-                            record.station,
-                            None,
+                            surface_name,
+                            station,
+                            offsets[index] if offsets else None,
                             float(row[2]) if dim == 3 else None,
                             index,
                         ]
@@ -1151,10 +1215,12 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         if len(warnings) > 20:
             fb.pushWarning(f"{len(warnings) - 20} additional sections were skipped.")
         transformed_bounds.report(fb)
+        attach_post_processor(c, dest, source_path=path)
+        attach_post_processor(c, point_dest, source_path=path)
         return {
             "OUTPUT": dest,
             "POINTS": point_dest or "",
-            "SECTION_COUNT": len(records),
+            "SECTION_COUNT": len(rows),
         }
 
 
@@ -1300,6 +1366,7 @@ class GenericLinesAlgorithm(QgsProcessingAlgorithm):
                 f"{len(warnings) - 20} additional line records were skipped."
             )
         transformed_bounds.report(fb)
+        attach_post_processor(c, dest, source_path=path)
         return {"OUTPUT": dest}
 
 
