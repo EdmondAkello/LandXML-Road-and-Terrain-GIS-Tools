@@ -26,7 +26,7 @@ date-released: "2026-10-15"
 license: GPL-2.0-or-later
 type: software
 repository-code: "https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools"
-# doi: "10.5281/zenodo.XXXXXXX"   # concept DOI, added after Zenodo mints it
+doi: "10.5281/zenodo.23402501"
 keywords:
   - LandXML
   - QGIS
