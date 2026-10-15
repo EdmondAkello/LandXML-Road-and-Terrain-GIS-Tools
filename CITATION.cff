@@ -17,6 +17,10 @@ authors:
   - family-names: "Akello"
     given-names: "Edmond"
     email: "francenicklaus@gmail.com"
+  - family-names: "Winstead"
+    given-names: "Cole"
+    alias: "colewinstead"
+    website: "https://github.com/colewinstead"
 version: 1.8.1
 date-released: "2026-10-15"
 license: GPL-2.0-or-later
