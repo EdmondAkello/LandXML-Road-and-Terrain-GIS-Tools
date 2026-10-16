@@ -1,6 +1,7 @@
 # LandXML Road & Terrain GIS Tools
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23402501.svg)](https://doi.org/10.5281/zenodo.23402501)
+[![tests](https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/actions/workflows/tests.yml/badge.svg)](https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/actions/workflows/tests.yml)
 
 A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Written by **Edmond Akello**, with Bentley OpenRoads support, the shared LandXML parser and the QGIS 4 port contributed by **Cole Winstead**. Licensed under GPL-2.0-or-later.
 

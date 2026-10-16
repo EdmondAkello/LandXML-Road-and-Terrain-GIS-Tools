@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.8.1 — unreleased
+## Unreleased
+
+### Added
+- Continuous integration: GitHub Actions runs the parser and earthworks tests (GDAL, no QGIS) and a Bandit scan on every push to `main` and every pull request. The release script already leaves `.github/` out of the plugin zip.
+
+## 1.8.1 — 2026-10-15
 
 ### Changed
 - **Printable reports.** All HTML reports now print to PDF from Chrome or Edge with A4 page layout, the report title and page numbers in the footer, chart colours and legend swatches kept, headings kept with their charts, and long tables split across pages with repeated headers. Previously, long tables were moved whole to the next page, leaving blank pages (a 4-alignment design report went from 89 to 54 pages), and the first page held only the title.
