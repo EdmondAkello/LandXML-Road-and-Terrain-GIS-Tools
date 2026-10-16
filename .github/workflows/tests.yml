@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: Parser and earthworks tests (GDAL, no QGIS)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NumPy and GDAL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-numpy python3-gdal
+      - name: Run tests
+        run: python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py
+
+  bandit:
+    name: Bandit security scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      - run: bandit -q -r . -x ./tests,./dist
