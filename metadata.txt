@@ -3,7 +3,7 @@ name=LandXML Road & Terrain GIS Tools
 qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
 description=Civil 3D, OpenRoads and generic LandXML in QGIS: terrain, road geometry, profile and cross-section viewers, earthworks quantities, design reports and a geometric design review (alignment phasing, sight distance, barriers) against Kenya RDM 1.3 or AASHTO.
-version=1.9.0
+version=1.9.1
 author=Edmond Akello
 email=francenicklaus@gmail.com
 about=Brings LandXML road and terrain data into QGIS and turns it into review-ready reports.
@@ -20,7 +20,9 @@ about=Brings LandXML road and terrain data into QGIS and turns it into review-re
 repository=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 tracker=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/issues
 homepage=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
-changelog=1.9.0
+changelog=1.9.1
+    - AASHTO metric reviews read the required superelevation from Green Book Tables 3-8 and 3-9 for e max 4 and 6 percent, instead of an estimate that understated it.
+    1.9.0
     - Prepare LandXML from Geometry and Terrains: combine an alignment file with separate existing and proposed terrain files, sampling the missing profiles and cross-sections from the TINs.
     - AASHTO 2018 US customary criteria (mph, feet) and e max 10 percent for AASHTO metric and US customary reviews.
     - Volume units in all earthworks tools (Automatic, CY, CF, m³). Foot-based projects now report CY by default; regenerate earlier outputs.
