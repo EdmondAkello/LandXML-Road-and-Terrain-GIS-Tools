@@ -636,8 +636,10 @@ class CriteriaTests(unittest.TestCase):
         self.assertAlmostEqual(aashto.min_radius(100, 8), 100**2 / (127 * 0.20))
         # e max 8%: Table 3-10 (metric), 100 km/h, R = 500 m is at least the 7.6% radius (499 m).
         self.assertAlmostEqual(aashto.required_superelevation(500, 100, 8)[0], 7.6)
-        # e max 6% has no bundled table yet and still uses V^2/127R - f max.
-        self.assertAlmostEqual(aashto.required_superelevation(500, 100, 6)[0], (10000 / (127 * 500) - 0.12) * 100)
+        # e max 6%: Table 3-9 (metric), 100 km/h, R = 500 m is at least the 6.0% radius (437 m).
+        self.assertAlmostEqual(aashto.required_superelevation(500, 100, 6)[0], 6.0)
+        # e max 4%: Table 3-8 (metric), 100 km/h, R = 1200 m lies between the 2.8% (1320 m) and 3.0% (1150 m) radii.
+        self.assertAlmostEqual(aashto.required_superelevation(1200, 100, 4)[0], 3.0)
         self.assertIsNone(aashto.max_grade("rural", "rolling"))
 
 

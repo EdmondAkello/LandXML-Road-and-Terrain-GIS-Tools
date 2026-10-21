@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- AASHTO metric reviews with e max 4% and 6% now read the required superelevation from Tables 3-8 and 3-9. Before, the rate was estimated as V²/127R − f max, which gave lower rates than the Green Book on most curves. The US customary e max 4% and 6% tables were checked against the printed Green Book and match.
+
 ## 1.9.0 — 2026-10-21
 
 ### Added

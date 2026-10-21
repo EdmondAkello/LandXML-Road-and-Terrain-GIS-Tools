@@ -77,6 +77,11 @@ class _TableChecks:
                     r_min = self.data["min_radius"].get(e, {}).get(v)
                     if r_min is not None:
                         self.assertLessEqual(abs(radii[-1] - float(r_min)), 1.0)
+                    f = self.side_friction.get(int(v))
+                    if f is not None:
+                        # The e max row is the minimum radius (Eq. 3-10), rounded in the book.
+                        expected = self.r_min(int(v), float(e) / 100.0 + f)
+                        self.assertLessEqual(abs(radii[-1] - expected), max(1.0, 0.02 * expected))
                     # Neighbouring radii shrink by a smooth ratio; a sudden drop
                     # means rows were taken from another speed.
                     ratios = [b / a for a, b in zip(radii, radii[1:])]
