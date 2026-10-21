@@ -29,6 +29,8 @@ from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingException,
+    QgsProcessingOutputString,
+    QgsProcessingParameterEnum,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFile,
@@ -39,7 +41,6 @@ from qgis.core import (
     QgsRendererCategory,
     QgsSingleBandPseudoColorRenderer,
     QgsSymbol,
-    QgsUnitTypes,
     QgsWkbTypes,
 )
 from qgis.PyQt.QtGui import QColor
@@ -65,6 +66,7 @@ from .landxml.catalog import match_name, read_catalog, suggest_terrain_pair
 from .landxml.geometry import read_alignments
 from .landxml.longsection import default_pair, find_profile, read_alignment_profiles
 from .landxml.parser import load_document
+from .landxml.quantity_units import quantity_units
 from .landxml.reports import (
     CUT_COLOR,
     FILL_COLOR,
@@ -79,9 +81,43 @@ from .processing_common import attach_post_processor, coordinate_choices
 from .processing_widgets import name_param
 from .road_features import _param_coordinates
 
-GROUP = "Earthworks and quantities"
+GROUP = "6. Earthworks and quantities"
 GROUP_ID = "earthworks_quantities"
 KIND_COLORS = {"cut": CUT_COLOR, "fill": FILL_COLOR, "grade": "#8a94a6", "mixed": "#b07cc6"}
+
+QUANTITY_HELP = (
+    " Volume units can be Automatic, cubic yards (CY), cubic feet (CF), or cubic metres (m³). "
+    "Automatic uses CY for foot-based horizontal units and m³ for metric units. "
+    "The selection applies to all volumes and mass ordinates; lengths and areas retain their coordinate units. Known horizontal and vertical "
+    "units are required; use Prepare LandXML to supply missing declarations."
+)
+
+VOLUME_UNITS = ("auto", "CY", "CF", "m³")
+
+
+def _volume_parameter():
+    return QgsProcessingParameterEnum(
+        "VOLUME_UNITS", "Volume units",
+        options=["Automatic (CY for feet; m³ for metric)", "Cubic yards (CY)", "Cubic feet (CF)", "Cubic metres (m³)"],
+        defaultValue=0,
+    )
+
+
+def _volume_unit(algorithm, parameters, context):
+    index = algorithm.parameterAsInt(parameters, "VOLUME_UNITS", context)
+    if index not in range(len(VOLUME_UNITS)):
+        raise QgsProcessingException(f"Unknown volume units option {index}.")
+    return VOLUME_UNITS[index]
+
+
+def _quantity_units(document, feedback, horizontal=None, allow_mixed=False, volume_unit="auto"):
+    try:
+        units = quantity_units(horizontal or document.horizontal_unit, document.vertical_unit, allow_mixed, volume_unit)
+    except ValueError as exc:
+        raise QgsProcessingException(str(exc)) from exc
+    feedback.pushInfo(f"Earthwork units: volumes and mass ordinates {units.volume}; lengths {units.length}; "
+                      f"areas {units.area}; depths {units.depth}.")
+    return units
 
 
 def _input_param(algorithm):
@@ -280,7 +316,7 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
             "Blank profile names choose the first design profile and the longest existing-ground profile. "
             "Exclude structures (bridges, culverts) with station ranges such as '1200-1450; 2010-2030'. "
             "A positive formation width adds a level-section earthworks and side-slope estimate — a "
-            "preliminary flat-ground approximation; use Corridor Section Quantities where sections exist."
+            "preliminary flat-ground approximation; use Corridor Section Quantities where sections exist." + QUANTITY_HELP
         )
 
     def initAlgorithm(self, config=None):
@@ -288,6 +324,7 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(name_param("ALIGNMENT", "Alignment (blank = all)", "alignments"))
         self.addParameter(name_param("DESIGN_PROFILE", "Design profile (blank = first ProfAlign)", "profiles"))
         self.addParameter(name_param("GROUND_PROFILE", "Existing-ground profile (blank = longest ProfSurf)", "surface_profiles"))
+        self.addParameter(_volume_parameter())
         self.addParameter(number_param("INTERVAL", "Table station interval", 20, 0.01, 100000, decimals=2))
         self.addParameter(number_param("TOLERANCE", "On-grade tolerance (vertical units)", 0, 0, 100, decimals=3))
         self.addParameter(number_param("HIGH_FILL", "Flag fills deeper than", 3, 0, 1000, decimals=2))
@@ -348,6 +385,8 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
         fill_slope = self.parameterAsDouble(p, "FILL_SLOPE", c)
         cut_slope = self.parameterAsDouble(p, "CUT_SLOPE", c)
         map_requested = bool(p.get("SEGMENTS") or p.get("TRANSITIONS"))
+        volume_unit = _volume_unit(self, p, c)
+        units = _quantity_units(doc, fb, volume_unit=volume_unit) if width > 0 else None
         if not doc.vertical_unit:
             fb.pushWarning("Vertical unit is undeclared; depths are reported in the source elevation numbers.")
 
@@ -407,8 +446,9 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
             if "template" in item:
                 t = item["template"]
                 fb.pushInfo(
-                    f"{name} level-section estimate: cut {t['cut_volume']:,.0f}, fill {t['fill_volume']:,.0f}, "
-                    f"embankment slopes {t['fill_slope_area']:,.0f}, cut slopes {t['cut_slope_area']:,.0f}."
+                    f"{name} level-section estimate: cut {t['cut_volume'] * units.volume_factor:,.0f} {units.volume}, "
+                    f"fill {t['fill_volume'] * units.volume_factor:,.0f} {units.volume}, "
+                    f"embankment slopes {t['fill_slope_area']:,.0f} {units.area}, cut slopes {t['cut_slope_area']:,.0f} {units.area}."
                 )
         for warning in warnings[:20]:
             fb.pushWarning(warning)
@@ -523,7 +563,7 @@ class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
         if report:
             _write_text(
                 report,
-                profile_report_html(results, doc.horizontal_unit, doc.vertical_unit, os.path.basename(path)),
+                profile_report_html(results, doc.horizontal_unit, doc.vertical_unit, os.path.basename(path), volume_unit),
             )
             outputs["REPORT"] = report
         outputs["ALIGNMENT_COUNT"] = len(results)
@@ -573,12 +613,14 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
             "to the Datum links (bottom of pavement), keeping the design surface outside them. Segments "
             "flatter than 1:flat ratio (V:H) are not counted as side slopes. Intervals longer than the "
             "maximum spacing are not integrated. Map outputs (side-slope bands and earthworks footprint) "
-            "follow the alignment using the selected coordinate interpretation and CRS."
+            "follow the alignment using the selected coordinate interpretation and CRS." + QUANTITY_HELP
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
         self.addParameter(name_param("ALIGNMENT", "Alignment (blank = all with cross-sections)", "alignments"))
+        self.addOutput(QgsProcessingOutputString("VOLUME_UNIT", "Volume unit (CY, CF or m³)"))
+        self.addParameter(_volume_parameter())
         self.addParameter(name_param("GROUND_SURFACE", "Existing-ground section surface (blank = detect)", "section_surfaces"))
         self.addParameter(name_param("DESIGN_SURFACE", "Design section surface (blank = detect)", "section_surfaces"))
         self.addParameter(name_param("DESIGN_PROFILE", "Design profile for Datum elevations (blank = first ProfAlign)", "design_profiles"))
@@ -639,6 +681,8 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
                 "sections from the design software, or use Profile Cut/Fill Analysis for a centreline estimate."
             )
         fb.pushInfo(f"Section surfaces: {', '.join(surface_names) or 'none'}; shapes: {', '.join(shape_names) or 'none'}.")
+        volume_unit = _volume_unit(self, p, c)
+        units = _quantity_units(doc, fb, volume_unit=volume_unit)
         ground_override = _resolve(surface_names, ground_override, "ground section surface") or ""
         design_override = _resolve(surface_names, design_override, "design section surface") or ""
         refs = roadway_surface_refs(doc.root)
@@ -684,12 +728,13 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
                 fb.pushInfo(f"{name}: no usable Datum links; earthworks are measured to the design surface.")
             totals = quantities["totals"]
             fb.pushInfo(
-                f"{name}: cut {totals['cut_volume']:,.1f}, fill {totals['fill_volume']:,.1f}, embankment slopes "
-                f"{totals['fill_slope_area']:,.1f}, cut slopes {totals['cut_slope_area']:,.1f} over "
-                f"{totals['length']:,.1f} ({totals['earthwork_sections']} of {totals['sections']} sections)."
+                f"{name}: cut {totals['cut_volume'] * units.volume_factor:,.1f} {units.volume}, "
+                f"fill {totals['fill_volume'] * units.volume_factor:,.1f} {units.volume}, embankment slopes "
+                f"{totals['fill_slope_area']:,.1f} {units.area}, cut slopes {totals['cut_slope_area']:,.1f} {units.area} over "
+                f"{totals['length']:,.1f} {units.length} ({totals['earthwork_sections']} of {totals['sections']} sections)."
             )
             for material, volume in quantities["materials"].items():
-                fb.pushInfo(f"{name}: material '{material}' {volume:,.2f}")
+                fb.pushInfo(f"{name}: material '{material}' {volume * units.volume_factor:,.2f} {units.volume}")
             results.append(
                 {
                     "alignment": name,
@@ -762,7 +807,7 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
 
         if p.get("VOLUMES"):
             volume_fields = QgsFields()
-            for field in ("alignment_name", "from_label", "to_label"):
+            for field in ("alignment_name", "from_label", "to_label", "volume_unit"):
                 volume_fields.append(QgsField(field, FIELD_STRING, len=254))
             for field in (
                 "sta_start",
@@ -787,15 +832,16 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
                             item["alignment"],
                             station_label(interval["start"], doc.horizontal_unit),
                             station_label(interval["end"], doc.horizontal_unit),
+                            units.volume,
                             interval["start"],
                             interval["end"],
                             interval["length"],
-                            interval["cut_volume"],
-                            interval["fill_volume"],
+                            interval["cut_volume"] * units.volume_factor,
+                            interval["fill_volume"] * units.volume_factor,
                             interval["fill_slope_area"],
                             interval["cut_slope_area"],
                             interval["steep_fill_area"] + interval["steep_cut_area"],
-                            interval["mass_ordinate"],
+                            interval["mass_ordinate"] * units.volume_factor,
                         ]
                     )
                     volume_sink.addFeature(feature)
@@ -854,7 +900,7 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
                 _style_output(c, slope_dest, categorized_by_kind, path)
             if p.get("FOOTPRINT"):
                 foot_fields = QgsFields()
-                for field in ("alignment_name", "kind", "from_label", "to_label"):
+                for field in ("alignment_name", "kind", "from_label", "to_label", "volume_unit"):
                     foot_fields.append(QgsField(field, FIELD_STRING, len=254))
                 for field in ("sta_start", "sta_end", "cut_volume", "fill_volume", "net_volume", "plan_area"):
                     foot_fields.append(QgsField(field, FIELD_DOUBLE))
@@ -874,7 +920,7 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
                         )
                         if geometry is None:
                             continue
-                        cut, fill = interval["cut_volume"], interval["fill_volume"]
+                        cut, fill = interval["cut_volume"] * units.volume_factor, interval["fill_volume"] * units.volume_factor
                         kind = "fill" if fill >= 3 * cut else "cut" if cut >= 3 * fill else "mixed"
                         feature = QgsFeature(foot_fields)
                         feature.setGeometry(geometry)
@@ -884,6 +930,7 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
                                 kind,
                                 station_label(interval["start"], doc.horizontal_unit),
                                 station_label(interval["end"], doc.horizontal_unit),
+                                units.volume,
                                 interval["start"],
                                 interval["end"],
                                 cut,
@@ -898,12 +945,13 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
 
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
-            _write_text(report, corridor_report_html(results, doc.horizontal_unit, os.path.basename(path)))
+            _write_text(report, corridor_report_html(results, doc.horizontal_unit, os.path.basename(path), doc.vertical_unit, volume_unit))
             outputs["REPORT"] = report
         totals = [item["quantities"]["totals"] for item in results]
         outputs.update(
-            CUT_VOLUME=sum(t["cut_volume"] for t in totals),
-            FILL_VOLUME=sum(t["fill_volume"] for t in totals),
+            CUT_VOLUME=sum(t["cut_volume"] for t in totals) * units.volume_factor,
+            FILL_VOLUME=sum(t["fill_volume"] for t in totals) * units.volume_factor,
+            VOLUME_UNIT=units.volume,
             FILL_SLOPE_AREA=sum(t["fill_slope_area"] for t in totals),
             CUT_SLOPE_AREA=sum(t["cut_slope_area"] for t in totals),
         )
@@ -931,18 +979,22 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
             "Grids two LandXML TIN surfaces on a shared raster and writes compare − base "
             "(positive fill, negative cut) as a GeoTIFF, with cut, fill and net volumes. Triangles hidden by a "
             "source surface boundary are excluded. When the LandXML records a Civil 3D SurfVolume for the same "
-            "pair, its volumes are listed for comparison. Volumes are in output horizontal units squared × "
-            "source vertical units.\n\nLeave the surface names blank to choose them from the file's evidence: a Civil 3D "
+            "pair, its declared volume units are converted for comparison. Raster depths stay in source vertical "
+            "units; volume conversion accounts for both output CRS and elevation units.\n\n"
+            "Leave the surface names blank to choose them from the file's evidence: a Civil 3D "
             "volume surface pair, the existing-ground profile surface as base and a Roadway corridor surface as "
             "comparison (the datum/bottom surface is preferred for earthworks). Typed names may be partial and are "
-            "case-insensitive, e.g. 'ogl'."
+            "case-insensitive, e.g. 'ogl'." + QUANTITY_HELP
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
         self.addParameter(name_param("BASE_SURFACE", "Base (existing) surface (blank = detect)", "surfaces"))
+        self.addOutput(QgsProcessingOutputString("VOLUME_UNIT", "Volume unit (CY, CF or m³)"))
+        self.addParameter(_volume_parameter())
         self.addParameter(name_param("COMPARE_SURFACE", "Comparison (design) surface (blank = detect)", "surfaces"))
         self.addParameter(number_param("RESOLUTION", "Grid cell size (output CRS units)", 1, 0.01, 10000, decimals=3))
+        self.addParameter(number_param("GRID_WARNING", "Warn above grid size (million cells; 0 = disable)", 250, 0, 1e9, decimals=3))
         self.addParameter(number_param("NODATA", "NoData value", -9999, -3.4e38, 3.4e38, decimals=3))
         _param_coordinates(self)
         self.addParameter(QgsProcessingParameterRasterDestination("OUTPUT", "Cut/fill depth raster"))
@@ -955,6 +1007,12 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
+        horizontal = {Qgis.DistanceUnit.Meters: "meter", Qgis.DistanceUnit.Feet: "foot",
+                      Qgis.DistanceUnit.FeetUSSurvey: "usSurveyFoot"}.get(crs.mapUnits())
+        if horizontal is None:
+            raise QgsProcessingException("Surface earthwork volumes require an output CRS in metres, feet or US survey feet.")
+        volume_unit = _volume_unit(self, p, c)
+        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=volume_unit)
         catalog = read_catalog(path)
         base_name = _resolve(catalog.surfaces, self.parameterAsString(p, "BASE_SURFACE", c), "base surface")
         compare_name = _resolve(catalog.surfaces, self.parameterAsString(p, "COMPARE_SURFACE", c), "comparison surface")
@@ -989,13 +1047,17 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
                 nodata,
                 progress=lambda value, message: fb.setProgress(value),
                 cancel=fb.isCanceled,
+                warn_cells=self.parameterAsDouble(p, "GRID_WARNING", c) * 1_000_000,
+                warning=fb.pushWarning,
             )
         except (ValueError, RuntimeError) as exc:
             raise QgsProcessingException(str(exc)) from exc
         output = self.parameterAsOutputLayer(p, "OUTPUT", c)
         write_geotiff(output, difference, xmin, ymax, resolution, nodata, wkt=crs.toWkt())
-        for key, value in stats.items():
-            fb.pushInfo(f"{key.replace('_', ' ')}: {value:,.3f}")
+        reported_stats = units.volumes(stats)
+        for key, value in reported_stats.items():
+            label = units.volume if key.endswith("_volume") else units.area if key.endswith("_area") else units.depth
+            fb.pushInfo(f"{key.replace('_', ' ')}: {value:,.3f} {label}")
         civil3d = next(
             (
                 item
@@ -1007,16 +1069,16 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
         if civil3d:
             fb.pushInfo(
                 f"Civil 3D SurfVolume '{civil3d['name']}': cut {civil3d['cut_volume']:,.3f}, "
-                f"fill {civil3d['fill_volume']:,.3f} (source units)."
+                f"fill {civil3d['fill_volume']:,.3f} ({civil3d.get('volume_unit') or 'undeclared volume unit'}; recorded values)."
             )
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
             _write_text(
                 report,
                 surface_report_html(
-                    stats, base_name, compare_name, resolution, QgsUnitTypes.toString(crs.mapUnits()), civil3d, os.path.basename(path)
+                    stats, base_name, compare_name, resolution, horizontal, civil3d, os.path.basename(path), doc.vertical_unit, volume_unit
                 ),
             )
         limit = max(stats["max_cut"], stats["max_fill"], 0.01)
         _style_output(c, output, lambda layer: cut_fill_raster_style(layer, limit))
-        return dict(stats, OUTPUT=output, REPORT=report or "")
+        return dict(reported_stats, OUTPUT=output, REPORT=report or "", VOLUME_UNIT=units.volume)

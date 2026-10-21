@@ -114,7 +114,22 @@ def read_alignment_profiles(alignment, sample_interval=5.0, warnings=None):
             result.append(
                 ProfileLine(alignment_name, name, "surface", node.attrib.get("state"), node.attrib.get("desc"), parts, node)
             )
-    return result
+    grouped = {}
+    combined = []
+    for profile in result:
+        group = None
+        if profile.kind == "surface":
+            for feature in profile.element:
+                if local_name(feature.tag) == "Feature" and feature.attrib.get("name") == "LandXMLTools.Prepare":
+                    group = next((p.attrib.get("value") for p in feature
+                                  if local_name(p.tag) == "Property" and p.attrib.get("label") == "profileGroup"), None)
+        if group and group in grouped:
+            grouped[group].parts.extend(profile.parts)
+        else:
+            combined.append(profile)
+            if group:
+                grouped[group] = profile
+    return combined
 
 
 def default_pair(profiles):

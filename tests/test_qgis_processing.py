@@ -12,6 +12,9 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +42,7 @@ from qgis.PyQt import sip
 
 from landxml_plugin.landxml_tin_to_geotiff import LandXMLTinToGeoTIFFPlugin
 from landxml_plugin.provider import LandXMLTinToGeoTIFFProvider
+from landxml_plugin.core import rasterize_tin, surface_difference
 
 
 OPENROADS = str(ROOT / "tests" / "fixtures" / "openroads" / "terrain_minimal.xml")
@@ -73,8 +77,35 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 17)
+        self.assertEqual(len(self.algorithms), 18)
         self.assertIn("inspect_landxml", self.algorithms)
+
+    def test_toolbox_groups_follow_workflow(self):
+        groups = sorted({algorithm.group() for algorithm in self.algorithms.values()})
+        self.assertEqual(groups, [
+            "1. Inspect and prepare", "2. Road design extraction",
+            "3. Vector extraction", "4. Terrain conversion", "5. Surface extraction",
+            "6. Earthworks and quantities", "7. Design review", "8. Reports and sheets",
+        ])
+        for name in ("inspect_landxml", "prepare_landxml"):
+            self.assertEqual(self.algorithms[name].group(), groups[0])
+        for name in ("landxml_design_report", "landxml_cross_section_sheets"):
+            self.assertEqual(self.algorithms[name].group(), groups[-1])
+            self.assertEqual(self.algorithms[name].groupId(), "reports")
+
+    def test_coordinate_selectors_explain_landxml_axis_order(self):
+        checked = []
+        for name, algorithm in self.algorithms.items():
+            parameter = algorithm.parameterDefinition("METHOD")
+            if parameter is None:
+                continue
+            checked.append(name)
+            self.assertIn("OpenRoads: usually Swap X / Y", parameter.description(), name)
+            for text in ("Northing, Easting", "Civil 3D", "X = Easting", "known control point"):
+                self.assertIn(text, parameter.help(), name)
+            self.assertEqual(parameter.defaultValue(), 0, name)
+            self.assertEqual(parameter.options()[1], "Swap X / Y", name)
+        self.assertGreater(len(checked), 0)
 
     def test_plugin_unload_after_provider_is_deleted(self):
         plugin = LandXMLTinToGeoTIFFPlugin(None)
@@ -350,6 +381,56 @@ class QgisProcessingTests(unittest.TestCase):
             )
             package = None
 
+    def test_large_grid_warns_before_allocation_and_continues(self):
+        vertices = np.array([[0, 0, 1], [24660, 0, 1], [0, 11283, 1]])
+        faces = np.array([[0, 1, 2]])
+        # Stop at allocation so the regression does not require a gigabyte of RAM.
+        with patch(
+            "landxml_plugin.core.np.full", side_effect=MemoryError("allocation reached")
+        ) as allocate:
+            with self.assertRaisesRegex(MemoryError, "allocation reached"):
+                with self.assertWarnsRegex(RuntimeWarning, "Large raster.*1.04 GiB"):
+                    rasterize_tin(vertices, faces, 1)
+            self.assertEqual(allocate.call_args.args[0], (11283, 24660))
+
+        with self.assertRaisesRegex(ValueError, "exceeding the safety limit"):
+            rasterize_tin(vertices, faces, 1, max_cells=250_000_000)
+
+    def test_grid_warning_threshold_and_surface_difference(self):
+        vertices = np.array([[0., 0., 1.], [2., 0., 1.], [0., 2., 1.]])
+        faces = np.array([[0, 1, 2]])
+        for threshold, expected in ((3, 1), (4, 0), (0, 0)):
+            with self.subTest(threshold=threshold):
+                messages = []
+                grid, *_ = rasterize_tin(vertices, faces, 1, warn_cells=threshold, warning=messages.append)
+                self.assertEqual(grid.shape, (2, 2))
+                self.assertEqual(len(messages), expected)
+        messages = []
+        difference, _, _, stats = surface_difference(
+            (vertices, faces), (vertices + [0, 0, 1], faces), 1, warn_cells=3, warning=messages.append,
+        )
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(stats["fill_volume"], 3)
+
+    def test_grid_warning_setting_reaches_all_raster_tools(self):
+        for name in ("landxml_tin_to_geotiff", "landxml_complete_road_design", "landxml_surface_cut_fill"):
+            algorithm = self.algorithms[name]
+            self.assertEqual(algorithm.parameterDefinition("GRID_WARNING").defaultValue(), 250)
+            for threshold in (0.001, 0):
+                with self.subTest(tool=name, threshold=threshold), tempfile.TemporaryDirectory() as directory:
+                    params = self._params(CORRIDOR, "EPSG:32637")
+                    params.update(
+                        RESOLUTION=0.1, GRID_WARNING=threshold, SURFACE="Design",
+                        BASE_SURFACE="EG", COMPARE_SURFACE="Design",
+                        OUTPUT=str(Path(directory) / "grid.tif"), OUTPUT_DIR=directory,
+                        INCLUDE_DEM=True, INCLUDE_CONTOURS=False,
+                    )
+                    with patch.object(self.feedback, "pushWarning") as warning:
+                        algorithm.processAlgorithm(params, self.context, self.feedback)
+                    grid_messages = [args[0] for args, _ in warning.call_args_list if args[0].startswith("Large raster:")]
+                    self.assertEqual(bool(grid_messages), bool(threshold))
+                    self.assertTrue(list(Path(directory).glob("*.tif")))
+
     def test_tin_geotiff_and_complete_export(self):
         with tempfile.TemporaryDirectory() as directory:
             raster = self._params(OPENROADS, "EPSG:2277")
@@ -531,6 +612,90 @@ class QgisProcessingTests(unittest.TestCase):
                 {"INPUT": OPENROADS, "OUTPUT": "memory:"}, self.context, self.feedback
             )
 
+    def test_earthwork_volume_unit_selection(self):
+        source = Path(CORRIDOR).read_text(encoding="utf-8")
+        metric = '<Metric linearUnit="meter" verticalLinearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/>'
+        for linear, crs, option, factor, label in (
+            ("meter", "EPSG:32637", 0, 1.0, "m³"),
+            ("foot", "+proj=utm +zone=37 +datum=WGS84 +units=ft +no_defs", 0, 1 / 27, "CY"),
+            ("usSurveyFoot", "EPSG:2277", 0, (1200 / 3937 / 0.9144) ** 3, "CY"),
+            ("meter", "EPSG:32637", 1, 1 / 0.9144 ** 3, "CY"),
+            ("meter", "EPSG:32637", 2, 1 / 0.3048 ** 3, "CF"),
+            ("usSurveyFoot", "EPSG:2277", 2, (1200 / 3937 / 0.3048) ** 3, "CF"),
+            ("usSurveyFoot", "EPSG:2277", 3, (1200 / 3937) ** 3, "m³"),
+        ):
+            with self.subTest(unit=linear, option=option), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "source.xml"
+                declaration = metric if linear == "meter" else (
+                    f'<Imperial linearUnit="{linear}" verticalLinearUnit="{linear}" volumeUnit="cubicYard"/>'
+                )
+                # Recorded SurfVolume is already expressed in its declared volume unit.
+                xml = source.replace(metric, declaration)
+                if linear != "meter":
+                    recorded_factor = 1 / 27 if linear == "foot" else (1200 / 3937 / 0.9144) ** 3
+                    xml = xml.replace('volFill="100"', f'volFill="{100 * recorded_factor:.15g}"')
+                    xml = xml.replace('volTotal="100"', f'volTotal="{100 * recorded_factor:.15g}"')
+                path.write_text(xml, encoding="utf-8")
+                p = self._params(str(path), crs)
+                if linear == "foot":
+                    p["OUTPUT_CRS"] = QgsCoordinateReferenceSystem.fromProj(crs)
+                p.update(OUTPUT="memory:", VOLUMES="memory:", FOOTPRINT="memory:", USE_DATUM=False, VOLUME_UNITS=option,
+                         REPORT=str(Path(directory) / "corridor.html"))
+                result = self.algorithms["landxml_corridor_quantities"].processAlgorithm(p, self.context, self.feedback)
+                self.assertEqual(result["VOLUME_UNIT"], label)
+                self.assertAlmostEqual(result["CUT_VOLUME"], 575 * factor)
+                volumes = list(self.context.getMapLayer(result["VOLUMES"]).getFeatures())
+                self.assertAlmostEqual(sum(f["fill_volume"] for f in volumes), result["FILL_VOLUME"])
+                self.assertTrue(all(f["volume_unit"] == label for f in volumes))
+                self.assertAlmostEqual(min(f["mass_ordinate"] for f in volumes), -575 * factor)
+                footprint = list(self.context.getMapLayer(result["FOOTPRINT"]).getFeatures())
+                self.assertAlmostEqual(sum(f["cut_volume"] for f in footprint), result["CUT_VOLUME"])
+                self.assertTrue(all(f["volume_unit"] == label for f in footprint))
+                report = Path(p["REPORT"]).read_text(encoding="utf-8")
+                self.assertIn(f"Cut volume ({label})", report)
+                self.assertIn(f"Volume ({label})", report)  # material volumes
+                p.update(OUTPUT=str(Path(directory) / "difference.tif"), REPORT=str(Path(directory) / "surface.html"),
+                         BASE_SURFACE="EG", COMPARE_SURFACE="Design", RESOLUTION=1)
+                result = self.algorithms["landxml_surface_cut_fill"].processAlgorithm(p, self.context, self.feedback)
+                self.assertEqual(result["VOLUME_UNIT"], label)
+                self.assertAlmostEqual(result["fill_volume"], 100 * factor)
+                dataset = gdal.Open(p["OUTPUT"])
+                self.assertAlmostEqual(float(dataset.GetRasterBand(1).ReadAsArray()[5, 5]), 1)
+                dataset = None
+                report = Path(p["REPORT"]).read_text(encoding="utf-8")
+                self.assertIn(f"Civil 3D ({label})", report)
+                self.assertIn(f"Fill volume ({label})", report)
+                value = f"{100 * factor:,.2f}"
+                self.assertIn(f">Fill</td><td class='num'>{value}</td><td class='num'>{value}</td><td class='num'>0.00</td>",
+                              report.replace(">-0.00</td>", ">0.00</td>"))
+                p.update(OUTPUT="memory:", REPORT=str(Path(directory) / "profile.html"), FORMATION_WIDTH=10)
+                self.algorithms["landxml_profile_cut_fill"].processAlgorithm(p, self.context, self.feedback)
+                self.assertIn(f"Cut volume ({label})", Path(p["REPORT"]).read_text(encoding="utf-8"))
+
+    def test_earthwork_volume_selectors_default_to_automatic(self):
+        for tool in ("landxml_profile_cut_fill", "landxml_corridor_quantities", "landxml_surface_cut_fill"):
+            algorithm = self.algorithms[tool]
+            parameter = algorithm.parameterDefinition("VOLUME_UNITS")
+            self.assertEqual(parameter.defaultValue(), 0)
+            self.assertEqual(parameter.options(), ["Automatic (CY for feet; m³ for metric)",
+                                                 "Cubic yards (CY)", "Cubic feet (CF)", "Cubic metres (m³)"])
+            p = self._params(CORRIDOR, "EPSG:32637")
+            p.update(OUTPUT="memory:", VOLUME_UNITS=99, FORMATION_WIDTH=10)
+            with self.subTest(tool=tool), self.assertRaisesRegex(QgsProcessingException, "Unknown volume units"):
+                algorithm.processAlgorithm(p, self.context, self.feedback)
+
+    def test_earthwork_volumes_require_explicit_vertical_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "no_vertical.xml"
+            path.write_text(Path(CORRIDOR).read_text(encoding="utf-8").replace(' verticalLinearUnit="meter"', ''), encoding="utf-8")
+            for tool in ("landxml_profile_cut_fill", "landxml_corridor_quantities", "landxml_surface_cut_fill"):
+                p = self._params(str(path), "EPSG:32637")
+                output = str(Path(directory) / "result.html")
+                p.update(FORMATION_WIDTH=10, OUTPUT="memory:", REPORT=output)
+                with self.subTest(tool=tool), self.assertRaisesRegex(QgsProcessingException, "known horizontal and vertical"):
+                    self.algorithms[tool].processAlgorithm(p, self.context, self.feedback)
+                self.assertFalse(Path(output).exists())
+
     def test_surface_cut_fill_matches_recorded_volume(self):
         with tempfile.TemporaryDirectory() as directory:
             params = self._params(CORRIDOR, "EPSG:32637")
@@ -707,6 +872,63 @@ class QgisProcessingTests(unittest.TestCase):
             params.pop("DESIGN_SPEED")
             with self.assertRaisesRegex(QgsProcessingException, "design speed"):
                 self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+
+    def test_us_customary_review_and_design_report(self):
+        from landxml_plugin.landxml.criteria import list_standards
+        from landxml_plugin.landxml.parser import load_document
+
+        index = [item[0] for item in list_standards()].index("aashto_2018_us_customary")
+        source = Path(CORRIDOR).read_text(encoding="utf-8")
+        for unit in ("foot", "usSurveyFoot"):
+            with self.subTest(unit=unit), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "feet.xml"
+                xml = source.replace('<Metric linearUnit="meter" verticalLinearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/>',
+                                     f'<Imperial linearUnit="{unit}" speedUnit="milesPerHour"/>')
+                xml = xml.replace('<Profile name="Synthetic Road">',
+                                  '<Feature name="SpeedStation"><Property label="station" value="0"/>'
+                                  '<Property label="speed" value="60"/></Feature><Profile name="Synthetic Road">')
+                path.write_text(xml, encoding="utf-8")
+                params = {
+                    "INPUT": str(path), "STANDARD": index, "OUTPUT": "memory:",
+                    "REPORT": str(Path(directory) / "review.html"),
+                    "PROFILE_LANDXML": str(Path(directory) / "profile.xml"),
+                    "PROFILE_TXT": str(Path(directory) / "profile.txt"),
+                }
+                self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+                text = Path(params["REPORT"]).read_text(encoding="utf-8")
+                self.assertIn("Design speed mph", text)
+                self.assertNotIn("km/h", text)
+                self.assertEqual(load_document(params["PROFILE_LANDXML"]).horizontal_unit, unit)
+                self.assertEqual(Path(params["PROFILE_TXT"]).read_text().splitlines()[0], "0.000 101.000")
+                report = str(Path(directory) / "design.html")
+                self.algorithms["landxml_design_report"].processAlgorithm(
+                    {"INPUT": str(path), "STANDARD": index + 1, "OUTPUT": report}, self.context, self.feedback
+                )
+                self.assertIn("Design speed mph", Path(report).read_text(encoding="utf-8"))
+                params["INPUT"] = CORRIDOR
+                with self.assertRaisesRegex(QgsProcessingException, "requires feet"):
+                    self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+
+    def test_ten_percent_superelevation_in_both_review_dialogs(self):
+        from landxml_plugin.landxml.criteria import list_standards
+
+        ids = [item[0] for item in list_standards()]
+        source = Path(CORRIDOR).read_text(encoding="utf-8")
+        for standard, imperial in (("aashto_2018", False), ("aashto_2018_us_customary", True)):
+            with self.subTest(standard=standard), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "source.xml"
+                xml = source.replace('<Metric linearUnit="meter" verticalLinearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/>',
+                                     '<Imperial linearUnit="usSurveyFoot" speedUnit="milesPerHour"/>') if imperial else source
+                path.write_text(xml, encoding="utf-8")
+                for tool, offset in (("landxml_design_review", 0), ("landxml_design_report", 1)):
+                    algorithm = self.algorithms[tool]
+                    self.assertEqual(algorithm.parameterDefinition("EMAX").options(), ["4%", "6%", "8%", "10%"])
+                    report = str(Path(directory) / (tool + ".html"))
+                    algorithm.processAlgorithm({
+                        "INPUT": str(path), "STANDARD": ids.index(standard) + offset,
+                        "EMAX": 3, "DESIGN_SPEED": 60, "OUTPUT": report if offset else "memory:", "REPORT": report,
+                    }, self.context, self.feedback)
+                    self.assertIn("e max 10%", Path(report).read_text(encoding="utf-8"))
 
     def test_design_report_with_review(self):
         with tempfile.TemporaryDirectory() as directory:

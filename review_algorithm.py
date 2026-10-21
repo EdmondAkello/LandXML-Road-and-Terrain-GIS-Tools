@@ -43,7 +43,7 @@ from .road_features import _param_coordinates
 
 TERRAINS = ["flat", "rolling", "mountainous", "escarpment"]
 ROAD_TYPES = ["rural", "urban"]
-EMAX = [4.0, 6.0, 8.0]
+EMAX = [4.0, 6.0, 8.0, 10.0]
 
 
 def standard_options():
@@ -53,6 +53,7 @@ def standard_options():
 def collect_reviews(path, doc, alignment_filter, criteria, design_speed, speed_ranges, terrain, road_type, emax, max_grade,
                     use_sections=True, ground_surface="", design_surface="", feedback=None, max_change=1.0):
     """Run the review for every (or one) alignment of a document."""
+    criteria.set_linear_unit(doc.horizontal_unit, doc.vertical_unit)
     records, unsupported = read_alignments(path, 2.0)
     elements = {element.attrib.get("name"): element for element in doc.alignments()}
     sections = []
@@ -77,7 +78,7 @@ def collect_reviews(path, doc, alignment_filter, criteria, design_speed, speed_r
             distinct = sorted({v for _s, v in recorded})
             source = "ignored: speed ranges entered" if speed_ranges else ("ignored: one design speed entered" if design_speed else "used")
             feedback.pushInfo(
-                f"{record['name']}: file design speeds {', '.join(f'{v:g}' for v in distinct)} km/h at "
+                f"{record['name']}: file design speeds {', '.join(f'{v:g}' for v in distinct)} {criteria.speed_unit} at "
                 f"{len(recorded)} station(s) ({source})."
             )
         if not speeds and not design_speed:
@@ -133,7 +134,7 @@ class DesignReviewAlgorithm(QgsProcessingAlgorithm):
         return "Geometric Design Review (Phasing, Sight Distance, Standards)"
 
     def group(self):
-        return "Design review"
+        return "7. Design review"
 
     def groupId(self):
         return "design_review"
@@ -176,15 +177,15 @@ class DesignReviewAlgorithm(QgsProcessingAlgorithm):
                 fileFilter="JSON (*.json)", optional=True,
             )
         )
-        self.addParameter(number_param("DESIGN_SPEED", "Design speed km/h (0 = from file)", 0, 0, 200, decimals=0))
+        self.addParameter(number_param("DESIGN_SPEED", "Design speed (km/h for metric; mph for US customary; 0 = from file)", 0, 0, 200, decimals=0))
         self.addParameter(
             QgsProcessingParameterString("SPEED_RANGES", "Design speed by chainage, e.g. 0-5000:60; 5000-:80", defaultValue="", optional=True)
         )
         self.addParameter(QgsProcessingParameterEnum("TERRAIN", "Terrain", options=TERRAINS, defaultValue=1))
         self.addParameter(QgsProcessingParameterEnum("ROAD_TYPE", "Road type (grade limits)", options=ROAD_TYPES, defaultValue=0))
-        self.addParameter(QgsProcessingParameterEnum("EMAX", "Maximum superelevation e max", options=["4%", "6%", "8%"], defaultValue=1))
+        self.addParameter(QgsProcessingParameterEnum("EMAX", "Maximum superelevation e max", options=[f"{value:g}%" for value in EMAX], defaultValue=1))
         self.addParameter(number_param("MAX_GRADE", "Maximum grade % override (0 = standard)", 0, 0, 30, decimals=2))
-        self.addParameter(number_param("MAX_CHANGE", "Apply profile fixes changing levels by at most (m)", 1.0, 0, 100, decimals=2))
+        self.addParameter(number_param("MAX_CHANGE", "Apply profile fixes changing levels by at most (source length units)", 1.0, 0, 100, decimals=2))
         self.addParameter(QgsProcessingParameterBoolean("USE_SECTIONS", "Use corridor cross-sections (barriers, sight on curves)", defaultValue=True))
         self.addParameter(name_param("GROUND_SURFACE", "Existing-ground section surface (blank = detect)", "section_surfaces"))
         self.addParameter(name_param("DESIGN_SURFACE", "Design section surface (blank = detect)", "section_surfaces"))
@@ -215,8 +216,10 @@ class DesignReviewAlgorithm(QgsProcessingAlgorithm):
         except (ValueError, IndexError) as exc:
             raise QgsProcessingException(str(exc)) from exc
         doc = load_document(path)
-        if (doc.horizontal_unit or "meter").lower() not in ("meter", "metre"):
-            raise QgsProcessingException("Design review criteria are metric; this file declares " f"'{doc.horizontal_unit}'.")
+        try:
+            criteria.set_linear_unit(doc.horizontal_unit, doc.vertical_unit)
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         terrain = TERRAINS[self.parameterAsEnum(p, "TERRAIN", c)]
         road_type = ROAD_TYPES[self.parameterAsEnum(p, "ROAD_TYPE", c)]
         emax = EMAX[self.parameterAsEnum(p, "EMAX", c)]
@@ -281,7 +284,7 @@ class DesignReviewAlgorithm(QgsProcessingAlgorithm):
             attach_post_processor(c, map_dest, None, path)
         settings = (
             f"Terrain {terrain} · {road_type} · e max {emax:g}% · design speed "
-            + (self.parameterAsString(p, "SPEED_RANGES", c) or (f"{design_speed:g} km/h" if design_speed else "from file"))
+            + (self.parameterAsString(p, "SPEED_RANGES", c) or (f"{design_speed:g} {criteria.speed_unit}" if design_speed else "from file"))
         )
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:

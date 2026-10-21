@@ -169,8 +169,10 @@ class LandXMLDocument:
                 }
             )
         surface_volumes = []
+        volume_units = {declaration.get("volumeUnit") for units in descendants(self.root, "Units") for declaration in units}
         for item in descendants(self.root, "SurfVolume"):
-            record = {"name": item.attrib.get("name")}
+            record = {"name": item.attrib.get("name"),
+                      "volume_unit": next(iter(volume_units)) if len(volume_units) == 1 else None}
             for key, label in (
                 ("surfBase", "base_surface"),
                 ("surfCompare", "compare_surface"),

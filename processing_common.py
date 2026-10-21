@@ -5,11 +5,28 @@ from __future__ import annotations
 from qgis.core import (
     Qgis,
     QgsProcessingException,
+    QgsProcessingParameterEnum,
     QgsProcessingLayerPostProcessorInterface,
 )
 
 from .landxml.catalog import match_name, read_catalog
 from .landxml.parser import load_document
+
+
+def coordinate_param(name, options):
+    parameter = QgsProcessingParameterEnum(
+        name, "Coordinate interpretation (OpenRoads: usually Swap X / Y)",
+        options=options, defaultValue=0,
+    )
+    parameter.setHelp(
+        "Standard LandXML plan coordinates are Northing, Easting (Y, X), with elevation third. "
+        "OpenRoads and Civil 3D normally use this order. This plugin retains the stored order, "
+        "so choose Swap X / Y for these exports to produce X = Easting, Y = Northing. "
+        "Use stored coordinates only when the file is verified to contain Easting, Northing already. "
+        "Check a known control point and use the same interpretation for matching geometry and terrains. "
+        "Prepare LandXML preserves axis order. Swapping does not identify the CRS or convert units."
+    )
+    return parameter
 
 
 class BoundsTracker:

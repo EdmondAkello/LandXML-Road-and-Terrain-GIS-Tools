@@ -14,6 +14,7 @@ from .road_features import (
 )
 from .complete_export import CompleteRoadDesignAlgorithm
 from .inspect_algorithm import InspectLandXMLAlgorithm
+from .prepare_algorithm import PrepareLandXMLAlgorithm
 from .sections_algorithm import CrossSectionSheetsAlgorithm
 from .design_report_algorithm import DesignReportAlgorithm
 from .review_algorithm import DesignReviewAlgorithm
@@ -50,6 +51,7 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
 
     def loadAlgorithms(self):
         self.addAlgorithm(InspectLandXMLAlgorithm())
+        self.addAlgorithm(PrepareLandXMLAlgorithm())
         self.addAlgorithm(LandXMLTinToGeoTIFFAlgorithm())
         self.addAlgorithm(LandXMLAlignmentsAlgorithm())
         self.addAlgorithm(ProfileAlgorithm())

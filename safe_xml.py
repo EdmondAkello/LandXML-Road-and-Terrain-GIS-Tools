@@ -264,14 +264,19 @@ def _wire_builder(parser, builder):
     parser.StartElementHandler = start
     parser.EndElementHandler = end
     parser.CharacterDataHandler = builder.data
+    if hasattr(builder, "comment"):
+        parser.CommentHandler = builder.comment
+    if hasattr(builder, "pi"):
+        parser.ProcessingInstructionHandler = builder.pi
 
 
-def parse(source):
+def parse(source, builder=None):
     """Safe replacement for ``xml.etree.ElementTree.parse(source)``. Accepts
     a file path or an open binary file object; returns an ElementTree (call
-    ``.getroot()`` as usual)."""
+    ``.getroot()`` as usual). An optional builder can retain comments and mixed
+    text for serialization; all input still goes through the hardened parser."""
     parser = _new_parser()
-    builder = TreeBuilder()
+    builder = builder if builder is not None else TreeBuilder()
     _wire_builder(parser, builder)
 
     owns_file = not hasattr(source, "read")

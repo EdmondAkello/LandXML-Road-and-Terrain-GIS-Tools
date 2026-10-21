@@ -7,7 +7,6 @@ from qgis.core import (
     QgsProcessingParameterFile,
     QgsProcessingParameterCrs,
     QgsProcessingParameterFeatureSink,
-    QgsProcessingParameterEnum,
     QgsProcessingException,
     QgsFeature,
     QgsGeometry,
@@ -20,7 +19,7 @@ from .compat import FIELD_STRING, FIELD_DOUBLE
 
 from .core import transform_vertices
 from .landxml.geometry import read_alignments
-from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices
+from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices, coordinate_param
 from .params import number_param
 from .processing_widgets import name_param
 from .processing_common import resolve_name
@@ -75,7 +74,7 @@ class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
         return "Extract LandXML Alignments to Lines"
 
     def group(self):
-        return "Vector extraction"
+        return "3. Vector extraction"
 
     def groupId(self):
         return "vector_extraction"
@@ -99,12 +98,7 @@ class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
-            QgsProcessingParameterEnum(
-                self.METHOD,
-                "Coordinate interpretation",
-                options=METHODS,
-                defaultValue=0,
-            )
+            coordinate_param(self.METHOD, METHODS)
         )
         self.addParameter(
             number_param(self.DX, "Delta X / Easting", 0.0, -1e9, 1e9, decimals=4)

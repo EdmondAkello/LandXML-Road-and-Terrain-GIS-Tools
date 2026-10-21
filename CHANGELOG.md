@@ -2,10 +2,33 @@
 
 ## Unreleased
 
+### Changed
+- Earthwork volume exports now use cubic yards (CY) for foot-based projects and cubic metres (m³) for metric projects, including cut/fill, materials, mass-haul, interval tables, footprint attributes and Processing totals. Reports and tables identify the unit; existing numeric volume field names are retained. Regenerate earlier outputs. Volume calculations require known horizontal and vertical units; profile/section units must match. Surface volumes account for output CRS and elevation units separately, and recorded Civil 3D comparisons honor declared volume units.
+- Coordinate-interpretation selectors include an OpenRoads axis-order reminder and shared help explaining standard LandXML Northing/Easting order, Civil 3D, control-point verification and matching geometry/terrain settings. Existing choices and defaults are preserved.
+- Numbered Processing groups follow the suggested workflow from inspection and preparation through extraction, quantities and review to reports and sheets. Algorithm IDs remain unchanged.
+
+### Added
+- A shared Volume units selector in all three earthworks tools: Automatic (CY for feet, m³ for metric), CY, CF or m³. Explicit choices apply to reports, tables, material volumes, mass-haul ordinates and Processing totals across input unit systems.
+- AASHTO 2018 e max 10% in Geometric Design Review and Road Design Report, with Table 3-11 radius/rate thresholds for US customary and metric criteria. Existing e max selection indices are unchanged; unsupported standards and out-of-table speeds are rejected.
+
+### Added
+- Prepare LandXML from Geometry and Terrains combines matching exports, preserves complete inputs, and samples missing surface profiles and terrain cross-sections directly from visible TIN triangles. Includes explicit metadata validation, disconnected-profile support, coverage warnings and atomic output.
+
+### Fixed
+- Release ZIPs include non-ignored untracked runtime files, preventing a newly added module from being omitted and breaking plugin startup.
+- Section quantities no longer integrate across intervening stations with missing earthworks data.
+- Explicitly import GDAL and OSR so core reprojection and GeoTIFF writing work in a fresh Python process.
+
+### Changed
+- Raster tools expose a configurable large-grid warning threshold (250 million cells by default; 0 disables it). Exceeding the threshold logs estimated minimum memory and continues, including Surface Cut/Fill, which previously retained a hard default limit.
+
 ### Added
 - Continuous integration: GitHub Actions runs the parser and earthworks tests (GDAL, no QGIS) and a Bandit scan on every push to `main` and every pull request. The release script already leaves `.github/` out of the plugin zip.
 
 ## 1.8.1 — 2026-10-15
+
+### Added
+- AASHTO 2018 US customary criteria (ft, mph) alongside metric criteria, including grade-dependent stopping sight distance, crest/sag K, radius, superelevation and runoff tables. Design Review and Road Design Report support international-foot and US survey-foot LandXML; findings, speed inputs and recommended-profile exports retain the appropriate units.
 
 ### Changed
 - **Printable reports.** All HTML reports now print to PDF from Chrome or Edge with A4 page layout, the report title and page numbers in the footer, chart colours and legend swatches kept, headings kept with their charts, and long tables split across pages with repeated headers. Previously, long tables were moved whole to the next page, leaving blank pages (a 4-alignment design report went from 89 to 54 pages), and the first page held only the title.
@@ -68,6 +91,7 @@
 
 ## 1.5.0 — unreleased
 
+- Removed the default 250-million-cell cap from TIN rasterization for both TIN to GeoTIFF and Complete Road Design exports, allowing the requested pixel size on larger surfaces.
 - Ported Processing field creation to `QMetaType`, removed fixed EPSG defaults, required explicit CRS choices, and verified provider and algorithm execution under QGIS 4.2.2 and the headless QGIS 3.44.3 runtime.
 - Added shared, namespace-tolerant LandXML parsing, conservative application/vendor detection, unit/CRS inspection and source-backed breakline/cross-section/profile handling.
 - Examined private OpenRoads Designer terrain exports and added a synthetic fixture reproducing the relevant structure without project data. Exercised one private OpenRoads alignment/profile export in QGIS 3.44.3; survey-control validation remains outstanding.

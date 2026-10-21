@@ -3,7 +3,6 @@ import os
 from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingParameterFile,
-    QgsProcessingParameterEnum,
     QgsProcessingParameterCrs,
     QgsProcessingParameterRasterDestination,
     QgsProcessingException,
@@ -20,7 +19,7 @@ from .core import (
 from .params import number_param
 from .processing_widgets import name_param
 from .processing_common import resolve_name
-from .processing_common import coordinate_choices
+from .processing_common import coordinate_choices, coordinate_param
 
 PRESETS_KEY = "LandXMLTinToGeoTIFF/presets"
 METHODS = [
@@ -68,7 +67,7 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
         return self.tr("LandXML TIN to GeoTIFF")
 
     def group(self):
-        return self.tr("Terrain conversion")
+        return self.tr("4. Terrain conversion")
 
     def groupId(self):
         return "terrain_conversion"
@@ -106,6 +105,7 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
                 decimals=3,
             )
         )
+        self.addParameter(number_param("GRID_WARNING", "Warn above grid size (million cells; 0 = disable)", 250, 0, 1e9, decimals=3))
         self.addParameter(
             number_param(
                 self.NODATA,
@@ -117,12 +117,7 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
-            QgsProcessingParameterEnum(
-                self.METHOD,
-                self.tr("Coordinate interpretation"),
-                options=METHODS,
-                defaultValue=0,
-            )
+            coordinate_param(self.METHOD, METHODS)
         )
         self.addParameter(
             number_param(
@@ -238,7 +233,9 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
                 )
             )
             arr, xmin, ymax, res = rasterize_tin(
-                vertices, faces, resolution, nodata, progress, feedback.isCanceled
+                vertices, faces, resolution, nodata, progress, feedback.isCanceled,
+                warn_cells=self.parameterAsDouble(parameters, "GRID_WARNING", context) * 1_000_000,
+                warning=feedback.pushWarning,
             )
             write_geotiff(output, arr, xmin, ymax, res, nodata, wkt=output_crs.toWkt())
         except QgsProcessingException:

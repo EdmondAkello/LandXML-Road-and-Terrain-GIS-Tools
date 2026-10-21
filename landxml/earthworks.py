@@ -528,10 +528,14 @@ def corridor_quantities(
 
     intervals = []
     earth = [row for row in rows if row["has_earthworks"]]
+    missing_stations = sorted(row["station"] for row in rows if not row["has_earthworks"])
     mass = 0.0
     for a, b in zip(earth, earth[1:]):
         ds = b["station"] - a["station"]
         if ds <= 0:
+            continue
+        if bisect_left(missing_stations, b["station"]) > bisect_right(missing_stations, a["station"]):
+            skipped.append((a["station"], "missing section data before the next usable section"))
             continue
         if any(a["station"] < low and high < b["station"] for low, high in excluded):
             continue

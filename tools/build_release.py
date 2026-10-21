@@ -5,13 +5,13 @@ Usage (from the repository root):
     python tools/build_release.py            # build dist/<package>-<version>.zip and check it
     python tools/build_release.py --check X  # check an existing ZIP only
 
-The ZIP contains committed files only (``git ls-files``), restricted to the
+The ZIP contains tracked and non-ignored untracked files, restricted to the
 plugin runtime: tests, developer documents and this tools folder are left
 out. The checks mirror plugins.qgis.org: the upload validator (layout,
 forbidden files, required metadata, LICENSE, package name), and the security
 scan (Bandit with the repository's enabled rules, detect-secrets, flake8 with
 the enabled codes, executable and hidden files). Bandit, detect-secrets and
-flake8 must be installed (``pip install bandit detect-secrets flake8``).
+flake8 must be installed (``python -m pip install bandit detect-secrets flake8``).
 """
 
 import argparse
@@ -30,7 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The folder name QGIS uses to identify the plugin; it must never change between versions.
 PACKAGE = "landxml_tin_to_geotiff"
 
-EXCLUDE_PREFIXES = ("tests/", "tools/", "docs/", "examples/", ".")
+EXCLUDE_PREFIXES = ("tests/", "tools/", "docs/", "examples/", "dist/", ".")
 EXCLUDE_FILES = {"HISTORY.md"}
 
 REQUIRED_METADATA = ("name", "description", "version", "qgisMinimumVersion", "author", "email", "about", "tracker", "repository")
@@ -47,7 +47,9 @@ SUSPICIOUS = (".exe", ".dll", ".so", ".dylib", ".bat", ".sh", ".ps1", ".cmd")
 
 
 def git_files():
-    output = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)  # nosec B603 B607
+    output = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=ROOT
+    )  # nosec B603 B607
     return [name for name in output.decode("utf-8").split("\0") if name]
 
 
@@ -130,7 +132,7 @@ def check(path):
         try:
             archive.extractall(temp)  # nosec B202 - our own archive, names checked above
             folder = os.path.join(temp, PACKAGE)
-            bandit = run(["bandit", "-r", folder, "-f", "json", "--quiet", "-t", BANDIT_TESTS])
+            bandit = run([sys.executable, "-m", "bandit", "-r", folder, "-f", "json", "--quiet", "-t", BANDIT_TESTS])
             try:
                 results = json.loads(bandit.stdout or "{}").get("results", [])
             except ValueError:
@@ -138,7 +140,7 @@ def check(path):
                 problems.append("Bandit did not run: " + (bandit.stderr or bandit.stdout)[:200])
             for issue in results or []:
                 problems.append(f"Bandit {issue['test_id']} {issue['filename'].replace(folder, '')}:{issue['line_number']} {issue['issue_text']}")
-            secrets = run(["detect-secrets", "scan", "--all-files", "--exclude-files", r"metadata\.txt", "."], cwd=folder)
+            secrets = run([sys.executable, "-m", "detect_secrets", "scan", "--all-files", "--exclude-files", r"metadata\.txt", "."], cwd=folder)
             try:
                 found = json.loads(secrets.stdout).get("results", {})
             except ValueError:
@@ -148,7 +150,7 @@ def check(path):
                 for item in items:
                     problems.append(f"secret {item['type']} in {filename}:{item['line_number']}")
             python_files = [os.path.join(r, f) for r, _d, fs in os.walk(folder) for f in fs if f.endswith(".py")]
-            flake8 = run(["flake8", "--max-line-length=120", "--select", FLAKE8_SELECT] + python_files)
+            flake8 = run([sys.executable, "-m", "flake8", "--max-line-length=120", "--select", FLAKE8_SELECT] + python_files)
             if flake8.returncode not in (0, 1):
                 problems.append("flake8 did not run: " + flake8.stderr[:200])
             for line in flake8.stdout.splitlines():
