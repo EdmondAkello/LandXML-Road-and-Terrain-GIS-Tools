@@ -42,7 +42,7 @@ from qgis.PyQt import sip
 
 from landxml_plugin.landxml_tin_to_geotiff import LandXMLTinToGeoTIFFPlugin
 from landxml_plugin.provider import LandXMLTinToGeoTIFFProvider
-from landxml_plugin.core import rasterize_tin
+from landxml_plugin.core import rasterize_tin, surface_difference
 
 
 OPENROADS = str(ROOT / "tests" / "fixtures" / "openroads" / "terrain_minimal.xml")
@@ -77,7 +77,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 17)
+        self.assertEqual(len(self.algorithms), 18)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_plugin_unload_after_provider_is_deleted(self):
@@ -354,7 +354,7 @@ class QgisProcessingTests(unittest.TestCase):
             )
             package = None
 
-    def test_tin_rasterization_has_no_default_cell_limit(self):
+    def test_large_grid_warns_before_allocation_and_continues(self):
         vertices = np.array([[0, 0, 1], [24660, 0, 1], [0, 11283, 1]])
         faces = np.array([[0, 1, 2]])
         # Stop at allocation so the regression does not require a gigabyte of RAM.
@@ -362,11 +362,47 @@ class QgisProcessingTests(unittest.TestCase):
             "landxml_plugin.core.np.full", side_effect=MemoryError("allocation reached")
         ) as allocate:
             with self.assertRaisesRegex(MemoryError, "allocation reached"):
-                rasterize_tin(vertices, faces, 1)
+                with self.assertWarnsRegex(RuntimeWarning, "Large raster.*1.04 GiB"):
+                    rasterize_tin(vertices, faces, 1)
             self.assertEqual(allocate.call_args.args[0], (11283, 24660))
 
         with self.assertRaisesRegex(ValueError, "exceeding the safety limit"):
             rasterize_tin(vertices, faces, 1, max_cells=250_000_000)
+
+    def test_grid_warning_threshold_and_surface_difference(self):
+        vertices = np.array([[0., 0., 1.], [2., 0., 1.], [0., 2., 1.]])
+        faces = np.array([[0, 1, 2]])
+        for threshold, expected in ((3, 1), (4, 0), (0, 0)):
+            with self.subTest(threshold=threshold):
+                messages = []
+                grid, *_ = rasterize_tin(vertices, faces, 1, warn_cells=threshold, warning=messages.append)
+                self.assertEqual(grid.shape, (2, 2))
+                self.assertEqual(len(messages), expected)
+        messages = []
+        difference, _, _, stats = surface_difference(
+            (vertices, faces), (vertices + [0, 0, 1], faces), 1, warn_cells=3, warning=messages.append,
+        )
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(stats["fill_volume"], 3)
+
+    def test_grid_warning_setting_reaches_all_raster_tools(self):
+        for name in ("landxml_tin_to_geotiff", "landxml_complete_road_design", "landxml_surface_cut_fill"):
+            algorithm = self.algorithms[name]
+            self.assertEqual(algorithm.parameterDefinition("GRID_WARNING").defaultValue(), 250)
+            for threshold in (0.001, 0):
+                with self.subTest(tool=name, threshold=threshold), tempfile.TemporaryDirectory() as directory:
+                    params = self._params(CORRIDOR, "EPSG:32637")
+                    params.update(
+                        RESOLUTION=0.1, GRID_WARNING=threshold, SURFACE="Design",
+                        BASE_SURFACE="EG", COMPARE_SURFACE="Design",
+                        OUTPUT=str(Path(directory) / "grid.tif"), OUTPUT_DIR=directory,
+                        INCLUDE_DEM=True, INCLUDE_CONTOURS=False,
+                    )
+                    with patch.object(self.feedback, "pushWarning") as warning:
+                        algorithm.processAlgorithm(params, self.context, self.feedback)
+                    grid_messages = [args[0] for args, _ in warning.call_args_list if args[0].startswith("Large raster:")]
+                    self.assertEqual(bool(grid_messages), bool(threshold))
+                    self.assertTrue(list(Path(directory).glob("*.tif")))
 
     def test_tin_geotiff_and_complete_export(self):
         with tempfile.TemporaryDirectory() as directory:

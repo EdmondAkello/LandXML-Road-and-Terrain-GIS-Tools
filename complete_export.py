@@ -167,6 +167,7 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                 decimals=2,
             )
         )
+        self.addParameter(number_param("GRID_WARNING", "Warn above grid size (million cells; 0 = disable)", 250, 0, 1e9, decimals=3))
         self.addParameter(
             number_param(
                 "NODATA", "DEM NoData value", -9999, -3.4e38, 3.4e38, decimals=3
@@ -861,6 +862,8 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                         nodata,
                         progress=lambda value, message: fb.setProgress(value),
                         cancel=fb.isCanceled,
+                        warn_cells=self.parameterAsDouble(p, "GRID_WARNING", c) * 1_000_000,
+                        warning=fb.pushWarning,
                     )
                     suffix = (
                         "" if len(surfaces) == 1 else f"_surface_{output_index:02d}"

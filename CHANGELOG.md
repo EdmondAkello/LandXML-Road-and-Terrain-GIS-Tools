@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Prepare LandXML from Geometry and Terrains combines matching exports, preserves complete inputs, and samples missing surface profiles and terrain cross-sections directly from visible TIN triangles. Includes explicit metadata validation, disconnected-profile support, coverage warnings and atomic output.
+
+### Fixed
+- Section quantities no longer integrate across intervening stations with missing earthworks data.
+- Explicitly import GDAL and OSR so core reprojection and GeoTIFF writing work in a fresh Python process.
+
+### Changed
+- Raster tools expose a configurable large-grid warning threshold (250 million cells by default; 0 disables it). Exceeding the threshold logs estimated minimum memory and continues, including Surface Cut/Fill, which previously retained a hard default limit.
+
+### Added
 - Continuous integration: GitHub Actions runs the parser and earthworks tests (GDAL, no QGIS) and a Bandit scan on every push to `main` and every pull request. The release script already leaves `.github/` out of the plugin zip.
 
 ## 1.8.1 — 2026-10-15

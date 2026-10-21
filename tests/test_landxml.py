@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 
@@ -40,6 +41,25 @@ GENERIC = FIXTURES / "generic" / "multiple.xml"
 
 
 class ParserTests(unittest.TestCase):
+    def test_core_gdal_operations_in_a_fresh_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code = f"""
+import sys, types
+from pathlib import Path
+package = types.ModuleType('landxml_plugin')
+package.__path__ = [{str(ROOT)!r}]
+sys.modules['landxml_plugin'] = package
+from landxml_plugin.core import transform_vertices, write_geotiff
+import numpy as np
+points = transform_vertices(np.array([[1., 1., 7.]]), method='reproject', src_epsg=4326, dst_epsg=3857)
+assert 111000 < points[0, 0] < 112000 and points[0, 2] == 7
+path = {str(Path(directory) / 'fresh.tif')!r}
+write_geotiff(path, np.ones((1, 1), dtype=np.float32), 0, 1, 1, epsg=3857)
+assert Path(path).is_file()
+"""
+            result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_profile_map_placement_clips_partial_station_range(self):
         placement = ProfileMapPlacement(
             [(0, 0), (100, 0)], [(1000, 2000), (1100, 2000)],

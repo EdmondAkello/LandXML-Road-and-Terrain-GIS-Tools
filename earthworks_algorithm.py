@@ -943,6 +943,7 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(name_param("BASE_SURFACE", "Base (existing) surface (blank = detect)", "surfaces"))
         self.addParameter(name_param("COMPARE_SURFACE", "Comparison (design) surface (blank = detect)", "surfaces"))
         self.addParameter(number_param("RESOLUTION", "Grid cell size (output CRS units)", 1, 0.01, 10000, decimals=3))
+        self.addParameter(number_param("GRID_WARNING", "Warn above grid size (million cells; 0 = disable)", 250, 0, 1e9, decimals=3))
         self.addParameter(number_param("NODATA", "NoData value", -9999, -3.4e38, 3.4e38, decimals=3))
         _param_coordinates(self)
         self.addParameter(QgsProcessingParameterRasterDestination("OUTPUT", "Cut/fill depth raster"))
@@ -989,6 +990,8 @@ class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
                 nodata,
                 progress=lambda value, message: fb.setProgress(value),
                 cancel=fb.isCanceled,
+                warn_cells=self.parameterAsDouble(p, "GRID_WARNING", c) * 1_000_000,
+                warning=fb.pushWarning,
             )
         except (ValueError, RuntimeError) as exc:
             raise QgsProcessingException(str(exc)) from exc

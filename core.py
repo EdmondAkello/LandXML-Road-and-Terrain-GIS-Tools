@@ -8,9 +8,10 @@ or reprojected with a source/target CRS using GDAL/OSR.
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
-import osgeo
+from osgeo import gdal, osr
 
 from .landxml.common import child, descendants, first_descendant
 from .landxml.parser import load_document
@@ -182,8 +183,8 @@ def transform_vertices(vertices, method="stored", **params):
         out[:, 1] = ty + scale * (s * x + c * y)
         return out
     if method == "reproject":
-        src = osgeo.osr.SpatialReference()
-        dst = osgeo.osr.SpatialReference()
+        src = osr.SpatialReference()
+        dst = osr.SpatialReference()
         if params.get("src_wkt") and params.get("dst_wkt"):
             if (
                 src.ImportFromWkt(params["src_wkt"]) != 0
@@ -197,9 +198,9 @@ def transform_vertices(vertices, method="stored", **params):
             dst_epsg = int(params["dst_epsg"])
             if src.ImportFromEPSG(src_epsg) != 0 or dst.ImportFromEPSG(dst_epsg) != 0:
                 raise ValueError("Could not load one of the specified EPSG codes.")
-        src.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
-        dst.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
-        ct = osgeo.osr.CoordinateTransformation(src, dst)
+        src.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        dst.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        ct = osr.CoordinateTransformation(src, dst)
         transformed = np.empty_like(out)
         for i in range(len(out)):
             xx, yy, zz = ct.TransformPoint(float(x[i]), float(y[i]), 0.0)
@@ -240,9 +241,15 @@ def rasterize_tin(
     progress=None,
     cancel=None,
     max_cells=None,
-    grid=None
+    grid=None,
+    warn_cells=250_000_000,
+    warning=None,
 ):
-    """Rasterize TIN faces; ``grid=(xmin, ymax, cols, rows)`` forces a shared grid."""
+    """Rasterize TIN faces; ``grid=(xmin, ymax, cols, rows)`` forces a shared grid.
+
+    ``warn_cells`` logs a warning and continues (0 disables it). ``max_cells``
+    remains an optional hard cap for callers that explicitly request one.
+    """
     if resolution <= 0:
         raise ValueError("Resolution must be greater than zero.")
     if grid is not None:
@@ -256,6 +263,16 @@ def rasterize_tin(
         raise ValueError(
             f"Requested resolution produces {cells:,} cells ({cols:,} × {rows:,}), exceeding the safety limit of {max_cells:,}. Increase the pixel size."
         )
+    if warn_cells and cells > warn_cells:
+        message = (
+            f"Large raster: {cells:,} cells ({cols:,} × {rows:,}) exceeds the warning threshold of {warn_cells:,.0f}. "
+            f"The grid alone needs {cells * 4 / 1024**3:.2f} GiB of RAM; temporary arrays need more. "
+            "Continuing; increase the pixel size to reduce memory use if needed."
+        )
+        if warning is not None:
+            warning(message)
+        else:
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
 
     arr = np.full((rows, cols), np.float32(nodata), dtype=np.float32)
     eps = max(resolution * 1e-8, 1e-9)
@@ -308,10 +325,10 @@ def rasterize_tin(
 def _crs_from_epsg(epsg):
     if not epsg:
         return None
-    srs = osgeo.osr.SpatialReference()
+    srs = osr.SpatialReference()
     if srs.ImportFromEPSG(int(epsg)) != 0:
         return None
-    srs.SetAxisMappingStrategy(osgeo.osr.OAMS_TRADITIONAL_GIS_ORDER)
+    srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     return srs.ExportToWkt()
 
 
@@ -333,8 +350,8 @@ def write_geotiff(
         "PREDICTOR=2",
         "BIGTIFF=IF_SAFER",
     ]
-    drv = osgeo.gdal.GetDriverByName("GTiff")
-    ds = drv.Create(path, cols, rows, 1, osgeo.gdal.GDT_Float32, options=options)
+    drv = gdal.GetDriverByName("GTiff")
+    ds = drv.Create(path, cols, rows, 1, gdal.GDT_Float32, options=options)
     if ds is None:
         raise IOError(f"Could not create output GeoTIFF: {path}")
     ds.SetGeoTransform((xmin, resolution, 0.0, ymax, 0.0, -resolution))
@@ -352,7 +369,8 @@ def write_geotiff(
 
 
 def surface_difference(
-    base, compare, resolution, nodata=-9999.0, progress=None, cancel=None, max_cells=250_000_000
+    base, compare, resolution, nodata=-9999.0, progress=None, cancel=None, max_cells=None,
+    warn_cells=250_000_000, warning=None,
 ):
     """Grid compare minus base where both TINs exist (positive = fill).
 
@@ -378,10 +396,12 @@ def surface_difference(
         return lambda value, message: progress(start + int(span * value / 100), message)
 
     base_grid, xmin, ymax, _ = rasterize_tin(
-        base_xyz, base_faces, resolution, nodata, stage(0, 45), cancel, max_cells, grid
+        base_xyz, base_faces, resolution, nodata, stage(0, 45), cancel, max_cells, grid,
+        warn_cells=warn_cells, warning=warning,
     )
     compare_grid, _, _, _ = rasterize_tin(
-        compare_xyz, compare_faces, resolution, nodata, stage(45, 45), cancel, max_cells, grid
+        compare_xyz, compare_faces, resolution, nodata, stage(45, 45), cancel, max_cells, grid,
+        warn_cells=0,
     )
     valid = (base_grid != np.float32(nodata)) & (compare_grid != np.float32(nodata))
     difference = np.full(base_grid.shape, np.float32(nodata), dtype=np.float32)

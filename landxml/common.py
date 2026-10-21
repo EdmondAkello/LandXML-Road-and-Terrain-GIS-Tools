@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def local_name(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
 
 
 def namespace_map(element) -> dict[str, str]:

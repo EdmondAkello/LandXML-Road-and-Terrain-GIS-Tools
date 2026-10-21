@@ -26,11 +26,25 @@ The plugin reads exported LandXML. It does **not** parse DGN files or proprietar
 
 The examined OpenRoads terrain exports contain `Surfaces/Surface/Definition/Pnts` and `Faces`, plus `SourceData/Breaklines/Breakline/PntList3D`. Breaklines carry `Feature@code` and `Property` IDs, but no source feature name. The importer retains that code, breakline type and IDs without treating IDs as names. The exports declare `USSurveyFoot` but omit a CRS and vertical unit. The structural comparison is in [docs/openroads-sample-audit.md](docs/openroads-sample-audit.md).
 
+### Separate geometry and terrain exports
+
+Use **Utilities → Prepare LandXML from Geometry and Terrains** to turn separate exports into one input for the existing tools:
+
+1. Select the alignment/profile export as **Primary geometry/profile LandXML**. Leave the alignment blank to prepare all supported alignments.
+2. Supply optional **Existing-ground terrain LandXML** and **Proposed terrain LandXML** files. A single surface is selected automatically; choose a surface when a file has several. To use an embedded terrain, leave its file blank and select its surface from the dropdown. Leaving both fields blank supplies no terrain for that role.
+3. Verify that all files already share coordinates, units and vertical datum. Choose explicit shared units where declarations are missing, and confirm coordinate/datum agreement. Conflicting declarations are rejected; the tool does not swap axes, reproject or convert units.
+4. Choose a new output LandXML. Defaults are 5 source units between profile samples, 20 between cross-sections, and 50 to either side. Adjust these distances for feet or metres and your project requirements.
+5. Use the prepared file with the Profile Viewer, Road Design Report, Geometric Design Review, section sheets, profile/corridor quantities, or surface cut/fill. The original design profile and other primary-file data remain intact.
+
+Complete LandXML files can still go straight into the existing tools. Preparation also accepts complete inputs without separate terrains and preserves existing profiles and section surfaces. With terrain inputs selected, it fills missing surface profiles and missing section surfaces at the requested stations. Re-running a prepared file reuses generated records; changed terrain data under a generated name is rejected rather than silently retaining stale samples.
+
+Sampling interpolates the original visible TIN triangles, retaining triangle-edge crossings and skipping hidden faces. Profile gaps remain separate parts. A section with disconnected coverage is omitted for that terrain; continuous sections are clipped to terrain edges and logged. Missing section stations interrupt earthworks volume integration. Cross-section quantities still use sampled average end areas: inspect coverage warnings and exclude unsampled gaps between stations before relying on quantities. These are terrain-derived sections, not reconstructed corridor templates, pavement layers or design PVIs. Generated XML includes provenance and profile-part grouping metadata; other software may display disconnected profile parts as separate profiles.
+
 ## Processing tools
 
 | Group | Tools |
 | --- | --- |
-| Utilities | Inspect LandXML |
+| Utilities | Inspect LandXML; Prepare LandXML from Geometry and Terrains |
 | Terrain conversion | TIN to GeoTIFF |
 | Vector extraction | Horizontal alignments |
 | Road design extraction | Labeled vertical profile graph, optional map profile overlay and VPC/VPI/VPT controls with vertical exaggeration; 3D centerlines; cross sections and optional points; station points; Complete Road Design to GeoPackage |
@@ -44,6 +58,8 @@ Outside the Processing Toolbox, the **LandXML Profile Viewer** dock and the **Pi
 **Inspect LandXML** reports vendor/evidence, version, horizontal and vertical units, declared CRS, axis-order uncertainty, surfaces with point/face counts, alignments, profiles, cross sections, breaklines, feature lines, source bounds, elevation range and warnings. It can save JSON. Inspection never changes coordinates.
 
 The Complete Road Design export writes an engineering GeoPackage and optional GeoTIFF/contour outputs. `alignment_elements` retains radius, curve length, spiral length and direction per element. Profiles and profile controls use **station/elevation graph coordinates with no map CRS**; they are not mapped onto the horizontal alignment. Breakline and feature-line layers preserve source names/descriptions when present, surface name, type, code and source IDs. When multiple surfaces are present, the exporter processes all unless a name is selected.
+
+**Large raster grids.** TIN to GeoTIFF, Complete Road Design and Surface Cut/Fill have a **Warn above grid size (million cells; 0 = disable)** setting, defaulting to 250 million cells. Above it, the Processing log warns with the cell count and minimum grid memory, then continues. This is a warning threshold, not a size limit. Temporary arrays and surface comparisons use additional RAM; increase the pixel size if memory is insufficient. Set the threshold to 0 to disable this warning.
 
 ### Profile graphs and labels
 
@@ -164,7 +180,7 @@ LandXML numeric coordinates are kept in stored order. The plugin does not infer 
 - 3D centerlines use the station range covered by a matching vertical profile. When a profile covers only part of an alignment, the covered segment is exported and the omitted range is reported; missing Z values are not filled with zero.
 - Alignment station points follow whole multiples of the requested interval (for example, 20, 40, 60) even when the alignment starts at a fractional station. The individual tool can optionally add an off-interval alignment endpoint; this is off by default. Complete Road Design exports interval points only.
 
-Current limits: the design review encodes only the tables listed above; the superelevation diagram assumes the usual two-lane rotation about the centreline; earthworks volumes use average end areas without curvature correction; superelevation, pipe networks, COGO points and plan features are not imported yet; circular vertical curves and non-clothoid spirals are reported as unsupported; station equations and semantic terrain void/hole classification are not implemented; 2D and 3D line records must be exported separately through individual Processing tools. OpenRoads road behavior beyond the one private alignment/profile export, including corridors, needs further validation. LandXML export from QGIS was considered separately and is not included in this release. GeoPackage, GeoTIFF and 3D vector output are supported; no DGN writer is attempted.
+Current limits: the design review encodes only the tables listed above; the superelevation diagram assumes the usual two-lane rotation about the centreline; earthworks volumes use average end areas without curvature correction; superelevation, pipe networks, COGO points and plan features are not imported yet; circular vertical curves and non-clothoid spirals are reported as unsupported; station equations and semantic terrain void/hole classification are not implemented; 2D and 3D line records must be exported separately through individual Processing tools. OpenRoads road behavior beyond the one private alignment/profile export, including corridors, needs further validation. The preparation tool writes combined LandXML from source exports; exporting arbitrary QGIS layers to LandXML is not supported. GeoPackage, GeoTIFF and 3D vector output are supported; no DGN writer is attempted.
 
 ## Install the development plugin
 
@@ -191,7 +207,7 @@ Run the parser and headless QGIS Processing suite from an environment with QGIS 
 QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v
 ```
 
-`tests/test_landxml.py` and `tests/test_earthworks.py` need only Python and NumPy (plus GDAL for `core.py`). `tests/test_qgis_processing.py` and `tests/test_gui.py` need the QGIS bindings; the GUI tests run headless with the `offscreen` Qt platform. The synthetic corridor fixture is a level-section template whose areas, volumes and slope lengths have closed-form answers.
+`tests/test_landxml.py` and `tests/test_earthworks.py` need only Python and NumPy (plus GDAL for `core.py`). `tests/test_qgis_processing.py`, `tests/test_prepare.py` and `tests/test_gui.py` need the QGIS bindings; the GUI tests run headless with the `offscreen` Qt platform. Preparation tests cover split and complete exports, unit/CRS conflicts, coverage holes, repeated runs, atomic writes and downstream reports. The synthetic corridor fixture is a level-section template whose areas, volumes and slope lengths have closed-form answers.
 
 Some QGIS distributions require their bundled Python executable and environment variables. See [the compatibility audit](docs/qgis4-audit.md) for the tested runtime and coverage.
 

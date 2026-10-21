@@ -167,7 +167,7 @@ a { color: var(--accent); }
 <table>
   <thead><tr><th style="width:24%">Toolbox group</th><th>Tools</th></tr></thead>
   <tbody>
-    <tr><td>Utilities</td><td>Inspect LandXML · Road Design Report</td></tr>
+    <tr><td>Utilities</td><td>Inspect LandXML · Prepare LandXML from Geometry and Terrains · Road Design Report</td></tr>
     <tr><td>Terrain conversion</td><td>LandXML TIN to GeoTIFF</td></tr>
     <tr><td>Vector extraction</td><td>Extract LandXML Alignments to Lines</td></tr>
     <tr><td>Road design extraction</td><td>Extract LandXML Profiles · Create 3D Road Centerlines · Extract LandXML Cross-Sections · Create Alignment Station Points · Export Complete Road Design to GeoPackage</td></tr>
@@ -279,6 +279,11 @@ a { color: var(--accent); }
 <div class="warn"><b>Existing files</b>The tool refuses to overwrite an existing GeoPackage. Choose a new output folder for each run.</div>
 
 <h2 id="terrain"><span class="sec">8</span>Terrain: TIN to GeoTIFF and boundaries</h2>
+<h3>Prepare separate geometry and terrain exports</h3>
+<p><b>Prepare LandXML from Geometry and Terrains</b> (Utilities) accepts a primary alignment/profile LandXML and optional existing-ground and proposed terrain files. Select a surface when a supplied terrain file has several. For an embedded terrain, leave its file blank and select its surface. All inputs must already share coordinates, units and vertical datum: conflicting declarations are rejected, missing units require explicit selections, and missing metadata requires confirmation. No reprojection, axis swapping or unit conversion is performed.</p>
+<p>Save to a new LandXML, then use it in the existing viewer, reports and analysis tools. Original design profiles and existing section records remain intact; the tool fills missing terrain profiles and section surfaces. A complete input needs no separate terrain files. Defaults are 5 source units between profile samples, 20 between sections and 50 left/right widths; adjust them to suit the project.</p>
+<p>Samples use the original visible TIN triangles. Terrain-edge crossings are retained; hidden triangles are excluded. Profile gaps remain disconnected, and disconnected section surfaces are omitted with warnings. Continuous partial sections stop at the terrain boundary. Missing section stations interrupt volume integration, but gaps between sampled stations still require inspection and exclusion. Generated sections contain terrain surfaces, not pavement layers or reconstructed design PVIs. Repeated runs reuse generated records; conflicting generated names or changed source terrain are rejected. The output is written atomically and never replaces an input.</p>
+<p><b>Large-grid warning.</b> TIN to GeoTIFF, Complete Road Design and Surface Cut/Fill provide <b>Warn above grid size (million cells; 0 = disable)</b>, defaulting to 250 million cells. Larger grids log a warning with the cell count and minimum grid memory, then continue. Temporary arrays and surface comparisons need additional RAM. Increase the pixel size if memory is insufficient, or set the threshold to 0 to disable the warning.</p>
 <p><b>LandXML TIN to GeoTIFF</b> rasterizes one TIN surface by linear interpolation inside each triangle. Choose the surface, the pixel size and a NoData value outside the elevation range. Triangles flagged invisible (<code>i="1"</code>, written by Civil 3D for triangles hidden by a boundary) are left as NoData, so the raster follows the surface boundary instead of filling holes and outer concavities.</p>
 <p><b>Extract TIN Surface Boundary</b> writes the outer edges of the visible triangles as lines.</p>
 

@@ -106,6 +106,7 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
                 decimals=3,
             )
         )
+        self.addParameter(number_param("GRID_WARNING", "Warn above grid size (million cells; 0 = disable)", 250, 0, 1e9, decimals=3))
         self.addParameter(
             number_param(
                 self.NODATA,
@@ -238,7 +239,9 @@ class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
                 )
             )
             arr, xmin, ymax, res = rasterize_tin(
-                vertices, faces, resolution, nodata, progress, feedback.isCanceled
+                vertices, faces, resolution, nodata, progress, feedback.isCanceled,
+                warn_cells=self.parameterAsDouble(parameters, "GRID_WARNING", context) * 1_000_000,
+                warning=feedback.pushWarning,
             )
             write_geotiff(output, arr, xmin, ymax, res, nodata, wkt=output_crs.toWkt())
         except QgsProcessingException:

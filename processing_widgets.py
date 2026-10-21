@@ -19,11 +19,12 @@ except ImportError:  # pragma: no cover - depends on the runtime
     WidgetWrapper = None
 
 
-def name_param(name, description, kind, default="", optional=True, file_param="INPUT"):
+def name_param(name, description, kind, default="", optional=True, file_param="INPUT", fallback_file_param=None):
     parameter = QgsProcessingParameterString(name, description, defaultValue=default, optional=optional)
     if WidgetWrapper is not None:
         parameter.setMetadata(
-            {"widget_wrapper": {"class": LandXMLNameWidgetWrapper, "kind": kind, "file_param": file_param}}
+            {"widget_wrapper": {"class": LandXMLNameWidgetWrapper, "kind": kind, "file_param": file_param,
+                                "fallback_file_param": fallback_file_param}}
         )
     return parameter
 
@@ -41,9 +42,10 @@ if WidgetWrapper is not None:
     from qgis.PyQt.QtWidgets import QComboBox
 
     class LandXMLNameWidgetWrapper(WidgetWrapper):
-        def createWidget(self, kind="surfaces", file_param="INPUT", **_kwargs):
+        def createWidget(self, kind="surfaces", file_param="INPUT", fallback_file_param=None, **_kwargs):
             self._kind = kind
             self._file_param = file_param
+            self._fallback_file_param = fallback_file_param
             combo = QComboBox()
             combo.setEditable(True)
             combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
@@ -52,19 +54,25 @@ if WidgetWrapper is not None:
             return combo
 
         def postInitialize(self, wrappers):
-            source = self._file_param
-            for wrapper in wrappers:
-                if wrapper.parameterDefinition().name() == source:
-                    wrapper.widgetValueHasChanged.connect(lambda changed: self.refresh(changed))
-                    self.refresh(wrapper)
-                    break
+            self._sources = {wrapper.parameterDefinition().name(): wrapper for wrapper in wrappers
+                             if wrapper.parameterDefinition().name() in (self._file_param, self._fallback_file_param)}
+            for wrapper in self._sources.values():
+                wrapper.widgetValueHasChanged.connect(lambda changed: self.refresh(changed))
+            self.refresh(self._sources.get(self._file_param))
 
         def refresh(self, wrapper):
-            try:
-                value = wrapper.parameterValue()
-            except AttributeError:
-                value = wrapper.value()
-            path = value if isinstance(value, str) else ""
+            path = ""
+            for key in (self._file_param, self._fallback_file_param):
+                source = getattr(self, "_sources", {}).get(key) or wrapper
+                if source is None:
+                    continue
+                try:
+                    value = source.parameterValue()
+                except AttributeError:
+                    value = source.value()
+                if isinstance(value, str) and value:
+                    path = value
+                    break
             combo = self.widget
             current = combo.currentText()
             combo.blockSignals(True)
