@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this plugin in your work, please cite it as below."
+title: "LandXML Road & Terrain GIS Tools"
+abstract: >-
+  A QGIS Processing plugin that brings LandXML road and terrain data from
+  Civil 3D, OpenRoads and other design software into QGIS. It imports TIN
+  surfaces, breaklines, alignments with true arc-length stationing,
+  vertical and existing-ground profiles and corridor cross-sections;
+  computes cut/fill and corridor earthworks quantities; produces
+  cross-section sheets and road design reports; and runs a geometric
+  design review (alignment phasing, sight distance, vertical and
+  horizontal curves, grades, superelevation and barrier warrants) against
+  Kenya RDM 1.3 (2025) or AASHTO 2018 criteria, writing recommended PVIs
+  back for Civil 3D. It needs no Python packages beyond those shipped with
+  QGIS.
+authors:
+  - family-names: "Akello"
+    given-names: "Edmond"
+    email: "francenicklaus@gmail.com"
+    orcid: "https://orcid.org/0009-0009-5901-4574"
+  - family-names: "Winstead"
+    given-names: "Cole"
+    alias: "colewinstead"
+    website: "https://github.com/colewinstead"
+version: 1.8.1
+date-released: "2026-10-15"
+license: GPL-2.0-or-later
+type: software
+repository-code: "https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools"
+doi: "10.5281/zenodo.23402501"
+keywords:
+  - LandXML
+  - QGIS
+  - road design
+  - geometric design review
+  - BIM
+  - interoperability
+  - Civil 3D
+  - OpenRoads
+  - earthworks
+  - digital terrain model

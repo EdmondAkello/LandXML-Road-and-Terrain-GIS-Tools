@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.8.1 — unreleased
+## Unreleased
+
+### Added
+- Continuous integration: GitHub Actions runs the parser and earthworks tests (GDAL, no QGIS) and a Bandit scan on every push to `main` and every pull request. The release script already leaves `.github/` out of the plugin zip.
+
+## 1.8.1 — 2026-10-15
 
 ### Added
 - AASHTO 2018 US customary criteria (ft, mph) alongside metric criteria, including grade-dependent stopping sight distance, crest/sag K, radius, superelevation and runoff tables. Design Review and Road Design Report support international-foot and US survey-foot LandXML; findings, speed inputs and recommended-profile exports retain the appropriate units.

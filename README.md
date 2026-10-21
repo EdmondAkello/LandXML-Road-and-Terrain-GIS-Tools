@@ -1,6 +1,9 @@
 # LandXML Road & Terrain GIS Tools
 
-A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Originally created by **Edmond Akello** under GPL-2.0-or-later; the original attribution and license remain in place.
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23402501.svg)](https://doi.org/10.5281/zenodo.23402501)
+[![tests](https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/actions/workflows/tests.yml/badge.svg)](https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/actions/workflows/tests.yml)
+
+A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Written by **Edmond Akello**, with Bentley OpenRoads support, the shared LandXML parser and the QGIS 4 port contributed by **Cole Winstead**. Licensed under GPL-2.0-or-later.
 
 The **[User Guide and Technical Manual](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.8.1_User_Guide.pdf)** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. Its source and figure scripts are in `docs/user-guide` and `tools/guide`.
 
@@ -210,3 +213,7 @@ Only synthetic LandXML fixtures are committed. Private project exports should re
 ## History and license
 
 See [CHANGELOG.md](CHANGELOG.md) and [HISTORY.md](HISTORY.md). Original work and attribution: [EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools](https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools). GPL-2.0-or-later; see [LICENSE](LICENSE).
+
+## Citation
+
+If you use the plugin in your work, please cite it through its Zenodo record: Akello, E. and Winstead, C. LandXML Road & Terrain GIS Tools. Zenodo. https://doi.org/10.5281/zenodo.23402501 (all versions). Version-specific DOIs and a citation in other formats are on the record page and in `CITATION.cff`.
