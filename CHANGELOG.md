@@ -15,6 +15,7 @@
 - Raster tools expose a configurable large-grid warning threshold (250 million cells by default; 0 disables it). Exceeding the threshold logs estimated minimum memory and continues, including Surface Cut/Fill, which previously retained a hard default limit.
 
 ### Fixed
+- AASHTO metric reviews with e max 8% now read the required superelevation from Table 3-10. Before, the rate was estimated as V²/127R − f max, which gave far lower rates than the Green Book on most curves (for example 0% instead of 5.8% at 80 km/h and R = 500 m). e max 4% and 6% still use that estimate until Tables 3-8 and 3-9 are added.
 - AASHTO US customary criteria: Table 3-10 (e max 8%) at 55 mph had the radii for 7.2–8.0% copied from the 50 mph column, and Table 3-2 gave 200 ft instead of 190 ft for 30 mph on a 3% upgrade. A new test checks the bundled AASHTO tables against the Green Book equations.
 - Release ZIPs include non-ignored untracked runtime files, preventing a newly added module from being omitted and breaking plugin startup.
 - Section quantities no longer integrate across intervening stations with missing earthworks data.
