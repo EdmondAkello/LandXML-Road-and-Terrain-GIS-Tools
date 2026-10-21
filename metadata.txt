@@ -22,7 +22,7 @@ tracker=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/issue
 homepage=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 changelog=1.9.0
     - Prepare LandXML from Geometry and Terrains: combine an alignment file with separate existing and proposed terrain files, sampling the missing profiles and cross-sections from the TINs.
-    - AASHTO 2018 US customary criteria (mph, feet) and e max 10% for AASHTO metric and US customary reviews.
+    - AASHTO 2018 US customary criteria (mph, feet) and e max 10 percent for AASHTO metric and US customary reviews.
     - Volume units in all earthworks tools (Automatic, CY, CF, m³). Foot-based projects now report CY by default; regenerate earlier outputs.
     - Section quantities no longer integrate across stations with missing data; large-grid limit is now a configurable warning.
     1.8.1
