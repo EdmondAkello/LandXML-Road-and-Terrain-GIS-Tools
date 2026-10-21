@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LandXML Road &amp; Terrain GIS Tools 1.8.1 — User Guide and Technical Manual</title>
 <style>
 :root {
@@ -76,6 +77,46 @@ figcaption b { color: var(--ink); }
 .toc a { color: var(--ink); text-decoration: none; display: block; padding: 0.6mm 0; }
 .toc a span { color: var(--accent); display: inline-block; width: 8mm; font-weight: 600; }
 a { color: var(--accent); }
+
+/* Browser reading layout; the paper dimensions above remain for printing. */
+@media screen {
+  html { background: var(--soft); font-size: 16px; line-height: 1.65; }
+  body { max-width: 1120px; margin: 32px auto; padding: 40px; background: white; box-shadow: 0 2px 20px #1f2a4410; }
+  h1.part { font-size: 2.2rem; margin-top: 56px; padding-top: 24px; }
+  h1.part .num { font-size: 0.85rem; }
+  p.part-intro { font-size: 1.1rem; max-width: 70ch; }
+  h2 { font-size: 1.5rem; scroll-margin-top: 24px; }
+  h3 { font-size: 1.15rem; }
+  h4 { font-size: 1rem; }
+  code, pre, figcaption, table { font-size: 0.875rem; }
+  pre { overflow-wrap: anywhere; }
+  table { display: block; overflow-x: auto; }
+  th, td { overflow-wrap: anywhere; }
+  .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .card p { font-size: 0.9rem; }
+  .toc { font-size: 1rem; }
+  .toc .part-title { font-size: 0.8rem; }
+  .cover { width: 100%; height: auto; min-height: 760px; padding: 48px; display: flex; flex-direction: column; justify-content: flex-end; border-radius: 8px; margin-bottom: 40px; }
+  .cover .hero { height: 100%; }
+  .cover .hero::after { background: linear-gradient(180deg, #1f2a4459, #1f2a44cc 60%, var(--navy) 90%); }
+  .cover .text, .cover .foot { position: relative; top: auto; bottom: auto; left: auto; right: auto; }
+  .cover .kicker { font-size: 0.85rem; }
+  .cover h1 { font-size: clamp(2rem, 4vw, 3rem); }
+  .cover .sub { font-size: 1.25rem; margin-bottom: 32px; }
+  .cover .meta { grid-template-columns: 140px minmax(0, 1fr); font-size: 0.9rem; }
+  .cover .meta span { overflow-wrap: anywhere; }
+  .cover .foot { margin-top: 32px; font-size: 0.8rem; }
+}
+@media screen and (max-width: 760px) {
+  body { margin: 0; padding: 20px; box-shadow: none; }
+  .cols, .card-grid { grid-template-columns: minmax(0, 1fr); }
+  .toc { columns: 1; }
+  .cover { min-height: 640px; padding: 28px; }
+  .cover .meta { grid-template-columns: 90px minmax(0, 1fr); gap: 8px; }
+  .cover .kicker { letter-spacing: 0.1em; }
+  figure.half img { width: 100%; }
+}
 </style>
 </head>
 <body>
