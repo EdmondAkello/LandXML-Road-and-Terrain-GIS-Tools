@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Synthetic corridor fixture: invented names and coordinates; no project data. -->
 <LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
-  <Units><Metric linearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/></Units>
+  <Units><Metric linearUnit="meter" verticalLinearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/></Units>
   <Application name="Autodesk Civil 3D" manufacturer="Autodesk, Inc."/>
   <Surfaces>
     <Surface name="EG">

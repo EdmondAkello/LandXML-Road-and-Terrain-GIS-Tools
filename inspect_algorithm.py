@@ -26,7 +26,7 @@ class InspectLandXMLAlgorithm(QgsProcessingAlgorithm):
         return "Inspect LandXML"
 
     def group(self):
-        return "Utilities"
+        return "1. Inspect and prepare"
 
     def groupId(self):
         return "utilities"

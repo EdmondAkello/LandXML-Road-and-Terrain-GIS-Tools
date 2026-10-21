@@ -8,3 +8,4 @@ Thumbs.db
 landxml_*-test.zip
 tests/fixtures/openroads/private/
 dist/
+qgis/

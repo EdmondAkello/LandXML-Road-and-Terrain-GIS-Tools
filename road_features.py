@@ -13,7 +13,7 @@ from .landxml.sections import read_cross_sections
 from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
 from .landxml.reports import station_label
-from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices
+from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices, coordinate_param
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
@@ -21,7 +21,6 @@ from qgis.core import (
     QgsProcessingParameterFile,
     QgsProcessingParameterCrs,
     QgsProcessingParameterFeatureSink,
-    QgsProcessingParameterEnum,
     QgsProcessingParameterString,
     QgsProcessingParameterBoolean,
     QgsProcessingException,
@@ -75,9 +74,7 @@ def _param_common(a):
 
 def _param_coordinates(a, output_optional=False):
     a.addParameter(
-        QgsProcessingParameterEnum(
-            "METHOD", "Coordinate interpretation", options=METHODS, defaultValue=0
-        )
+        coordinate_param("METHOD", METHODS)
     )
     a.addParameter(number_param("DX", "Delta X / Easting", 0, -1e9, 1e9, decimals=4))
     a.addParameter(number_param("DY", "Delta Y / Northing", 0, -1e9, 1e9, decimals=4))
@@ -233,7 +230,7 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
         return "Extract LandXML Profiles"
 
     def group(self):
-        return "Road design extraction"
+        return "2. Road design extraction"
 
     def groupId(self):
         return "road_design_extraction"
@@ -615,7 +612,7 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
         return "Create 3D Road Centerlines"
 
     def group(self):
-        return "Road design extraction"
+        return "2. Road design extraction"
 
     def groupId(self):
         return "road_design_extraction"
@@ -786,7 +783,7 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
         return "Extract TIN Surface Boundary"
 
     def group(self):
-        return "Surface extraction"
+        return "5. Surface extraction"
 
     def groupId(self):
         return "surface_extraction"
@@ -911,7 +908,7 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
         return "Create Alignment Station Points"
 
     def group(self):
-        return "Road design extraction"
+        return "2. Road design extraction"
 
     def groupId(self):
         return "road_design_extraction"
@@ -1016,7 +1013,7 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         return "Extract LandXML Cross-Sections"
 
     def group(self):
-        return "Road design extraction"
+        return "2. Road design extraction"
 
     def groupId(self):
         return "road_design_extraction"
@@ -1245,7 +1242,7 @@ class GenericLinesAlgorithm(QgsProcessingAlgorithm):
         )
 
     def group(self):
-        return "Surface extraction"
+        return "5. Surface extraction"
 
     def groupId(self):
         return "surface_extraction"

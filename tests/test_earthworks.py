@@ -48,6 +48,7 @@ from landxml_plugin.landxml.longsection import (
     read_alignment_profiles,
 )
 from landxml_plugin.landxml.parser import load_document
+from landxml_plugin.landxml.quantity_units import quantity_units, recorded_volume_factor
 from landxml_plugin.landxml.reports import (
     corridor_report_html,
     profile_report_html,
@@ -63,6 +64,40 @@ SQRT5 = math.sqrt(5.0)
 
 def line(name, points, kind="surface"):
     return ProfileLine("A", name, kind, "existing", None, [points])
+
+
+class QuantityUnitTests(unittest.TestCase):
+    def test_volume_units_and_exact_conversions(self):
+        feet = quantity_units("foot", "internationalFoot")
+        self.assertEqual(feet.volume, "CY")
+        self.assertAlmostEqual(feet.volumes({"cut_volume": 27, "mass_ordinate": -27})["cut_volume"], 1)
+        self.assertAlmostEqual(feet.volumes({"mass_ordinate": -27})["mass_ordinate"], -1)
+        survey = quantity_units("USSurveyFoot", "USSurveyFoot")
+        self.assertAlmostEqual(survey.volume_factor, (1200 / 3937 / 0.9144) ** 3)
+        self.assertGreater(survey.volume_factor, feet.volume_factor)
+        metric = quantity_units("meter", "meter")
+        self.assertEqual((metric.volume, metric.area), ("m³", "m²"))
+        self.assertEqual(metric.volumes({"fill_volume": 100, "fill_area": 25}), {"fill_volume": 100, "fill_area": 25})
+        self.assertAlmostEqual(quantity_units("centimeter", "centimeter").volume_factor, 1e-6)
+        # Surface grids may use a different horizontal unit after reprojection.
+        self.assertAlmostEqual(quantity_units("meter", "foot", allow_mixed=True).volume_factor, 0.3048)
+        self.assertAlmostEqual(recorded_volume_factor("cubicYard", "CY"), 1)
+        self.assertAlmostEqual(recorded_volume_factor("cubicFoot", "CY"), 1 / 27)
+        self.assertAlmostEqual(recorded_volume_factor("cubicYard", "m³"), 0.9144 ** 3)
+        self.assertAlmostEqual(quantity_units("foot", "foot", volume_unit="CF").volume_factor, 1)
+        self.assertAlmostEqual(quantity_units("meter", "meter", volume_unit="CF").volume_factor, 35.3146667215)
+        self.assertAlmostEqual(quantity_units("meter", "meter", volume_unit="CY").volume_factor, 1.3079506193)
+        self.assertAlmostEqual(quantity_units("foot", "foot", volume_unit="m³").volume_factor, 0.028316846592)
+        self.assertAlmostEqual(recorded_volume_factor("cubicYard", "CF"), 27)
+
+    def test_unknown_and_incompatible_units_fail(self):
+        for h, v in ((None, "meter"), ("meter", None), ("degree", "meter"), ("meter", "foot")):
+            with self.subTest(horizontal=h, vertical=v), self.assertRaises(ValueError):
+                quantity_units(h, v)
+        with self.assertRaises(ValueError):
+            recorded_volume_factor(None, "CY")
+        with self.assertRaisesRegex(ValueError, "Unsupported earthwork volume unit"):
+            quantity_units("meter", "meter", volume_unit="acreFoot")
 
 
 class StationingTests(unittest.TestCase):
@@ -287,7 +322,8 @@ class CorridorTests(unittest.TestCase):
         self.assertIn("0+100.00", html)
         quantities = corridor_quantities(self.sections, "EG Surface", "Synthetic Corridor TOP")
         html = corridor_report_html(
-            [dict(alignment="Synthetic Road", ground="EG Surface", design="TOP", quantities=quantities)], "meter"
+            [dict(alignment="Synthetic Road", ground="EG Surface", design="TOP", quantities=quantities)],
+            "meter", vertical_unit="meter"
         )
         self.assertIn("Mass haul", html)
         self.assertIn("Pave", html)
@@ -461,6 +497,31 @@ def element(kind, start, end, radius=None, turn=""):
 
 
 class CriteriaTests(unittest.TestCase):
+    def test_aashto_ten_percent_tables_and_supported_speeds(self):
+        us = load_criteria("aashto_2018_us_customary")
+        self.assertEqual(us.min_radius(60, 10), 1090)
+        self.assertEqual(us.min_radius(80, 10), 2370)
+        self.assertEqual(us.required_superelevation(11700, 60, 10), (-2.0, "NC"))
+        self.assertEqual(us.required_superelevation(8630, 60, 10), (2.0, "RC"))
+        self.assertEqual(us.required_superelevation(2590, 60, 10), (6.0, "6%"))
+        self.assertEqual(us.required_superelevation(1810, 60, 10), (8.0, "8%"))
+        self.assertEqual(us.required_superelevation(1090, 60, 10), (10.0, "10%"))
+        self.assertEqual(us.required_superelevation(1089, 60, 10), (None, None))
+        self.assertEqual(us.runoff_min(60, 10), 267)
+        us.set_linear_unit("usSurveyFoot")
+        scale = 0.3048 / (1200 / 3937)
+        self.assertAlmostEqual(us.min_radius(60, 10), 1090 * scale)
+        self.assertEqual(us.required_superelevation(1810 * scale, 60, 10), (8.0, "8%"))
+        metric = load_criteria("aashto_2018")
+        self.assertEqual(metric.min_radius(100, 10), 358)
+        self.assertEqual(metric.min_radius(130, 10), 739)
+        self.assertEqual(metric.required_superelevation(582, 100, 10), (8.0, "8%"))
+        self.assertEqual(metric.required_superelevation(358, 100, 10), (10.0, "10%"))
+        self.assertEqual(metric.required_superelevation(357, 100, 10), (None, None))
+        for criteria, speed, emax in ((us, 85, 10), (metric, 140, 10), (load_criteria("kenya_rdm13_2025"), 60, 10)):
+            with self.subTest(standard=criteria.id), self.assertRaises(ValueError):
+                review_alignment({"sta_start": 0, "segments": []}, [], criteria, design_speed=speed, emax=emax)
+
     def test_us_customary_tables_and_survey_feet(self):
         us = load_criteria("aashto_2018_us_customary")
         self.assertIn(us.id, [item[0] for item in list_standards()])

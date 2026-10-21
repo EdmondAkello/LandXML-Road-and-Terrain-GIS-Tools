@@ -5,7 +5,7 @@ Usage (from the repository root):
     python tools/build_release.py            # build dist/<package>-<version>.zip and check it
     python tools/build_release.py --check X  # check an existing ZIP only
 
-The ZIP contains committed files only (``git ls-files``), restricted to the
+The ZIP contains tracked and non-ignored untracked files, restricted to the
 plugin runtime: tests, developer documents and this tools folder are left
 out. The checks mirror plugins.qgis.org: the upload validator (layout,
 forbidden files, required metadata, LICENSE, package name), and the security
@@ -30,7 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The folder name QGIS uses to identify the plugin; it must never change between versions.
 PACKAGE = "landxml_tin_to_geotiff"
 
-EXCLUDE_PREFIXES = ("tests/", "tools/", "docs/", "examples/", ".")
+EXCLUDE_PREFIXES = ("tests/", "tools/", "docs/", "examples/", "dist/", ".")
 EXCLUDE_FILES = {"HISTORY.md"}
 
 REQUIRED_METADATA = ("name", "description", "version", "qgisMinimumVersion", "author", "email", "about", "tracker", "repository")
@@ -47,7 +47,9 @@ SUSPICIOUS = (".exe", ".dll", ".so", ".dylib", ".bat", ".sh", ".ps1", ".cmd")
 
 
 def git_files():
-    output = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT)  # nosec B603 B607
+    output = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=ROOT
+    )  # nosec B603 B607
     return [name for name in output.decode("utf-8").split("\0") if name]
 
 

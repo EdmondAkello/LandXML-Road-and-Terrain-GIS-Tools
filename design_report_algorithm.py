@@ -39,10 +39,10 @@ class DesignReportAlgorithm(QgsProcessingAlgorithm):
         return "Road Design Report (Plan, Curvature, Grades, Superelevation)"
 
     def group(self):
-        return "Utilities"
+        return "8. Reports and sheets"
 
     def groupId(self):
-        return "utilities"
+        return "reports"
 
     def shortHelpString(self):
         return (
@@ -84,7 +84,7 @@ class DesignReportAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterString("SPEED_RANGES", "Review: design speed by chainage, e.g. 0-5000:60; 5000-:80", defaultValue="", optional=True)
         )
         self.addParameter(QgsProcessingParameterEnum("TERRAIN", "Review: terrain", options=["flat", "rolling", "mountainous", "escarpment"], defaultValue=1))
-        self.addParameter(QgsProcessingParameterEnum("EMAX", "Review: e max", options=["4%", "6%", "8%"], defaultValue=1))
+        self.addParameter(QgsProcessingParameterEnum("EMAX", "Review: e max", options=["4%", "6%", "8%", "10%"], defaultValue=1))
         self.addParameter(QgsProcessingParameterFileDestination("OUTPUT", "Design report (HTML)", fileFilter="HTML (*.html)"))
 
     def processAlgorithm(self, p, c, fb):
@@ -161,7 +161,7 @@ class DesignReportAlgorithm(QgsProcessingAlgorithm):
             from .review_algorithm import collect_reviews
 
             terrain = ["flat", "rolling", "mountainous", "escarpment"][self.parameterAsEnum(p, "TERRAIN", c)]
-            emax = [4.0, 6.0, 8.0][self.parameterAsEnum(p, "EMAX", c)]
+            emax = [4.0, 6.0, 8.0, 10.0][self.parameterAsEnum(p, "EMAX", c)]
             try:
                 criteria = load_criteria(list_standards()[standard_index - 1][2])
                 ranges = parse_speed_ranges(self.parameterAsString(p, "SPEED_RANGES", c))

@@ -44,14 +44,16 @@ Sampling interpolates the original visible TIN triangles, retaining triangle-edg
 
 | Group | Tools |
 | --- | --- |
-| Utilities | Inspect LandXML; Prepare LandXML from Geometry and Terrains |
-| Terrain conversion | TIN to GeoTIFF |
-| Vector extraction | Horizontal alignments |
-| Road design extraction | Labeled vertical profile graph, optional map profile overlay and VPC/VPI/VPT controls with vertical exaggeration; 3D centerlines; cross sections and optional points; station points; Complete Road Design to GeoPackage |
-| Surface extraction | TIN surface boundary; feature lines; breaklines |
-| Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference); Cross-Section Sheets and Report |
-| Reports | Road Design Report: plan, curvature, gradient, long-section and superelevation diagrams with element tables, and an optional design review (under Utilities) |
-| Design review | Geometric Design Review: alignment phasing, sight distance, vertical and horizontal curves, grades, superelevation and barrier warrants against Kenya RDM 1.3 (2025) or AASHTO 2018, with recommended PVI changes for Civil 3D |
+| 1. Inspect and prepare | Inspect LandXML; Prepare LandXML from Geometry and Terrains |
+| 2. Road design extraction | Labeled vertical profile graph, optional map profile overlay and VPC/VPI/VPT controls with vertical exaggeration; 3D centerlines; cross sections and optional points; station points; Complete Road Design to GeoPackage |
+| 3. Vector extraction | Horizontal alignments |
+| 4. Terrain conversion | TIN to GeoTIFF |
+| 5. Surface extraction | TIN surface boundary; feature lines; breaklines |
+| 6. Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference) |
+| 7. Design review | Geometric Design Review: alignment phasing, sight distance, vertical and horizontal curves, grades, superelevation and barrier warrants against Kenya RDM 1.3 (2025) or AASHTO 2018, with recommended PVI changes for Civil 3D |
+| 8. Reports and sheets | Cross-Section Sheets and Report; Road Design Report: plan, curvature, gradient, long-section and superelevation diagrams with element tables, and an optional design review |
+
+The numbered groups suggest a typical workflow; run only the tools you need. Algorithm IDs are unchanged, so existing Processing models and scripts keep working.
 
 Outside the Processing Toolbox, the **LandXML Profile Viewer** dock and the **Pick Alignment Profile on Map** toolbar button (menu **Plugins → LandXML Road & Terrain**) show existing-ground and design profiles for an alignment you click in the map.
 
@@ -91,7 +93,11 @@ Layers created by this plugin's Processing tools remember their LandXML file as 
 
 ## Earthworks and quantities
 
-All three tools keep source units (volumes in cubic source units) and label their evidence. They are design aids, not a substitute for the design software's own quantity reports.
+All three tools have a **Volume units** selector: **Automatic (default)**, **Cubic yards (CY)**, **Cubic feet (CF)**, or **Cubic metres (m³)**. Automatic exports CY for foot-based projects and m³ for metric projects; an explicit choice converts volumes to that unit regardless of the input unit system. Reports label cut, fill, net, material volumes and mass-haul ordinates explicitly; interval and footprint tables include a `volume_unit` column, and corridor/surface Processing results include `VOLUME_UNIT`. Numeric volume field names stay unchanged, but their values follow the selected output unit. Regenerate old reports and tables to apply this change.
+
+Lengths, depths, section areas, slope areas and depth rasters retain their coordinate units (ft/ftUS and squared feet, or metric units and their squares). US survey feet use the exact 1200/3937 metre definition; CY uses the international yard (0.9144 m) and CF uses the international foot (0.3048 m). For Surface Cut/Fill, Automatic uses the output CRS horizontal unit to select CY or m³, and conversion accounts separately for source elevation units. Civil 3D recorded volumes are converted from their declared `volumeUnit` into the selected output unit before comparison, never treated as cubic coordinate units; comparison is omitted if that declaration is missing or unsupported.
+
+Volume calculations require known horizontal and vertical units. Use **Prepare LandXML** to explicitly supply missing units; profile/section quantities also require matching horizontal and vertical units. A profile comparison without a volume estimate can still run with undeclared elevation units. These tools are design aids, not a substitute for the design software's own quantity reports.
 
 **Profile Cut/Fill Analysis (Existing vs Design)** compares the design profile with the existing-ground profile along each alignment. Depth = design − ground (positive fill, negative cut). Every source breakpoint is kept and zero crossings are inserted exactly. Outputs: a station table at any interval; cut/fill segments with length, maximum and mean depth and *high fill*/*deep cut* flags (default 3 m); cut↔fill transition points on the map; and an HTML report with the long-section and a depth diagram. A positive **formation width** adds a *level-section estimate* — area h·(W + s·h) with your fill and cut slopes, side-slope length h·√(1+s²) per side — for early-stage quantities when no corridor sections exist. It ignores ground cross-fall, pavement depth and ditches.
 
@@ -130,9 +136,11 @@ On long alignments, charts are split into strips (default 5,000 units per row). 
 
 - **Kenya RDM 1.3 (2025), Geometric Design of Highways, Rural and Urban Roads** (default). Values are taken from the manual's tables and referenced in every finding (for example Table 3.16 stopping sight distance, Table 6.1/6.4 K values, Table 5.1 minimum radii, Tables 5.9–5.11 superelevation, Chapter 7 phasing, Figure 12.4 and Table 12.6 barriers).
 - **AASHTO Green Book 2018**, the basis of Civil 3D's default design criteria. AASHTO maximum grades depend on road class and are not tabulated in the file, so enter a **Maximum grade %** for grade checks. AASHTO run-out lengths for barriers are not included; the barrier warrant still runs.
-- **AASHTO Green Book 2018 (US customary: ft, mph)** for LandXML declared in `foot`, `internationalFoot` or `usSurveyFoot`. Includes the US customary stopping sight distance (level and grades), crest/sag K, minimum radius, superelevation and one-lane runoff tables, checked against the 2018 Green Book and Civil 3D's Imperial (2018) criteria. Supports 15–80 mph with e max 6% or 8%, and 15–60 mph with e max 4%. Barrier thresholds and speed-step limits remain explicitly configurable advisory defaults.
+- **AASHTO Green Book 2018 (US customary: ft, mph)** for LandXML declared in `foot`, `internationalFoot` or `usSurveyFoot`. Includes the US customary stopping sight distance (level and grades), crest/sag K, minimum radius, superelevation and one-lane runoff tables, checked against the 2018 Green Book and Civil 3D's Imperial (2018) criteria. Supports 15–80 mph with e max 6%, 8% or 10%, and 15–60 mph with e max 4%. The 10% radius/rate thresholds use Table 3-11. Barrier thresholds and speed-step limits remain explicitly configurable advisory defaults.
 
 Choose a **Custom criteria file** to use another standard: copy one of the JSON files and edit the tables. Criteria and LandXML must use the same unit family: metric with metres, US customary with feet. US survey feet and international feet are distinguished when comparing geometry with the criteria; explicitly mixed horizontal and vertical units are rejected.
+
+**10% superelevation.** Select **10%** for e max in either review dialog with an AASHTO standard. Table 3-11 is bundled for US customary (15–80 mph) and metric (20–130 km/h), cross-checked with the Civil 3D 2027 AASHTO 2018 criteria files. Kenya RDM rejects this selection. Custom criteria can declare `supported_emax` (the default is `[4, 6, 8]`); a 10% standard must also provide its verified radius and superelevation tables.
 
 **Feet/mph workflow.** Select **AASHTO Green Book 2018 (US customary: ft, mph)** in Geometric Design Review or the review section of Road Design Report. Enter speeds in mph and speed-range chainages in the file's feet, or leave speed at 0 to use the recorded speeds (the declared LandXML speed unit is respected). The maximum profile level change uses source length units: a value of 1 means 1 ft for a foot-based file. Findings and reports use ft, mph and ft/% for K; recommended profile text and LandXML preserve the source stations, elevations and foot type.
 
@@ -150,7 +158,7 @@ Choose a **Custom criteria file** to use another standard: copy one of the JSON 
 | D1–D3 | Design speed changes: steps above 20 km/h (10 km/h preferred) with the intermediate sections to add on the faster side, transition and oscillating speed sections shorter than 1 km, and curves sharper than the faster speed allows within 1 km of a speed reduction |
 | R1 | Embankment height and side slope warranting a safety barrier, with run-out length and a barrier schedule by side |
 
-**Design speed.** The review follows the design speeds recorded along each alignment, so a road whose speed changes with terrain is checked section by section. Define them in Civil 3D before exporting (**Alignment Properties → Design Criteria**, adding speed stations); the export writes them as `SpeedStation` features, and Roadway `DesignSpeed` records are also read. Where Civil 3D lists two speeds at one station, the later one applies. Each element (curve, vertical curve, straight) is checked at the highest speed over its length, so an element spanning a speed change meets the faster approach. The report lists the speed sections. Leave **Design speed** at 0 to use the file; a single speed, or **Design speed by chainage** such as `0-5000:60; 5000-:80`, overrides it, and the log says when file speeds are ignored. Terrain, road type and e max (4, 6 or 8 %) select the table rows.
+**Design speed.** The review follows the design speeds recorded along each alignment, so a road whose speed changes with terrain is checked section by section. Define them in Civil 3D before exporting (**Alignment Properties → Design Criteria**, adding speed stations); the export writes them as `SpeedStation` features, and Roadway `DesignSpeed` records are also read. Where Civil 3D lists two speeds at one station, the later one applies. Each element (curve, vertical curve, straight) is checked at the highest speed over its length, so an element spanning a speed change meets the faster approach. The report lists the speed sections. Leave **Design speed** at 0 to use the file; a single speed, or **Design speed by chainage** such as `0-5000:60; 5000-:80`, overrides it, and the log says when file speeds are ignored. Terrain, road type and e max (4, 6 or 8%, plus 10% for AASHTO) select the table rows.
 
 **Back to Civil 3D.** For each phasing, K and length finding the tool searches PVI moves and curve lengths (one end coincident, both ends coincident, or a clear separation) that satisfy K, overlap and grade limits, and picks the one that changes levels least. Fixes that change any level by more than **Apply profile fixes … at most (source length units)** (default 1 m or 1 ft) are reported but not applied. The recommended profile is written as:
 
@@ -166,6 +174,8 @@ Limits: Figure 12.4 of RDM 1.3 is a chart; only its stated example (6 m height w
 ## Coordinate and unit handling
 
 LandXML numeric coordinates are kept in stored order. The plugin does not infer X/Y order, datum, false easting/northing, offset, CRS, or elevations. The user must choose an output CRS. Swap, offset, 2-D Helmert and reprojection are available only as explicit Processing choices. Reprojection also requires an explicitly chosen source CRS. A LandXML CRS declaration is shown for reference and is never applied automatically.
+
+**OpenRoads/Civil 3D axis order.** Standard LandXML plan coordinates are Northing, Easting (Y, X), with elevation third; see the [ICSM LandXML mapping](https://www.anzlic.gov.au/sites/default/files/files/ePlan-Protocol-LandXML-Mapping-v2.1.4.pdf) and [Civil 3D documentation](https://help.autodesk.com/cloudhelp/2022/ENU/Civil3D-UserGuide/files/GUID-4D10ABA5-5EA0-41A8-BB61-C3F446CE7C6B.htm). The downloaded FHWA OpenRoads examples follow this convention. Choose **Swap X / Y** to obtain GIS X = Easting, Y = Northing. Every coordinate-interpretation selector includes this guidance and detailed help. Verify a known control point: edited or nonstandard files may already contain Easting, Northing and should use **Use stored coordinates**. Apply the same interpretation to matching geometry and terrains. Preparation preserves stored order. Axis swapping does not establish a CRS, convert units, or change profile station/elevation or section offset/elevation pairs. This convention is not a guarantee for every OpenRoads version or modified export.
 
 `USSurveyFoot`, international `foot` and `meter` are distinct. If LandXML declares one of these units, the selected CRS used to interpret stored coordinates must have matching horizontal units; otherwise Processing stops. Reprojection uses the selected source and output CRSs. The plugin does not infer a missing vertical unit or convert elevations. A source CRS and axis order must be verified against project metadata and control before design use.
 
@@ -197,7 +207,7 @@ python tools/build_release.py
 
 The build script runs these tools through the same Python interpreter, so their executable launchers do not need to be on `PATH`. On Windows, pip's warning that its Scripts folder is not on `PATH` can be ignored for this workflow.
 
-This writes `dist/landxml_tin_to_geotiff-<version>.zip` from committed files (the plugin runtime only; tests and developer documents are left out) and runs the checks plugins.qgis.org applies on upload: the package layout, forbidden and hidden files, required metadata, LICENSE, executable permissions, Bandit with the repository's enabled rules, detect-secrets and flake8. In QGIS, choose **Plugins → Manage and Install Plugins → Install from ZIP**, select the ZIP, and enable **LandXML Road & Terrain GIS Tools**. Search the **Processing Toolbox** for **Inspect LandXML** to confirm it loaded.
+This writes `dist/landxml_tin_to_geotiff-<version>.zip` from the working tree, including tracked and non-ignored untracked runtime files (tests and developer documents are left out), and runs the checks plugins.qgis.org applies on upload: the package layout, forbidden and hidden files, required metadata, LICENSE, executable permissions, Bandit with the repository's enabled rules, detect-secrets and flake8. Review the ZIP contents before publishing. In QGIS, choose **Plugins → Manage and Install Plugins → Install from ZIP**, select the ZIP, and enable **LandXML Road & Terrain GIS Tools**. Search the **Processing Toolbox** for **Inspect LandXML** to confirm it loaded.
 
 ## Test and manual check
 

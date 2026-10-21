@@ -111,10 +111,10 @@ class CrossSectionSheetsAlgorithm(QgsProcessingAlgorithm):
         return "Cross-Section Sheets and Report"
 
     def group(self):
-        return "Earthworks and quantities"
+        return "8. Reports and sheets"
 
     def groupId(self):
-        return "earthworks_quantities"
+        return "reports"
 
     def flags(self):
         # Painting fonts into PDF/SVG is kept on the main thread.

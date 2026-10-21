@@ -1000,6 +1000,8 @@ def review_alignment(
     from .design_report import horizontal_elements
 
     emax = emax or float(criteria.get("default_emax", 6))
+    if emax not in criteria.get("supported_emax", [4, 6, 8]):
+        raise ValueError(f"{criteria.name} does not support e max {emax:g}%.")
     speed_at = speed_function(list(speeds), design_speed)
     if speed_at(record and float(record.get("sta_start") or 0.0)) is None:
         raise ValueError("No design speed: the file records none, so enter one.")
@@ -1008,13 +1010,14 @@ def review_alignment(
     model = ProfileModel.from_controls(controls) if len(controls) >= 2 else None
     start = float(record.get("sta_start") or (elements[0]["start"] if elements else 0.0)) if record else 0.0
     end = elements[-1]["end"] if elements else (model.pvis[-1]["station"] if model is not None else start)
-    if criteria.units == "us_customary":
+    if criteria.units == "us_customary" or emax == 10:
         limits = criteria.data.get("min_radius", {}).get(str(int(emax))) or criteria.data["ssd"]
         low, high = min(map(float, limits)), max(map(float, limits))
-        # Vertical and runoff tables start at 15 mph.
+        # US customary vertical and runoff tables start at 15 mph.
+        low = max(15, low) if criteria.units == "us_customary" else low
         for _low, _high, speed in speed_at.sections(start, end):
-            if speed is not None and not max(15, low) <= speed <= high:
-                raise ValueError(f"US customary criteria with e max {emax:g}% support {max(15, low):g}-{high:g} mph.")
+            if speed is not None and not low <= speed <= high:
+                raise ValueError(f"{criteria.name} with e max {emax:g}% supports {low:g}-{high:g} {criteria.speed_unit}.")
     review = Review(criteria, speed_at, emax, road_type, terrain, max_grade)
     if model is not None:
         review.check_vertical(model)

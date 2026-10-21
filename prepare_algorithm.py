@@ -30,7 +30,7 @@ class PrepareLandXMLAlgorithm(QgsProcessingAlgorithm):
         return "Prepare LandXML from Geometry and Terrains"
 
     def group(self):
-        return "Utilities"
+        return "1. Inspect and prepare"
 
     def groupId(self):
         return "utilities"

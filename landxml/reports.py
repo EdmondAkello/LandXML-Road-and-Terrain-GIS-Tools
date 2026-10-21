@@ -8,6 +8,8 @@ import html
 import re
 import math
 
+from .quantity_units import quantity_units, recorded_volume_factor
+
 CUT_COLOR = "#d9822b"
 FILL_COLOR = "#3a9e5f"
 GROUND_COLOR = "#8c5a2b"
@@ -315,7 +317,7 @@ def line_svg(points, horizontal_unit=None, label="", width=1000, height=260, col
     return "".join(parts)
 
 
-def profile_report_html(results, horizontal_unit=None, vertical_unit=None, source_file=""):
+def profile_report_html(results, horizontal_unit=None, vertical_unit=None, source_file="", volume_unit="auto"):
     """``results`` is a list of dicts: alignment, design, ground, runs, segments,
     transitions, summary, template (optional), excluded."""
     unit = horizontal_unit or "source units"
@@ -324,6 +326,8 @@ def profile_report_html(results, horizontal_unit=None, vertical_unit=None, sourc
         "computed from the LandXML profiles exactly as stored. Centreline depths do not account for ground cross-fall, "
         "pavement thickness or structures; use corridor cross-sections for quantities.</p>"
     ]
+    body.append(f"<p class='meta'>Lengths: {html.escape(unit)}; depths/elevations: "
+                f"{html.escape(vertical_unit or 'undeclared vertical units')}.</p>")
     if source_file:
         body.append(f"<p class='meta'>Source: {html.escape(source_file)}</p>")
     for item in results:
@@ -349,18 +353,21 @@ def profile_report_html(results, horizontal_unit=None, vertical_unit=None, sourc
         body.append(depth_svg(item["runs"], horizontal_unit))
         template = item.get("template")
         if template:
+            units = quantity_units(horizontal_unit, vertical_unit, volume_unit=volume_unit)
+            template = units.volumes(template)
             body.append("<h2>Preliminary level-section estimate</h2>")
             body.append(
-                f"<p class='note'>Formation width {template['formation_width']:g}, fill slope 1:{template['fill_slope']:g}, "
-                f"cut slope 1:{template['cut_slope']:g} (V:H). Flat-ground approximation for early design only.</p>"
+                f"<p class='note'>Formation width {template['formation_width']:g} {units.length}, fill slope 1:{template['fill_slope']:g}, "
+                f"cut slope 1:{template['cut_slope']:g} (V:H). Volumes: {units.volume} "
+                f"({units.volume_name}). Flat-ground approximation for early design only.</p>"
             )
             body.append(
                 _cards(
                     [
-                        ("Cut volume", f"{template['cut_volume']:,.0f}"),
-                        ("Fill volume", f"{template['fill_volume']:,.0f}"),
-                        ("Embankment slope area", f"{template['fill_slope_area']:,.0f}"),
-                        ("Cut slope area", f"{template['cut_slope_area']:,.0f}"),
+                        (f"Cut volume ({units.volume})", f"{template['cut_volume']:,.0f}"),
+                        (f"Fill volume ({units.volume})", f"{template['fill_volume']:,.0f}"),
+                        (f"Embankment slope area ({units.area})", f"{template['fill_slope_area']:,.0f}"),
+                        (f"Cut slope area ({units.area})", f"{template['cut_slope_area']:,.0f}"),
                     ]
                 )
             )
@@ -389,19 +396,21 @@ def profile_report_html(results, horizontal_unit=None, vertical_unit=None, sourc
     return _document("Profile cut/fill analysis", "".join(body))
 
 
-def corridor_report_html(results, horizontal_unit=None, source_file=""):
+def corridor_report_html(results, horizontal_unit=None, source_file="", vertical_unit=None, volume_unit="auto"):
     """``results``: list of dicts with alignment, ground, design, quantities, settings."""
+    units = quantity_units(horizontal_unit, vertical_unit, volume_unit=volume_unit)
     body = [
         "<p class='note'>Areas between the ground and design cross-section lines; volumes by average end area "
         "between consecutive sections (no curvature correction). Side-slope areas are sloped surface areas "
         "between the formation hinge and the daylight point, measured on the finished design surface. "
-        "Values are in source units; verify against the design software before tendering.</p>"
+        f"Volumes and mass ordinates: {units.volume} ({units.volume_name}). "
+        f"Lengths: {units.length}; areas: {units.area}. Verify against the design software before tendering.</p>"
     ]
     if source_file:
         body.append(f"<p class='meta'>Source: {html.escape(source_file)}</p>")
     for item in results:
         q = item["quantities"]
-        totals = q["totals"]
+        totals = units.volumes(q["totals"])
         body.append(f"<h2>{html.escape(item['alignment'] or 'Alignment')}</h2>")
         body.append(
             f"<p class='meta'>Ground: {html.escape(item['ground'] or '–')} · Design: {html.escape(item['design'] or '–')}"
@@ -410,29 +419,32 @@ def corridor_report_html(results, horizontal_unit=None, source_file=""):
         body.append(
             _cards(
                 [
-                    ("Cut volume", f"{totals['cut_volume']:,.0f}"),
-                    ("Fill volume", f"{totals['fill_volume']:,.0f}"),
-                    ("Net (fill − factored cut)", f"{totals['net_volume']:,.0f}"),
-                    ("Embankment slopes (grassing)", f"{totals['fill_slope_area']:,.0f}"),
-                    ("Cut slopes (grassing)", f"{totals['cut_slope_area']:,.0f}"),
-                    ("Steep slopes (stabilise)", f"{totals['steep_fill_area'] + totals['steep_cut_area']:,.0f}"),
-                    ("Integrated length", f"{totals['length']:,.1f}"),
+                    (f"Cut volume ({units.volume})", f"{totals['cut_volume']:,.0f}"),
+                    (f"Fill volume ({units.volume})", f"{totals['fill_volume']:,.0f}"),
+                    (f"Net (fill − factored cut) ({units.volume})", f"{totals['net_volume']:,.0f}"),
+                    (f"Embankment slopes (grassing) ({units.area})", f"{totals['fill_slope_area']:,.0f}"),
+                    (f"Cut slopes (grassing) ({units.area})", f"{totals['cut_slope_area']:,.0f}"),
+                    (f"Steep slopes (stabilise) ({units.area})", f"{totals['steep_fill_area'] + totals['steep_cut_area']:,.0f}"),
+                    (f"Integrated length ({units.length})", f"{totals['length']:,.1f}"),
                     ("Sections with earthworks", f"{totals['earthwork_sections']} / {totals['sections']}"),
                 ]
             )
         )
         if q["materials"]:
             body.append("<h2>Corridor material quantities</h2>")
-            body.append(_table(["Shape", "Volume"], sorted(q["materials"].items())))
+            body.append(_table(["Shape", f"Volume ({units.volume})"],
+                               [(name, volume * units.volume_factor) for name, volume in sorted(q["materials"].items())]))
         mass = [(q["intervals"][0]["start"], 0.0)] if q["intervals"] else []
-        mass += [(interval["end"], interval["mass_ordinate"]) for interval in q["intervals"]]
+        mass += [(interval["end"], interval["mass_ordinate"] * units.volume_factor) for interval in q["intervals"]]
         if len(mass) >= 2:
             body.append("<h2>Mass haul ordinate</h2>")
-            body.append(line_svg(mass, horizontal_unit, "Cumulative factored cut − fill"))
+            body.append(line_svg(mass, horizontal_unit, f"Cumulative factored cut − fill ({units.volume})"))
         body.append("<h2>Section intervals</h2><div class='scroll'>")
         body.append(
             _table(
-                ["From", "To", "Cut vol", "Fill vol", "Emb. slope area", "Cut slope area", "Steep area", "Mass ordinate"],
+                ["From", "To", f"Cut vol ({units.volume})", f"Fill vol ({units.volume})",
+                 f"Emb. slope area ({units.area})", f"Cut slope area ({units.area})",
+                 f"Steep area ({units.area})", f"Mass ordinate ({units.volume})"],
                 [
                     (
                         station_label(i["start"], horizontal_unit),
@@ -444,7 +456,7 @@ def corridor_report_html(results, horizontal_unit=None, source_file=""):
                         i["steep_fill_area"] + i["steep_cut_area"],
                         i["mass_ordinate"],
                     )
-                    for i in q["intervals"]
+                    for i in (units.volumes(interval) for interval in q["intervals"])
                 ],
             )
         )
@@ -461,38 +473,48 @@ def corridor_report_html(results, horizontal_unit=None, source_file=""):
     return _document("Corridor section quantities", "".join(body))
 
 
-def surface_report_html(stats, base, compare, resolution, units, civil3d=None, source_file=""):
+def surface_report_html(stats, base, compare, resolution, units, civil3d=None, source_file="", vertical_unit=None, volume_unit="auto"):
+    units = quantity_units(units, vertical_unit, allow_mixed=True, volume_unit=volume_unit)
+    stats = units.volumes(stats)
     rows = [
-        ("Cut volume", stats["cut_volume"]),
-        ("Fill volume", stats["fill_volume"]),
-        ("Net (fill − cut)", stats["net_volume"]),
-        ("Cut area", stats["cut_area"]),
-        ("Fill area", stats["fill_area"]),
-        ("Compared area", stats["compared_area"]),
-        ("Maximum cut depth", stats["max_cut"]),
-        ("Maximum fill depth", stats["max_fill"]),
+        (f"Cut volume ({units.volume})", stats["cut_volume"]),
+        (f"Fill volume ({units.volume})", stats["fill_volume"]),
+        (f"Net (fill − cut) ({units.volume})", stats["net_volume"]),
+        (f"Cut area ({units.area})", stats["cut_area"]),
+        (f"Fill area ({units.area})", stats["fill_area"]),
+        (f"Compared area ({units.area})", stats["compared_area"]),
+        (f"Maximum cut depth ({units.depth})", stats["max_cut"]),
+        (f"Maximum fill depth ({units.depth})", stats["max_fill"]),
     ]
     body = [
         f"<p class='meta'>Source: {html.escape(source_file)} · Base: {html.escape(base)} · Compare: {html.escape(compare)} · "
-        f"Grid {resolution:g} {html.escape(units or 'units')}</p>",
+        f"Grid {resolution:g} {units.length}. Volumes: {units.volume} "
+        f"({units.volume_name}).</p>",
         "<p class='note'>Grid method: both TINs are evaluated at cell centres on a shared grid; triangles hidden by a "
         "surface boundary are excluded. Smaller cells converge on the TIN-to-TIN volume.</p>",
         _table(["Quantity", "Value"], rows),
     ]
     if civil3d:
         body.append("<h2>Civil 3D volume surface recorded in the LandXML</h2>")
+        try:
+            factor = recorded_volume_factor(civil3d.get("volume_unit"), units.volume)
+        except ValueError as exc:
+            body.append(f"<p class='note'>{html.escape(str(exc))}</p>")
+            return _document("Surface cut/fill", "".join(body))
+        recorded = {key: value * factor for key, value in civil3d.items()
+                    if key.endswith("_volume") and value is not None}
         body.append(
             _table(
-                ["Quantity", "Civil 3D", "This grid", "Difference %"],
+                ["Quantity", f"Civil 3D ({units.volume})", f"This grid ({units.volume})", "Difference %"],
                 [
                     (
                         label,
-                        civil3d[key],
+                        recorded[key],
                         stats[key],
-                        (stats[key] - civil3d[key]) / civil3d[key] * 100.0 if civil3d[key] else None,
+                        (stats[key] - recorded[key]) / recorded[key] * 100.0 if recorded[key] else None,
                     )
                     for label, key in (("Cut", "cut_volume"), ("Fill", "fill_volume"), ("Net", "net_volume"))
-                    if civil3d.get(key) is not None
+                    if key in recorded
                 ],
             )
         )

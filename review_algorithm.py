@@ -43,7 +43,7 @@ from .road_features import _param_coordinates
 
 TERRAINS = ["flat", "rolling", "mountainous", "escarpment"]
 ROAD_TYPES = ["rural", "urban"]
-EMAX = [4.0, 6.0, 8.0]
+EMAX = [4.0, 6.0, 8.0, 10.0]
 
 
 def standard_options():
@@ -134,7 +134,7 @@ class DesignReviewAlgorithm(QgsProcessingAlgorithm):
         return "Geometric Design Review (Phasing, Sight Distance, Standards)"
 
     def group(self):
-        return "Design review"
+        return "7. Design review"
 
     def groupId(self):
         return "design_review"
@@ -183,7 +183,7 @@ class DesignReviewAlgorithm(QgsProcessingAlgorithm):
         )
         self.addParameter(QgsProcessingParameterEnum("TERRAIN", "Terrain", options=TERRAINS, defaultValue=1))
         self.addParameter(QgsProcessingParameterEnum("ROAD_TYPE", "Road type (grade limits)", options=ROAD_TYPES, defaultValue=0))
-        self.addParameter(QgsProcessingParameterEnum("EMAX", "Maximum superelevation e max", options=["4%", "6%", "8%"], defaultValue=1))
+        self.addParameter(QgsProcessingParameterEnum("EMAX", "Maximum superelevation e max", options=[f"{value:g}%" for value in EMAX], defaultValue=1))
         self.addParameter(number_param("MAX_GRADE", "Maximum grade % override (0 = standard)", 0, 0, 30, decimals=2))
         self.addParameter(number_param("MAX_CHANGE", "Apply profile fixes changing levels by at most (source length units)", 1.0, 0, 100, decimals=2))
         self.addParameter(QgsProcessingParameterBoolean("USE_SECTIONS", "Use corridor cross-sections (barriers, sight on curves)", defaultValue=True))

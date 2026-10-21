@@ -208,13 +208,14 @@ a { color: var(--accent); }
 <table>
   <thead><tr><th style="width:24%">Toolbox group</th><th>Tools</th></tr></thead>
   <tbody>
-    <tr><td>Utilities</td><td>Inspect LandXML · Prepare LandXML from Geometry and Terrains · Road Design Report</td></tr>
-    <tr><td>Terrain conversion</td><td>LandXML TIN to GeoTIFF</td></tr>
-    <tr><td>Vector extraction</td><td>Extract LandXML Alignments to Lines</td></tr>
-    <tr><td>Road design extraction</td><td>Extract LandXML Profiles · Create 3D Road Centerlines · Extract LandXML Cross-Sections · Create Alignment Station Points · Export Complete Road Design to GeoPackage</td></tr>
-    <tr><td>Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
-    <tr><td>Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference) · Cross-Section Sheets and Report</td></tr>
-    <tr><td>Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
+    <tr><td>1. Inspect and prepare</td><td>Inspect LandXML · Prepare LandXML from Geometry and Terrains</td></tr>
+    <tr><td>2. Road design extraction</td><td>Extract LandXML Profiles · Create 3D Road Centerlines · Extract LandXML Cross-Sections · Create Alignment Station Points · Export Complete Road Design to GeoPackage</td></tr>
+    <tr><td>3. Vector extraction</td><td>Extract LandXML Alignments to Lines</td></tr>
+    <tr><td>4. Terrain conversion</td><td>LandXML TIN to GeoTIFF</td></tr>
+    <tr><td>5. Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
+    <tr><td>6. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference)</td></tr>
+    <tr><td>7. Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
+    <tr><td>8. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report</td></tr>
     <tr><td>Outside the Toolbox</td><td>LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
   </tbody>
 </table>
@@ -261,7 +262,7 @@ a { color: var(--accent); }
   <thead><tr><th style="width:28%">Coordinate interpretation</th><th>Use when</th></tr></thead>
   <tbody>
     <tr><td>Use stored coordinates</td><td>The stored values are already easting, northing in the output CRS.</td></tr>
-    <tr><td>Swap X / Y</td><td>The file stores northing first. <b>Civil 3D does this</b>, so most Civil 3D exports need this option.</td></tr>
+    <tr><td>Swap X / Y</td><td>The file stores Northing, Easting (Y, X), the standard LandXML plan-coordinate order normally used by <b>OpenRoads and Civil 3D</b>. This produces GIS X = Easting, Y = Northing.</td></tr>
     <tr><td>Apply X / Y offset</td><td>A known translation (for example a false origin) must be added.</td></tr>
     <tr><td>Swap X / Y + offset</td><td>Both of the above.</td></tr>
     <tr><td>2-D Helmert (similarity)</td><td>A known translation, rotation and scale relate the design grid to the map grid.</td></tr>
@@ -269,6 +270,7 @@ a { color: var(--accent); }
   </tbody>
 </table>
 <p><b>Output CRS</b> is always chosen by you. Use the same interpretation and CRS for every layer of a project, and check one feature against known survey control before converting a whole design.</p>
+<p><b>OpenRoads axis-order reminder.</b> Every coordinate-interpretation selector includes a reminder and detailed help. Standard LandXML uses Northing, Easting, with elevation third (see the <a href="https://www.anzlic.gov.au/sites/default/files/files/ePlan-Protocol-LandXML-Mapping-v2.1.4.pdf">ICSM mapping</a>); the downloaded FHWA OpenRoads examples follow this order. Verify a known control point instead of assuming every version or edited export behaves identically. Use stored coordinates if the file already contains Easting, Northing. Preparation preserves axis order; apply the same choice to matching geometry and terrains. Profile station/elevation and section offset/elevation pairs are not plan coordinates and must not be swapped.</p>
 <p><b>Units.</b> Metres, international feet and US survey feet are kept distinct. When a file declares a horizontal unit, the output CRS must use the same unit or the tool stops. Vertical units are never inferred from horizontal ones; if the file does not declare them, the log says so.</p>
 
 <h2 id="inspect"><span class="sec">5</span>Inspect LandXML first</h2>
@@ -375,6 +377,8 @@ a { color: var(--accent); }
 <p>Layers created by the plugin remember their LandXML file in the QGIS project, so clicking them opens the right file. For other layers the viewer asks for the file once.</p>
 
 <h2 id="cutfill"><span class="sec">13</span>Profile Cut/Fill Analysis</h2>
+<p><b>Earthwork reporting units (all three quantity tools).</b> Choose <b>Volume units</b>: Automatic (default), Cubic yards (CY), Cubic feet (CF), or Cubic metres (m³). Automatic uses CY for foot-based projects and m³ for metric projects. An explicit choice converts all cut, fill, net, material volumes and mass-haul ordinates into that unit, regardless of the input unit system. Report labels update to match; interval and footprint tables include <code>volume_unit</code>, and corridor/surface Processing results include <code>VOLUME_UNIT</code>. Numeric volume field names are unchanged, but values follow the selection: regenerate older reports and tables. Lengths, depths and areas retain their coordinate units; depth rasters are not converted to volume units.</p>
+<p>US survey feet use their exact metre definition; CY uses the international yard and CF the international foot. Surface Cut/Fill uses the output CRS horizontal unit for Automatic and accounts separately for source elevation units. Recorded Civil 3D totals are converted from their declared volume unit into the selected output unit before comparison; missing or unsupported declarations omit that comparison. Volume estimates require known horizontal and vertical units; use <b>Prepare LandXML</b> to supply missing units explicitly. Profile/section quantities require matching horizontal and vertical units.</p>
 <p><b>Profile Cut/Fill Analysis (Existing vs Design)</b> compares the design profile with the existing-ground profile. Depth is design − ground (positive fill). Every breakpoint is kept and zero crossings are found exactly.</p>
 <figure>
   <img src="figures/fig_cutfill_report.png" alt="Cut fill report">
@@ -456,7 +460,7 @@ a { color: var(--accent); }
     <tr><td>Design speed (0 = from file)</td><td>0 follows the speeds recorded in the file (recommended). A value applies one speed to the whole road.</td></tr>
     <tr><td>Design speed by chainage</td><td>Overrides the file, e.g. <code>0-5000:60; 5000-:80</code>.</td></tr>
     <tr><td>Terrain, Road type</td><td>Select the maximum-grade row (flat, rolling, mountainous, escarpment; rural or urban).</td></tr>
-    <tr><td>Maximum superelevation e max</td><td>4, 6 or 8 %; selects the minimum-radius and superelevation tables.</td></tr>
+    <tr><td>Maximum superelevation e max</td><td>4, 6 or 8 %, plus 10 % for AASHTO. The 10 % option uses Table 3-11: 15–80 mph for US customary and 20–130 km/h for metric. Other standards reject unsupported selections.</td></tr>
     <tr><td>Maximum grade override</td><td>Required for AASHTO grade checks (AASHTO limits depend on road class).</td></tr>
     <tr><td>Apply profile fixes … at most (m)</td><td>Fixes changing any level by more than this are reported but not applied to the recommended profile (default 1 m).</td></tr>
     <tr><td>Use corridor cross-sections</td><td>Enables barrier warrants and sight distance on curves.</td></tr>

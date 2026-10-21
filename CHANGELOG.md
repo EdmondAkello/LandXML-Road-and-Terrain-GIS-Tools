@@ -2,10 +2,20 @@
 
 ## Unreleased
 
+### Changed
+- Earthwork volume exports now use cubic yards (CY) for foot-based projects and cubic metres (m³) for metric projects, including cut/fill, materials, mass-haul, interval tables, footprint attributes and Processing totals. Reports and tables identify the unit; existing numeric volume field names are retained. Regenerate earlier outputs. Volume calculations require known horizontal and vertical units; profile/section units must match. Surface volumes account for output CRS and elevation units separately, and recorded Civil 3D comparisons honor declared volume units.
+- Coordinate-interpretation selectors include an OpenRoads axis-order reminder and shared help explaining standard LandXML Northing/Easting order, Civil 3D, control-point verification and matching geometry/terrain settings. Existing choices and defaults are preserved.
+- Numbered Processing groups follow the suggested workflow from inspection and preparation through extraction, quantities and review to reports and sheets. Algorithm IDs remain unchanged.
+
+### Added
+- A shared Volume units selector in all three earthworks tools: Automatic (CY for feet, m³ for metric), CY, CF or m³. Explicit choices apply to reports, tables, material volumes, mass-haul ordinates and Processing totals across input unit systems.
+- AASHTO 2018 e max 10% in Geometric Design Review and Road Design Report, with Table 3-11 radius/rate thresholds for US customary and metric criteria. Existing e max selection indices are unchanged; unsupported standards and out-of-table speeds are rejected.
+
 ### Added
 - Prepare LandXML from Geometry and Terrains combines matching exports, preserves complete inputs, and samples missing surface profiles and terrain cross-sections directly from visible TIN triangles. Includes explicit metadata validation, disconnected-profile support, coverage warnings and atomic output.
 
 ### Fixed
+- Release ZIPs include non-ignored untracked runtime files, preventing a newly added module from being omitted and breaking plugin startup.
 - Section quantities no longer integrate across intervening stations with missing earthworks data.
 - Explicitly import GDAL and OSR so core reprojection and GeoTIFF writing work in a fresh Python process.
 

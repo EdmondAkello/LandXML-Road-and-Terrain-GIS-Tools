@@ -8,7 +8,6 @@ from qgis.core import (
     QgsProcessingException,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterCrs,
-    QgsProcessingParameterEnum,
     QgsProcessingParameterFile,
     QgsProcessingParameterFolderDestination,
 )
@@ -24,7 +23,7 @@ from .landxml.profile import read_profile_controls, read_vertical_profile
 from .landxml.sections import read_cross_sections
 from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
-from .processing_common import coordinate_choices
+from .processing_common import coordinate_choices, coordinate_param
 from .params import number_param
 from .processing_widgets import name_param
 from .processing_common import resolve_name
@@ -87,10 +86,8 @@ def _write_points(ds, name, records, srs):
 
 def _param_common_local(a):
     a.addParameter(
-        QgsProcessingParameterEnum(
-            "METHOD",
-            "Coordinate interpretation",
-            options=[
+        coordinate_param(
+            "METHOD", [
                 "Use stored coordinates",
                 "Swap X / Y",
                 "Apply X / Y offset",
@@ -98,7 +95,6 @@ def _param_common_local(a):
                 "2-D Helmert (similarity)",
                 "Reproject from source CRS",
             ],
-            defaultValue=0,
         )
     )
     a.addParameter(number_param("DX", "Delta X / Easting", 0, -1e9, 1e9, decimals=4))
@@ -133,7 +129,7 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
         return "Export Complete Road Design to GeoPackage"
 
     def group(self):
-        return "Road design extraction"
+        return "2. Road design extraction"
 
     def groupId(self):
         return "road_design_extraction"
