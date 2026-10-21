@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.2 — 2026-10-21
+
+### Fixed
+- Profile Viewer cross-sections: moving the mouse over the section chart raised `TypeError: 'NoneType' object is not subscriptable`. The hover now uses the same offset range the chart is drawn with. The bug dated from 1.7.0.
+- Profile Viewer: clicking the long section beyond the stations covered by cross-sections kept showing the end section with no explanation and pulled the marker back to it. The nearest section is still shown, but the label now says there is no section at the clicked chainage, and the marker stays where you clicked.
+
 ## 1.9.1 — 2026-10-21
 
 ### Fixed

@@ -285,13 +285,22 @@ class SectionChart(QWidget):
     def current(self):
         return self.views[self.index] if 0 <= self.index < len(self.views) else None
 
-    def show_station(self, station):
+    def show_station(self, station, emit=True):
+        """Show the section nearest to station; return its distance from station."""
         if not self.views:
-            return
+            return None
         stations = [view["station"] for view in self.views]
         self.index = min(range(len(stations)), key=lambda i: abs(stations[i] - station))
         self.update()
-        self.sectionChanged.emit(self.views[self.index]["station"])
+        if emit:
+            self.sectionChanged.emit(self.views[self.index]["station"])
+        return abs(stations[self.index] - station)
+
+    def spacing(self):
+        """Typical distance between neighbouring sections (median), or None."""
+        stations = sorted(view["station"] for view in self.views)
+        gaps = sorted(b - a for a, b in zip(stations, stations[1:]) if b > a)
+        return gaps[len(gaps) // 2] if gaps else None
 
     def step(self, delta):
         if self.views:
@@ -340,7 +349,8 @@ class SectionChart(QWidget):
         if self._mappers is None or self.current() is None:
             return
         plot, _x = self._mappers
-        x_range = self.style.x_range
+        # Same range draw_section used: the style's fixed range, or the section's own.
+        x_range = self.style.x_range or auto_range(self.current())
         if plot.left() <= point.x() <= plot.right():
             self._hover = x_range[0] + (point.x() - plot.left()) / plot.width() * (x_range[1] - x_range[0])
         else:

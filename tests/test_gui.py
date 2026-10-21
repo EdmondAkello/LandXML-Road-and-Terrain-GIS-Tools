@@ -175,6 +175,45 @@ class ProfileViewerTests(unittest.TestCase):
             pdf = Path(directory) / "sheets.pdf"
             self.assertEqual(panel.write_sheets(str(pdf), per_page=4), 2)
 
+    def test_click_outside_section_coverage(self):
+        self.dock.tabs.setCurrentIndex(1)
+        panel = self.dock.section_panel
+        self.dock.chart.set_marker(150.0)
+        self.dock.chart.stationClicked.emit(150.0)
+        self.assertIn("(4/5)", panel.station_label.text())
+        # Far beyond the last section: the nearest section is shown, the
+        # label says there is no section there, and the marker is not pulled back.
+        self.dock.chart.set_marker(900.0)
+        self.dock.chart.stationClicked.emit(900.0)
+        self.assertEqual(panel.chart.current()["station"], 200)
+        self.assertIn("No section at", panel.station_label.text())
+        self.assertEqual(self.dock.chart.marker_station, 900.0)
+
+    def test_section_hover_uses_the_drawn_range(self):
+        # The viewer leaves the style's x range unset, so hover must use the
+        # range the chart drew with (regression: TypeError on mouse move).
+        from qgis.PyQt.QtCore import QPointF
+
+        self.dock.tabs.setCurrentIndex(1)
+        chart = self.dock.section_panel.chart
+        self.assertIsNone(chart.style.x_range)
+        chart.resize(700, 400)
+        image = QImage(700, 400, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#ffffff"))
+        chart.render(image)
+        plot, _x = chart._mappers
+
+        class Move:
+            def position(self):
+                return QPointF(plot.center().x(), plot.center().y())
+
+        chart.mouseMoveEvent(Move())
+        self.assertIsNotNone(chart._hover)
+        from landxml_plugin.gui.section_chart import auto_range
+
+        low, high = auto_range(chart.current())
+        self.assertAlmostEqual(chart._hover, (low + high) / 2, places=6)
+
     def test_name_dropdown_source(self):
         from landxml_plugin.processing_widgets import names_for
 

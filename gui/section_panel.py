@@ -149,7 +149,21 @@ class SectionPanel(QWidget):
         self.chart.update()
 
     def show_station(self, station):
-        if self.chart.views and station is not None:
+        """Show the section at station.
+
+        Outside the sections' coverage (farther from every section than the
+        typical spacing) the nearest section is shown but the profile marker
+        is left where the user clicked, and the label says so.
+        """
+        if not self.chart.views or station is None:
+            return
+        spacing = self.chart.spacing()
+        nearest = min(self.chart.views, key=lambda view: abs(view["station"] - station))
+        gap = abs(nearest["station"] - station)
+        if spacing is not None and gap > spacing:
+            self.chart.show_station(station, emit=False)
+            self._update_label(station)
+        else:
             self.chart.show_station(station)
             self._update_label()
 
@@ -161,13 +175,19 @@ class SectionPanel(QWidget):
         self._update_label()
         self.stationChanged.emit(station)
 
-    def _update_label(self):
+    def _update_label(self, requested=None):
         view = self.chart.current()
         unit = self.document.horizontal_unit if self.document else None
         total = len(self.chart.views)
-        self.station_label.setText(
-            f"CH {station_label(view['station'], unit)}  ({self.chart.index + 1}/{total})" if view else "No sections"
-        )
+        if not view:
+            self.station_label.setText("No sections")
+        elif requested is not None:
+            self.station_label.setText(
+                f"No section at CH {station_label(requested, unit)}: nearest CH {station_label(view['station'], unit)}"
+                f"  ({self.chart.index + 1}/{total})"
+            )
+        else:
+            self.station_label.setText(f"CH {station_label(view['station'], unit)}  ({self.chart.index + 1}/{total})")
 
     # ----------------------------------------------------------- export
     def _path(self, title, suffix, filters):
