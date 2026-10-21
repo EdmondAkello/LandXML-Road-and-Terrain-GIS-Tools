@@ -765,6 +765,19 @@ class DesignSpeedTests(unittest.TestCase):
     def setUp(self):
         self.kenya = load_criteria("kenya_rdm13_2025")
 
+    def test_us_speed_change_recommendations_use_mph_and_feet(self):
+        criteria = load_criteria("aashto_2018_us_customary")
+        review = Review(criteria, speed_function([(0, 70), (1000, 40)], None))
+        review.check_speed_changes(0, 3000)
+        advice = next(f["recommendation"] for f in review.findings if f["code"] == "D1")
+        self.assertIn("mph", advice)
+        self.assertNotIn("{self.", advice)
+        criteria.data["speed_change"]["transition_min_length"] = 1000
+        review = Review(criteria, speed_function([(0, 70), (1000, 40), (1100, 70)], None))
+        review.check_speed_changes(0, 3000)
+        advice = next(f["recommendation"] for f in review.findings if f["code"] == "D2")
+        self.assertIn("within 100 ft", advice)
+
     def test_speed_profile_governing_speed_and_sections(self):
         speeds = speed_function([(0, 100), (3000, 60), (5000, 80)], None)
         self.assertEqual(speeds(2999), 100)

@@ -386,7 +386,7 @@ class Review:
                 if length:
                     plan = "; ".join(f"{v:g} {self.c.speed_unit} over {x0:,.0f}–{x1:,.0f}" for v, (x0, x1) in zip(speeds, spans))
                 else:
-                    plan = ", ".join(f"{v:g}" for v in speeds) + " {self.c.speed_unit}"
+                    plan = ", ".join(f"{v:g}" for v in speeds) + f" {self.c.speed_unit}"
                 self.add("Design speed", "High", min(a1, b0), max(a1, b0), f"Abrupt design speed change {va:g} → {vb:g} {self.c.speed_unit}",
                          f"A change of {step:g} {self.c.speed_unit}; steps above {maximum:g} {self.c.speed_unit} are poor design and at least {needed} "
                          f"intermediate section(s) are needed ({desirable} at the preferred {preferred:g} {self.c.speed_unit} steps).",
@@ -414,7 +414,7 @@ class Review:
                                   f"or lengthen it to ≥ {transition:g} {self.c.length_unit}.")
                     else:
                         title = f"Short {vb:g} {self.c.speed_unit} section between {va:g} {self.c.speed_unit} sections"
-                        advice = (f"Drivers arriving at {va:g} {self.c.speed_unit} will not slow within {b1 - b0:.0f} m: design its elements for {va:g} {self.c.speed_unit}, "
+                        advice = (f"Drivers arriving at {va:g} {self.c.speed_unit} will not slow within {b1 - b0:.0f} {self.c.length_unit}: design its elements for {va:g} {self.c.speed_unit}, "
                                   f"or lengthen it to ≥ {transition:g} {self.c.length_unit} with speed transitions.")
                     self.add("Design speed", "Low", b0, b1, title,
                              f"{b1 - b0:.0f} {self.c.length_unit} long; speed oscillation between short sections is inherently unsafe.",
