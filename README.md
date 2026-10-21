@@ -3,9 +3,9 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23402501.svg)](https://doi.org/10.5281/zenodo.23402501)
 [![tests](https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/actions/workflows/tests.yml/badge.svg)](https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/actions/workflows/tests.yml)
 
-A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Written by **Edmond Akello**, with Bentley OpenRoads support, the shared LandXML parser and the QGIS 4 port contributed by **Cole Winstead**. Licensed under GPL-2.0-or-later.
+A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Written by **Edmond Akello**, with Bentley OpenRoads support, the shared LandXML parser, the QGIS 4 port, the LandXML preparation tool, the AASHTO US customary criteria and the earthwork volume units contributed by **Cole Winstead**. Licensed under GPL-2.0-or-later.
 
-The **[User Guide and Technical Manual](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.8.1_User_Guide.pdf)** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. Its source and figure scripts are in `docs/user-guide` and `tools/guide`.
+The **[User Guide and Technical Manual](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.9.0_User_Guide.pdf)** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. Its source and figure scripts are in `docs/user-guide` and `tools/guide`.
 
 ## Compatibility and validation
 
