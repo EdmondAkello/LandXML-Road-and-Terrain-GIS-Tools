@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Complete Road Design has a **Load exported layers into the project** checkbox, enabled by default. Successful exports queue the generated GeoPackage layers, retained DEMs and contours for QGIS Processing to load into the run's project, with source XML links for the Profile Viewer. Disabling the option exports files only. Temporary DEMs, disabled outputs, failed/cancelled runs and runs without a project do not add layers. Part of issue #22.
+
+### Changed
+- Complete Road Design automatically names DEMs and contour GeoPackages using the XML basename, embedded surface name, and a supported terrain role (existing ground, finished grade, datum, design or proposed). Missing names have numbered fallbacks, unsafe characters are replaced, and collisions are disambiguated. Generic design surfaces are not assumed to be finished grade. The main mixed-data GeoPackage and its tables keep their existing names. Existing exports are not renamed; scripts expecting the former numbered terrain filenames need updating. See issue #22.
+
 ## 1.9.2 — 2026-10-21
 
 ### Fixed

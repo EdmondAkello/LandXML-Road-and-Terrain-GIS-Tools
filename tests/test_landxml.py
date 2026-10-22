@@ -10,6 +10,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,11 +34,59 @@ from landxml_plugin.landxml.profile import (
     read_vertical_profile,
 )
 from landxml_plugin.core import read_tin, transform_vertices
+from landxml_plugin.landxml.output_names import surface_output_names
 
 
 OPENROADS = FIXTURES / "openroads" / "terrain_minimal.xml"
 CIVIL3D = FIXTURES / "civil3d" / "road_minimal.xml"
 GENERIC = FIXTURES / "generic" / "multiple.xml"
+
+
+class OutputNameTests(unittest.TestCase):
+    def test_surface_names_and_roles(self):
+        surfaces = [ET.Element("Surface", name=name) for name in
+                    ("EG", "FG Road", "Finished subgrade", "Design", "Proposed terrain", "Terrain A")]
+        self.assertEqual(surface_output_names("combined.xml", surfaces), [
+            "combined_Existing_Ground_EG", "combined_Finished_Grade_FG_Road",
+            "combined_Datum_Finished_subgrade", "combined_Design",
+            "combined_Proposed_terrain", "combined_Terrain_A",
+        ])
+
+    def test_description_state_and_prepared_metadata(self):
+        surfaces = [
+            ET.Element("Surface", name="Surface A", desc="Finished grade"),
+            ET.Element("Surface", name="Surface B", state="existing"),
+            ET.Element("Surface", name="Surface C", state="proposed"),
+            ET.Element("Surface", name="Surface D"),
+        ]
+        feature = ET.SubElement(surfaces[-1], "Feature", name="LandXMLTools.Prepare")
+        ET.SubElement(feature, "Property", label="role", value="existing")
+        self.assertEqual(surface_output_names("road.landxml", surfaces), [
+            "road_Finished_Grade_Surface_A", "road_Existing_Ground_Surface_B",
+            "road_Proposed_Surface_C", "road_Existing_Ground_Surface_D",
+        ])
+
+    def test_ambiguous_roles_are_not_labelled_finished_grade(self):
+        surfaces = [ET.Element("Surface", name="EG FG"),
+                    ET.Element("Surface", name="FG", state="existing"),
+                    ET.Element("Surface", name="Design"), ET.Element("Surface", name="Roadway")]
+        self.assertEqual(surface_output_names("road.xml", surfaces), [
+            "road_EG_FG", "road_FG", "road_Design", "road_Roadway",
+        ])
+
+    def test_safe_unique_names_and_unnamed_fallback(self):
+        surfaces = [ET.Element("Surface", name=name) for name in
+                    ("A/B", "A:B", "a_b", "A_B_2", "", "...", "../CON:*?", "é" * 100)]
+        names = surface_output_names("Road project.xml", surfaces)
+        self.assertEqual(names[:4], [
+            "Road_project_A_B", "Road_project_A_B_2", "Road_project_a_b_3", "Road_project_A_B_2_2",
+        ])
+        self.assertEqual(names[4:6], ["Road_project_surface_05", "Road_project_surface_06"])
+        self.assertEqual(len({name.casefold() for name in names}), len(names))
+        for name in names:
+            self.assertNotRegex(name, r'[<>:"/\\|?*\x00-\x1f]')
+            self.assertLessEqual(len(name), 180)
+            self.assertFalse(name.endswith((".", " ")))
 
 
 class ParserTests(unittest.TestCase):

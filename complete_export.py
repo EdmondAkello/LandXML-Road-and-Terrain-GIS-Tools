@@ -5,7 +5,9 @@ import numpy as np
 from osgeo import ogr, osr, gdal
 from qgis.core import (
     QgsProcessingAlgorithm,
+    QgsProcessingContext,
     QgsProcessingException,
+    QgsProcessingUtils,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterCrs,
     QgsProcessingParameterFile,
@@ -23,10 +25,11 @@ from .landxml.profile import read_profile_controls, read_vertical_profile
 from .landxml.sections import read_cross_sections
 from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
+from .landxml.output_names import surface_output_names
 from .processing_common import coordinate_choices, coordinate_param
 from .params import number_param
 from .processing_widgets import name_param
-from .processing_common import resolve_name
+from .processing_common import attach_post_processor, resolve_name
 
 
 def _ogr_srs(crs):
@@ -135,7 +138,12 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
         return "road_design_extraction"
 
     def shortHelpString(self):
-        return "Export a configurable LandXML road design package with alignment, profile, station, cross-section, feature-line, breakline, surface-boundary, DEM and contour outputs."
+        return (
+            "Export a configurable LandXML road design package with alignment, profile, station, "
+            "cross-section, feature-line, breakline, surface-boundary, DEM and contour outputs. "
+            "Load exported layers into the project is enabled by default; disable it to export files only. "
+            "Profile graphs use station/elevation coordinates, not map coordinates."
+        )
 
     def initAlgorithm(self, config=None):
         self.addParameter(
@@ -225,6 +233,9 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                 QgsProcessingParameterBoolean(key, label, defaultValue=True)
             )
         self.addParameter(
+            QgsProcessingParameterBoolean("LOAD_OUTPUTS", "Load exported layers into the project", defaultValue=True)
+        )
+        self.addParameter(
             QgsProcessingParameterFolderDestination("OUTPUT_DIR", "Output folder")
         )
 
@@ -271,6 +282,7 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
             ]
         }
         base = os.path.splitext(os.path.basename(path))[0]
+        terrain_outputs = []
         gpkg = os.path.join(out, base + "_GIS.gpkg")
         srs = _ogr_srs(crs)
         if os.path.exists(gpkg):
@@ -792,9 +804,11 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
             or flags["INCLUDE_DEM"]
             or flags["INCLUDE_CONTOURS"]
         ):
+            source_surfaces = document.surfaces()
+            output_names = surface_output_names(path, source_surfaces)
             surfaces = [
                 (index, surface.attrib.get("name", f"Surface {index + 1}"))
-                for index, surface in enumerate(document.surfaces())
+                for index, surface in enumerate(source_surfaces)
             ]
             if surface_filter:
                 surfaces = [item for item in surfaces if item[1] == surface_filter]
@@ -817,7 +831,7 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                 )
                 for field in ("surface_name", "source_vendor", "source_file"):
                     _fld(boundary_layer, field)
-            for output_index, (surface_index, surface_name) in enumerate(surfaces, 1):
+            for surface_index, surface_name in surfaces:
                 if fb.isCanceled():
                     raise QgsProcessingException("Complete export cancelled.")
                 xyz, faces, meta = read_tin(path, surface_index=surface_index)
@@ -861,10 +875,8 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                         warn_cells=self.parameterAsDouble(p, "GRID_WARNING", c) * 1_000_000,
                         warning=fb.pushWarning,
                     )
-                    suffix = (
-                        "" if len(surfaces) == 1 else f"_surface_{output_index:02d}"
-                    )
-                    dem = os.path.join(out, base + suffix + "_DEM.tif")
+                    terrain_name = output_names[surface_index]
+                    dem = os.path.join(out, terrain_name + "_DEM.tif")
                     if os.path.exists(dem):
                         raise QgsProcessingException(
                             f"Output GeoTIFF already exists: {dem}"
@@ -876,7 +888,7 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                         flags["INCLUDE_CONTOURS"]
                         and self.parameterAsDouble(p, "CONTOUR_INTERVAL", c) > 0
                     ):
-                        contour = os.path.join(out, base + suffix + "_Contours.gpkg")
+                        contour = os.path.join(out, terrain_name + "_Contours.gpkg")
                         if os.path.exists(contour):
                             raise QgsProcessingException(
                                 f"Output contour GeoPackage already exists: {contour}"
@@ -903,7 +915,23 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                         )
                         dem_ds = None
                         cds = None
+                        terrain_outputs.append((contour + "|layername=contours", terrain_name + "_Contours", QgsProcessingUtils.LayerHint.Vector))
                     if not flags["INCLUDE_DEM"]:
                         os.remove(dem)
+                    else:
+                        terrain_outputs.append((dem, terrain_name + "_DEM", QgsProcessingUtils.LayerHint.Raster))
+        package_outputs = [
+            (gpkg + "|layername=" + ds.GetLayer(index).GetName(),
+             base + "_GIS — " + ds.GetLayer(index).GetName(), QgsProcessingUtils.LayerHint.Vector)
+            for index in range(ds.GetLayerCount())
+        ]
         ds = None
+        if fb.isCanceled():
+            raise QgsProcessingException("Complete export cancelled.")
+        if self.parameterAsBoolean(p, "LOAD_OUTPUTS", c) and c.project() is not None:
+            for uri, name, hint in package_outputs + terrain_outputs:
+                details = QgsProcessingContext.LayerDetails(name, c.project(), "", hint)
+                details.forceName = True
+                c.addLayerToLoadOnCompletion(uri, details)
+                attach_post_processor(c, uri, source_path=path)
         return {"OUTPUT_DIR": out}
