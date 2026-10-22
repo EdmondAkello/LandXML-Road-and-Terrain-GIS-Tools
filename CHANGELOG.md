@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- Terrain names from prepared LandXML use the original surface name preserved in `LandXMLTools.Prepare` metadata instead of generated `Prepared …` labels. Role wording already present in the surface name is not repeated. The preserved source filename also supplies role evidence, so an explicitly named finished-surface export can refine a proposed role to finished grade; datum surfaces remain distinct.
+
 ### Added
 - Complete Road Design has a **Load exported layers into the project** checkbox, enabled by default. Successful exports queue the generated GeoPackage layers, retained DEMs and contours for QGIS Processing to load into the run's project, with source XML links for the Profile Viewer. Disabling the option exports files only. Temporary DEMs, disabled outputs, failed/cancelled runs and runs without a project do not add layers. Part of issue #22.
 

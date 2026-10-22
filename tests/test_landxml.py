@@ -74,6 +74,35 @@ class OutputNameTests(unittest.TestCase):
             "road_EG_FG", "road_FG", "road_Design", "road_Roadway",
         ])
 
+    def test_prepared_surfaces_use_original_names_and_source_role_evidence(self):
+        surfaces = []
+        for role, original, source in (
+            ("existing", "Existing Ground Surveyed-Site A", "site-existing-ground.xml"),
+            ("proposed", "Design_Contours", "site-proposed-finished-surface.xml"),
+            ("proposed", "Road Datum", "site-proposed-finished-surface.xml"),
+            ("proposed", "Design_Contours", "site-proposed.xml"),
+        ):
+            surface = ET.Element("Surface", name="Prepared " + role.title() + " Terrain")
+            feature = ET.SubElement(surface, "Feature", name="LandXMLTools.Prepare")
+            for label, value in (("role", role), ("surface", original), ("source", source)):
+                ET.SubElement(feature, "Property", label=label, value=value)
+            surfaces.append(surface)
+        self.assertEqual(surface_output_names("combined.xml", surfaces), [
+            "combined_Existing_Ground_Surveyed-Site_A", "combined_Finished_Grade_Design_Contours",
+            "combined_Road_Datum", "combined_Proposed_Design_Contours",
+        ])
+
+    def test_original_name_fallback_and_unrelated_metadata(self):
+        surface = ET.Element("Surface", name="Site A Existing Ground")
+        feature = ET.SubElement(surface, "Feature", name="LandXMLTools.Prepare")
+        ET.SubElement(feature, "Property", label="surface", value="  ")
+        other = ET.Element("Surface", name="Terrain A")
+        feature = ET.SubElement(other, "Feature", name="Other tool")
+        ET.SubElement(feature, "Property", label="surface", value="FG")
+        self.assertEqual(surface_output_names("road.xml", [surface, other]), [
+            "road_Site_A_Existing_Ground", "road_Terrain_A",
+        ])
+
     def test_safe_unique_names_and_unnamed_fallback(self):
         surfaces = [ET.Element("Surface", name=name) for name in
                     ("A/B", "A:B", "a_b", "A_B_2", "", "...", "../CON:*?", "é" * 100)]

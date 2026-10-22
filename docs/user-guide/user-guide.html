@@ -325,6 +325,7 @@ a { color: var(--accent); }
   </tbody>
 </table>
 <div class="warn"><b>Existing files</b>The tool refuses to overwrite an existing GeoPackage. Choose a new output folder for each run.</div>
+<p>Prepared LandXML files retain original surface names and source filenames in preparation metadata. Automatic terrain names use that original surface name instead of the generated <code>Prepared …</code> name when available. The source filename also contributes role evidence, allowing a proposed terrain from a named finished-surface export to be labelled finished grade. Datum/subgrade remains distinct, and role wording already present in the surface name is not repeated.</p>
 
 <h2 id="terrain"><span class="sec">8</span>Terrain: TIN to GeoTIFF and boundaries</h2>
 <h3>Prepare separate geometry and terrain exports</h3>
