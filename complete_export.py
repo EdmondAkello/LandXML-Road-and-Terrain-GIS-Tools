@@ -3,8 +3,9 @@ import math
 import os
 import numpy as np
 from osgeo import ogr, osr, gdal
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterCrs,
@@ -118,7 +119,7 @@ def _param_common_local(a):
     )
 
 
-class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
+class CompleteRoadDesignAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return CompleteRoadDesignAlgorithm()
 

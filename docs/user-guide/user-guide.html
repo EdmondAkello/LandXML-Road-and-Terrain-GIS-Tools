@@ -281,6 +281,7 @@ a { color: var(--accent); }
 <p>Use it to confirm that the file holds what you expect (for example that cross-sections are present before running corridor tools) and to decide on the coordinate interpretation.</p>
 
 <h2 id="names"><span class="sec">6</span>Choosing surfaces, alignments and profiles</h2>
+<p><b>Remembering project settings.</b> After a successful run from a Processing dialog, the tool remembers its input files, selections, units, intervals, coordinate settings and design criteria in the current QGIS project. Save the project to retain them after closing QGIS. Each tool keeps separate settings; a new project starts with defaults. Explicit inputs from Processing history override saved inputs. Output destinations and the Prepare LandXML coordinate/datum confirmation are not remembered. Failed or cancelled runs leave the saved settings unchanged. Scripts, models and batch runs keep their normal parameter behavior.</p>
 <p>Every name field is an editable dropdown filled from the chosen file and refreshed when the file changes. You can also type: matching ignores case and accepts a unique part of a name, so <code>eg</code> finds <code>EG</code> and <code>ogl</code> finds <code>OGL-LOT_REV 0</code>. An unknown name is reported with the list of names available.</p>
 <p>Leave surface names blank to let the tool decide from evidence in the file; the choice is written to the log:</p>
 <ul>

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingOutputNumber,
     QgsProcessingParameterBoolean,
@@ -19,7 +20,7 @@ from .processing_widgets import name_param
 UNIT_VALUES = (None, "meter", "foot", "usSurveyFoot")
 
 
-class PrepareLandXMLAlgorithm(QgsProcessingAlgorithm):
+class PrepareLandXMLAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return PrepareLandXMLAlgorithm()
 

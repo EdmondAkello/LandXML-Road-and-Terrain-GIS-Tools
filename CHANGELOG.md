@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Processing dialogs remember each tool's last successful input settings in the QGIS project, including LandXML/terrain files, name selections, units, sampling intervals, coordinate settings and design criteria. Save the project to retain them across sessions. Output destinations and coordinate/datum confirmation are excluded; failed/cancelled runs, scripts, models and batch runs do not update these settings.
+
 ## 1.9.2 — 2026-10-21
 
 ### Fixed

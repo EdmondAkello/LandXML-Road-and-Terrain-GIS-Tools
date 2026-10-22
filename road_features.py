@@ -14,9 +14,10 @@ from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
 from .landxml.reports import station_label
 from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices, coordinate_param
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
     QgsProcessing,
-    QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingParameterFile,
     QgsProcessingParameterCrs,
@@ -219,7 +220,7 @@ def _label_profile_output(context, destination, name, placement):
     details.setPostProcessor(processor)
 
 
-class ProfileAlgorithm(QgsProcessingAlgorithm):
+class ProfileAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return ProfileAlgorithm()
 
@@ -601,7 +602,7 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
         }
 
 
-class Centerline3DAlgorithm(QgsProcessingAlgorithm):
+class Centerline3DAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return Centerline3DAlgorithm()
 
@@ -772,7 +773,7 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
         return {"OUTPUT": dest}
 
 
-class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
+class SurfaceBoundaryAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return SurfaceBoundaryAlgorithm()
 
@@ -897,7 +898,7 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
         return {"OUTPUT": dest}
 
 
-class StationPointsAlgorithm(QgsProcessingAlgorithm):
+class StationPointsAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return StationPointsAlgorithm()
 
@@ -1002,7 +1003,7 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
         return {"OUTPUT": dest}
 
 
-class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
+class CrossSectionsAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return CrossSectionsAlgorithm()
 
@@ -1221,7 +1222,7 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         }
 
 
-class GenericLinesAlgorithm(QgsProcessingAlgorithm):
+class GenericLinesAlgorithm(ProjectSettingsAlgorithm):
     MODE = "FEATURE"
 
     def createInstance(self):
