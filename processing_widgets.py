@@ -60,7 +60,7 @@ if WidgetWrapper is not None:
                 wrapper.widgetValueHasChanged.connect(lambda changed: self.refresh(changed))
             self.refresh(self._sources.get(self._file_param))
 
-        def refresh(self, wrapper):
+        def refresh(self, wrapper=None):
             path = ""
             for key in (self._file_param, self._fallback_file_param):
                 source = getattr(self, "_sources", {}).get(key) or wrapper
