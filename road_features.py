@@ -13,10 +13,10 @@ from .landxml.sections import read_cross_sections
 from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
 from .landxml.reports import station_label
+from .styles import StyledAlgorithm
 from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices, coordinate_param
 from qgis.core import (
     QgsProcessing,
-    QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingParameterFile,
     QgsProcessingParameterCrs,
@@ -219,7 +219,7 @@ def _label_profile_output(context, destination, name, placement):
     details.setPostProcessor(processor)
 
 
-class ProfileAlgorithm(QgsProcessingAlgorithm):
+class ProfileAlgorithm(StyledAlgorithm):
     def createInstance(self):
         return ProfileAlgorithm()
 
@@ -592,6 +592,9 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
             "Map profile controls (schematic)",
             QgsPalLayerSettings.Placement.OrderedPositionsAroundPoint,
         )
+        for destination, kind in ((dest, "profiles"), (control_dest, "profile_controls"),
+                                  (map_dest, "profiles"), (map_control_dest, "profile_controls")):
+            self.set_output_style(destination, kind)
         return {
             "OUTPUT": dest,
             "CONTROL_POINTS": control_dest or "",
@@ -601,7 +604,7 @@ class ProfileAlgorithm(QgsProcessingAlgorithm):
         }
 
 
-class Centerline3DAlgorithm(QgsProcessingAlgorithm):
+class Centerline3DAlgorithm(StyledAlgorithm):
     def createInstance(self):
         return Centerline3DAlgorithm()
 
@@ -769,10 +772,11 @@ class Centerline3DAlgorithm(QgsProcessingAlgorithm):
                 )
             fb.setProgress(int(100 * (ai + 1) / max(1, len(parts_all))))
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "centerlines_3d")
         return {"OUTPUT": dest}
 
 
-class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
+class SurfaceBoundaryAlgorithm(StyledAlgorithm):
     def createInstance(self):
         return SurfaceBoundaryAlgorithm()
 
@@ -894,10 +898,11 @@ class SurfaceBoundaryAlgorithm(QgsProcessingAlgorithm):
             )
             sink.addFeature(f)
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "surface_boundary")
         return {"OUTPUT": dest}
 
 
-class StationPointsAlgorithm(QgsProcessingAlgorithm):
+class StationPointsAlgorithm(StyledAlgorithm):
     def createInstance(self):
         return StationPointsAlgorithm()
 
@@ -999,10 +1004,11 @@ class StationPointsAlgorithm(QgsProcessingAlgorithm):
                 f.setAttributes([name, station, bearing])
                 sink.addFeature(f)
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "station_points")
         return {"OUTPUT": dest}
 
 
-class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
+class CrossSectionsAlgorithm(StyledAlgorithm):
     def createInstance(self):
         return CrossSectionsAlgorithm()
 
@@ -1214,6 +1220,8 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         transformed_bounds.report(fb)
         attach_post_processor(c, dest, source_path=path)
         attach_post_processor(c, point_dest, source_path=path)
+        self.set_output_style(dest, "cross_sections")
+        self.set_output_style(point_dest, "section_points")
         return {
             "OUTPUT": dest,
             "POINTS": point_dest or "",
@@ -1221,7 +1229,7 @@ class CrossSectionsAlgorithm(QgsProcessingAlgorithm):
         }
 
 
-class GenericLinesAlgorithm(QgsProcessingAlgorithm):
+class GenericLinesAlgorithm(StyledAlgorithm):
     MODE = "FEATURE"
 
     def createInstance(self):
@@ -1364,6 +1372,7 @@ class GenericLinesAlgorithm(QgsProcessingAlgorithm):
             )
         transformed_bounds.report(fb)
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "feature_lines" if self.mode == "FEATURE" else "breaklines")
         return {"OUTPUT": dest}
 
 

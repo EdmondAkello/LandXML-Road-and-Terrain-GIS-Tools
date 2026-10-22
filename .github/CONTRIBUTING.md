@@ -33,7 +33,7 @@ You need Python with NumPy and GDAL (the Python that ships with QGIS works).
 
 ```bash
 python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py   # as CI runs them
-python3 -m unittest -v tests/test_qgis_processing.py tests/test_prepare.py tests/test_gui.py  # need QGIS
+python3 -m unittest -v tests/test_qgis_processing.py tests/test_prepare.py tests/test_gui.py tests/test_styles.py  # need QGIS
 bandit -q -r . -x ./tests,./dist
 ```
 

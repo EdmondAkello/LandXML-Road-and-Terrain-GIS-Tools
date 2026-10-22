@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Shared road-review presets for complete-package and individual vector outputs, with role-based existing/design/datum colors where attributes support them, station and profile labels, and index/minor contour styling. Default vector styles are embedded in GeoPackages after sinks close, so they persist when reopening or sharing the file, including file-only exports. Memory outputs receive the same presentation. Existing earthworks styling is preserved; geometry, units and quantities are unchanged. Issue #25.
+
 ## 1.9.2 — 2026-10-21
 
 ### Fixed

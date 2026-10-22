@@ -65,6 +65,16 @@ The Complete Road Design export writes an engineering GeoPackage and optional Ge
 
 **Large raster grids.** TIN to GeoTIFF, Complete Road Design and Surface Cut/Fill have a **Warn above grid size (million cells; 0 = disable)** setting, defaulting to 250 million cells. Above it, the Processing log warns with the cell count and minimum grid memory, then continues. This is a warning threshold, not a size limit. Temporary arrays and surface comparisons use additional RAM; increase the pixel size if memory is insufficient. Set the threshold to 0 to disable this warning.
 
+### Default GeoPackage styles
+
+Complete Road Design and the individual vector extraction tools apply shared road-review presets after export: blue alignments/centerlines, small dark station markers, orange profile controls, purple cross-sections, grey boundaries, brown breaklines and green feature lines. Where surface/profile attributes identify a role, existing ground is brown, design/finished surfaces are blue, and datum/subgrade is purple. Unknown names keep the layer's base color. Station labels use source station values, and the existing profile `label_text` labels are preserved.
+
+Contour GeoPackages have thin green minor contours and heavier index contours every fifth contour interval; index contours carry elevation labels. These choices affect presentation only, not geometry, stationing, units or quantities. Existing earthworks styling is unchanged, and DEM styling is outside this first version.
+
+GeoPackage vector defaults are stored in the file's QGIS `layer_styles` table, including when exporting without loading the results into a map. They are restored when the layer is reopened in QGIS or shared with another QGIS user. Memory outputs receive the same presets for the current run; other formats receive styles in the current context without adding sidecar files. You can edit the symbology and labels afterwards and save your own default. Other GIS applications may ignore QGIS styles. Saving a style failure is reported as a Processing warning; the exported data remains available.
+
+This styles branch starts from upstream `main`; automatic map loading and descriptive terrain filenames belong to separate PR #23. Add the generated layers manually when testing this branch alone.
+
 ### Profile graphs and labels
 
 In **Extract LandXML Profiles**, choose a **Profile graph lines** output and a **Profile control points** output, then load both result layers. The graph line is labeled with its profile name. The point layer contains source `PVI` controls labeled **VPI**, plus calculated **VPC** and **VPT** points for each supported parabolic curve. Point labels show source station (formatted `0+000.00` when the file declares metric units, `0+00.00` for feet or undeclared units) and elevation, incoming/outgoing tangent grades (`G1`/`G2`), and **K** at a parabolic VPI. Both layers include a `label_text` field; to restore a hidden label in QGIS, choose **Layer Properties → Labels → Single Labels → `label_text`**. Select the control-point output explicitly to create those points.

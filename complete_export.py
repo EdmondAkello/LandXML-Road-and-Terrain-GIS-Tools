@@ -4,7 +4,6 @@ import os
 import numpy as np
 from osgeo import ogr, osr, gdal
 from qgis.core import (
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterCrs,
@@ -27,6 +26,7 @@ from .processing_common import coordinate_choices, coordinate_param
 from .params import number_param
 from .processing_widgets import name_param
 from .processing_common import resolve_name
+from .styles import PRESETS, StyledAlgorithm
 
 
 def _ogr_srs(crs):
@@ -118,7 +118,7 @@ def _param_common_local(a):
     )
 
 
-class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
+class CompleteRoadDesignAlgorithm(StyledAlgorithm):
     def createInstance(self):
         return CompleteRoadDesignAlgorithm()
 
@@ -903,7 +903,13 @@ class CompleteRoadDesignAlgorithm(QgsProcessingAlgorithm):
                         )
                         dem_ds = None
                         cds = None
+                        self.set_output_style(contour + "|layername=contours", "contours",
+                                              self.parameterAsDouble(p, "CONTOUR_INTERVAL", c))
                     if not flags["INCLUDE_DEM"]:
                         os.remove(dem)
+        for index in range(ds.GetLayerCount()):
+            name = ds.GetLayer(index).GetName()
+            if name in PRESETS:
+                self.set_output_style(gpkg + "|layername=" + name, name)
         ds = None
         return {"OUTPUT_DIR": out}

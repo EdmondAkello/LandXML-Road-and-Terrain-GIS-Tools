@@ -3,7 +3,6 @@ import os
 
 from qgis.core import (
     QgsProcessing,
-    QgsProcessingAlgorithm,
     QgsProcessingParameterFile,
     QgsProcessingParameterCrs,
     QgsProcessingParameterFeatureSink,
@@ -23,6 +22,7 @@ from .processing_common import BoundsTracker, attach_post_processor, coordinate_
 from .params import number_param
 from .processing_widgets import name_param
 from .processing_common import resolve_name
+from .styles import StyledAlgorithm
 
 METHODS = [
     "Use stored coordinates",
@@ -51,7 +51,7 @@ METHOD_MAP = {
 }
 
 
-class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
+class LandXMLAlignmentsAlgorithm(StyledAlgorithm):
     INPUT = "INPUT"
     OUTPUT_CRS = "OUTPUT_CRS"
     METHOD = "METHOD"
@@ -262,4 +262,5 @@ class LandXMLAlignmentsAlgorithm(QgsProcessingAlgorithm):
                 f"Alignment import failed for '{os.path.basename(path)}': {exc}"
             ) from exc
         attach_post_processor(context, dest_id, source_path=path)
+        self.set_output_style(dest_id, "alignments")
         return {self.OUTPUT: dest_id, "ALIGNMENT_COUNT": len(alignments)}
