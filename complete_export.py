@@ -26,7 +26,7 @@ from .processing_common import coordinate_choices, coordinate_param
 from .params import number_param
 from .processing_widgets import name_param
 from .processing_common import resolve_name
-from .styles import PRESETS, StyledAlgorithm
+from .styles import PRESETS, StyledAlgorithm, station_text
 
 
 def _ogr_srs(crs):
@@ -67,11 +67,12 @@ def _ogr_line(points, method, params, dimension=2):
     return geometry
 
 
-def _write_points(ds, name, records, srs):
+def _write_points(ds, name, records, srs, horizontal_unit):
     _delete_layer(ds, name)
     lyr = ds.CreateLayer(name, srs, ogr.wkbPoint)
     _fld(lyr, "alignment")
     _fld(lyr, "station", ogr.OFTReal)
+    _fld(lyr, "station_label")
     _fld(lyr, "bearing", ogr.OFTReal)
     for x, y, a, st, b in records:
         f = ogr.Feature(lyr.GetLayerDefn())
@@ -80,6 +81,7 @@ def _write_points(ds, name, records, srs):
         f.SetGeometry(g)
         f.SetField("alignment", a)
         f.SetField("station", st)
+        f.SetField("station_label", station_text(st, horizontal_unit))
         f.SetField("bearing", b)
         lyr.CreateFeature(f)
 
@@ -443,7 +445,7 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm):
                                 bearing,
                             )
                         )
-                _write_points(ds, "station_points", ptsrec, srs)
+                _write_points(ds, "station_points", ptsrec, srs, document.horizontal_unit)
 
         if flags["INCLUDE_CENTERLINES"] or flags["INCLUDE_PROFILES"]:
             profile_records = []
@@ -904,7 +906,7 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm):
                         dem_ds = None
                         cds = None
                         self.set_output_style(contour + "|layername=contours", "contours",
-                                              self.parameterAsDouble(p, "CONTOUR_INTERVAL", c))
+                                              self.parameterAsDouble(p, "CONTOUR_INTERVAL", c), surface_name=surface_name)
                     if not flags["INCLUDE_DEM"]:
                         os.remove(dem)
         for index in range(ds.GetLayerCount()):

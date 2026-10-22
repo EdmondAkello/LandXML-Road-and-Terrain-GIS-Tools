@@ -13,7 +13,7 @@ from .landxml.sections import read_cross_sections
 from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
 from .landxml.reports import station_label
-from .styles import StyledAlgorithm
+from .styles import StyledAlgorithm, station_text
 from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices, coordinate_param
 from qgis.core import (
     QgsProcessing,
@@ -951,7 +951,7 @@ class StationPointsAlgorithm(StyledAlgorithm):
 
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
-        m, out, src, tp = _transform_params(p, c, self, fb, path)
+        m, out, src, tp, document = coordinate_choices(self, p, c, fb, path)
         alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         include_end = self.parameterAsBoolean(p, "INCLUDE_ENDPOINT", c)
         fields = QgsFields()
@@ -959,6 +959,7 @@ class StationPointsAlgorithm(StyledAlgorithm):
             fields.append(
                 QgsField(n, FIELD_DOUBLE if n != "alignment" else FIELD_STRING, len=254)
             )
+        fields.append(QgsField("station_label", FIELD_STRING, len=254))
         sink, dest = _sink(self, p, c, fields, QgsWkbTypes.Type.Point)
         interval = self.parameterAsDouble(p, "INTERVAL", c)
         for name, desc, sta0, sta1, parts, _, distances in _alignment_parts(
@@ -1001,7 +1002,7 @@ class StationPointsAlgorithm(StyledAlgorithm):
                 f.setGeometry(
                     QgsGeometry.fromPointXY(QgsPointXY(float(xy[0]), float(xy[1])))
                 )
-                f.setAttributes([name, station, bearing])
+                f.setAttributes([name, station, bearing, station_text(station, document.horizontal_unit)])
                 sink.addFeature(f)
         attach_post_processor(c, dest, source_path=path)
         self.set_output_style(dest, "station_points")

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- Processing's no-argument layer-registry refresh callback now works with LandXML name dropdowns and preserves their selected value, preventing the reported missing-argument Python error.
+
+### Changed
+- Station-point presets use a persisted `station_label` field with source-unit stationing (feet: `50+00`; metres: `5+000`) and omit `.00` on whole stations. Unknown units stay numeric. Contour labels omit unnecessary decimal zeros while retaining fractional elevations; existing-ground minor contours are brown/dashed, proposed/design contours blue/solid, and minor lines are thicker for contrast.
+
 ### Added
 - Shared road-review presets for complete-package and individual vector outputs, with role-based existing/design/datum colors where attributes support them, station and profile labels, and index/minor contour styling. Default vector styles are embedded in GeoPackages after sinks close, so they persist when reopening or sharing the file, including file-only exports. Memory outputs receive the same presentation. Existing earthworks styling is preserved; geometry, units and quantities are unchanged. Issue #25.
 

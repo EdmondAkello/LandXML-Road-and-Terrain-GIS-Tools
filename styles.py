@@ -2,6 +2,7 @@
 
 import os
 
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.core import (
     QgsCategorizedSymbolRenderer, QgsLineSymbol, QgsMapLayer, QgsMarkerSymbol,
@@ -9,6 +10,9 @@ from qgis.core import (
     QgsRendererCategory, QgsRuleBasedRenderer, QgsSingleSymbolRenderer, QgsTextBufferSettings, QgsTextFormat,
     QgsVectorLayerSimpleLabeling, QgsWkbTypes,
 )
+from .landxml.catalog import _tokens
+from .landxml.quantity_units import LINEAR_UNITS
+from .landxml.reports import station_label
 
 
 PRESETS = {
@@ -35,7 +39,17 @@ def _symbol(layer, color, size):
     return QgsLineSymbol.createSimple({"line_color": color, "line_width": str(size)})
 
 
-def apply_preset(layer, kind, contour_interval=5):
+def station_text(station, horizontal_unit):
+    """Reuse source-unit stationing, omitting decimal zeros on whole stations."""
+    label = station_label(station, horizontal_unit)
+    if not label:
+        return ""
+    if (horizontal_unit or "").lower() not in LINEAR_UNITS:
+        return f"{station:g}"
+    return label.removesuffix(".00")
+
+
+def apply_preset(layer, kind, contour_interval=5, surface_name=""):
     """Apply a preset using only fields available on this output layer."""
     color, size = PRESETS[kind]
     fields = set(layer.fields().names())
@@ -58,21 +72,36 @@ def apply_preset(layer, kind, contour_interval=5):
     label, is_expression = None, False
     if "label_text" in fields:
         label = "label_text"
+    elif kind == "station_points" and "station_label" in fields:
+        label = "station_label"
     elif kind == "station_points" and "station" in fields:
-        label, is_expression = "format_number(\"station\", 2)", True
+        label, is_expression = 'to_string("station")', True
     elif kind == "profile_controls" and "control_type" in fields:
         label = "control_type"
     elif kind == "alignments":
         label = next((name for name in ("name", "alignment_name") if name in fields), None)
     if kind == "contours" and "elev" in fields:
+        tokens = _tokens(surface_name)
+        existing = bool(tokens & {"eg", "egl", "ogl", "existing", "natural", "survey"})
+        if existing:
+            major_color, minor_color = "#7f3b08", "#a6611a"
+        elif tokens & {"datum", "subgrade", "formation", "bottom"}:
+            major_color, minor_color = "#5e2372", "#9c59b6"
+        elif tokens & {"fg", "frl", "design", "proposed", "finished", "top"}:
+            major_color, minor_color = "#00548a", "#0072b2"
+        else:
+            major_color, minor_color = "#315b38", "#4d7854"
         major = f'abs("elev" / {contour_interval * 5:g} - round("elev" / {contour_interval * 5:g})) < 0.000001'
         renderer = QgsRuleBasedRenderer(_symbol(layer, color, size))
         root = renderer.rootRule()
         root.removeChildAt(0)
-        root.appendChild(QgsRuleBasedRenderer.Rule(_symbol(layer, "#315b38", 0.45), 0, 0, major, "Index contour (every fifth)"))
-        root.appendChild(QgsRuleBasedRenderer.Rule(_symbol(layer, "#799b7e", 0.18), 0, 0, "ELSE", "Minor contour"))
+        root.appendChild(QgsRuleBasedRenderer.Rule(_symbol(layer, major_color, 0.5), 0, 0, major, "Index contour (every fifth)"))
+        minor_symbol = _symbol(layer, minor_color, 0.28)
+        if existing:
+            minor_symbol.symbolLayer(0).setPenStyle(Qt.PenStyle.DashLine)
+        root.appendChild(QgsRuleBasedRenderer.Rule(minor_symbol, 0, 0, "ELSE", "Minor contour"))
         layer.setRenderer(renderer)
-        label, is_expression = f'CASE WHEN {major} THEN format_number("elev", 2) END', True
+        label, is_expression = f'CASE WHEN {major} THEN to_string(round("elev", 6)) END', True
     if label:
         settings = QgsPalLayerSettings()
         settings.fieldName, settings.isExpression = label, is_expression
@@ -94,24 +123,24 @@ def apply_preset(layer, kind, contour_interval=5):
 
 
 class StyledAlgorithm(QgsProcessingAlgorithm):
-    def set_output_style(self, destination, kind, contour_interval=5):
+    def set_output_style(self, destination, kind, contour_interval=5, surface_name=""):
         if destination:
             if not hasattr(self, "_style_outputs"):
                 self._style_outputs = []
-            self._style_outputs.append((destination, kind, contour_interval))
+            self._style_outputs.append((destination, kind, contour_interval, surface_name))
 
     def postProcessAlgorithm(self, context, feedback):
         # Sinks have closed; styling here also covers file-only and model/script runs.
         outputs = getattr(self, "_style_outputs", [])
         self._style_outputs = []
-        for destination, kind, interval in outputs:
+        for destination, kind, interval, surface_name in outputs:
             if feedback.isCanceled():
                 break
             layer = QgsProcessingUtils.mapLayerFromString(destination, context, typeHint=QgsProcessingUtils.LayerHint.Vector)
             if layer is None or not layer.isValid():
                 feedback.pushWarning(f"Could not style exported layer: {destination}")
                 continue
-            apply_preset(layer, kind, interval)
+            apply_preset(layer, kind, interval, surface_name)
             uri = QgsProviderRegistry.instance().decodeUri(layer.providerType(), layer.source())
             if os.path.splitext(uri.get("path", ""))[1].lower() == ".gpkg":
                 categories = (QgsMapLayer.StyleCategory.Symbology | QgsMapLayer.StyleCategory.Labeling
