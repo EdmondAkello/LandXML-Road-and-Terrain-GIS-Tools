@@ -8,7 +8,10 @@ from qgis.core import QgsProcessingAlgorithm, QgsProject, QgsVariantUtils
 class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
     def createCustomParametersWidget(self, parent=None):
         # Import the GUI only when opening a dialog; scripts and models use normal defaults.
-        from processing.gui.AlgorithmDialog import AlgorithmDialog
+        try:
+            from processing.gui.AlgorithmDialog import AlgorithmDialog  # QGIS 3
+        except ImportError:  # QGIS 4 replaced the dialog with a dockable widget
+            from processing.gui.algorithm_widget import AlgorithmWidget as AlgorithmDialog
 
         class ProjectSettingsDialog(AlgorithmDialog):
             def __init__(self, algorithm, parent):
