@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingParameterFile,
     QgsProcessingParameterFileDestination,
@@ -15,7 +16,7 @@ from qgis.core import (
 from .landxml.parser import load_document
 
 
-class InspectLandXMLAlgorithm(QgsProcessingAlgorithm):
+class InspectLandXMLAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return InspectLandXMLAlgorithm()
 

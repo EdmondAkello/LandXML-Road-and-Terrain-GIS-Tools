@@ -5,9 +5,10 @@ from __future__ import annotations
 import html
 import os
 
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
     Qgis,
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterEnum,
@@ -100,7 +101,7 @@ def section_report_html(views, unit, title, svgs, source_file, settings):
     return _document(title or "Cross-sections", "".join(body))
 
 
-class CrossSectionSheetsAlgorithm(QgsProcessingAlgorithm):
+class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return CrossSectionSheetsAlgorithm()
 

@@ -16,6 +16,8 @@ import os
 import re
 
 import numpy as np
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
     Qgis,
     QgsCategorizedSymbolRenderer,
@@ -27,7 +29,6 @@ from qgis.core import (
     QgsGeometry,
     QgsPointXY,
     QgsProcessing,
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingOutputString,
     QgsProcessingParameterEnum,
@@ -291,7 +292,7 @@ def _placers(path, alignment_names, method, params, feedback):
     return result
 
 
-class ProfileCutFillAlgorithm(QgsProcessingAlgorithm):
+class ProfileCutFillAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return ProfileCutFillAlgorithm()
 
@@ -583,7 +584,7 @@ def _field_name(prefix, name, used):
     return candidate
 
 
-class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
+class CorridorQuantitiesAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return CorridorQuantitiesAlgorithm()
 
@@ -958,7 +959,7 @@ class CorridorQuantitiesAlgorithm(QgsProcessingAlgorithm):
         return outputs
 
 
-class SurfaceCutFillAlgorithm(QgsProcessingAlgorithm):
+class SurfaceCutFillAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return SurfaceCutFillAlgorithm()
 

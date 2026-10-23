@@ -57,6 +57,8 @@ Sampling interpolates the original visible TIN triangles, retaining triangle-edg
 
 The numbered groups suggest a typical workflow; run only the tools you need. Algorithm IDs are unchanged, so existing Processing models and scripts keep working.
 
+**Project settings.** After a successful run from a Processing dialog, each tool remembers its input files, alignment/surface/profile selections, units, intervals, coordinate settings and design criteria in the current QGIS project. Save the project (`.qgs` or `.qgz`) to retain them after closing QGIS. Reopening that tool restores its inputs; explicit inputs supplied by Processing history take precedence. Tools keep separate settings, and a new project starts with defaults. Output destinations and the Prepare LandXML coordinate/datum confirmation are not remembered. Failed or cancelled runs do not replace saved settings. Scripts, models and batch runs retain their normal parameter behavior.
+
 Outside the Processing Toolbox, the **LandXML Profile Viewer** dock and the **Pick Alignment Profile on Map** toolbar button (menu **Plugins → LandXML Road & Terrain**) show existing-ground and design profiles for an alignment you click in the map.
 
 **Inspect LandXML** reports vendor/evidence, version, horizontal and vertical units, declared CRS, axis-order uncertainty, surfaces with point/face counts, alignments, profiles, cross sections, breaklines, feature lines, source bounds, elevation range and warnings. It can save JSON. Inspection never changes coordinates.

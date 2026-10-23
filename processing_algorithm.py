@@ -1,7 +1,8 @@
 import os
 
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
-    QgsProcessingAlgorithm,
     QgsProcessingParameterFile,
     QgsProcessingParameterCrs,
     QgsProcessingParameterRasterDestination,
@@ -40,7 +41,7 @@ METHOD_MAP = {
 }
 
 
-class LandXMLTinToGeoTIFFAlgorithm(QgsProcessingAlgorithm):
+class LandXMLTinToGeoTIFFAlgorithm(ProjectSettingsAlgorithm):
     INPUT = "INPUT"
     SURFACE = "SURFACE"
     RESOLUTION = "RESOLUTION"
