@@ -15,7 +15,10 @@ class WidgetRefreshTests(unittest.TestCase):
         sys.path.append(str(Path(runtime.QgsApplication.pkgDataPath()) / "python" / "plugins"))
 
     def test_framework_refresh_preserves_selected_name(self):
-        from processing.gui.AlgorithmDialog import AlgorithmDialog
+        try:
+            from processing.gui.AlgorithmDialog import AlgorithmDialog  # QGIS 3
+        except ImportError:  # QGIS 4
+            from processing.gui.algorithm_widget import AlgorithmWidget as AlgorithmDialog
         from landxml_plugin import processing_widgets
         from landxml_plugin.prepare_algorithm import PrepareLandXMLAlgorithm
 

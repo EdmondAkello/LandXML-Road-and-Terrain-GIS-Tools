@@ -140,7 +140,8 @@ class StyleTests(unittest.TestCase):
                 layer = QgsVectorLayer(str(contour) + "|layername=contours", "contours", "ogr")
                 self.assertEqual(layer.renderer().type(), "RuleRenderer")
                 self.assertTrue(layer.labelsEnabled())
-                expected = "#a6611a" if "surface_01" in contour.name else "#0072b2"
+                # Since #23 the file name carries the surface role and name.
+                expected = "#a6611a" if "Existing_Ground" in contour.name else "#0072b2"
                 self.assertEqual(layer.renderer().rootRule().children()[1].symbol().color().name(), expected)
                 layer = None
             self.context.temporaryLayerStore().removeAllMapLayers()

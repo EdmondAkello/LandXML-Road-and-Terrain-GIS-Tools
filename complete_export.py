@@ -31,7 +31,6 @@ from .landxml.output_names import surface_output_names
 from .processing_common import coordinate_choices, coordinate_param
 from .params import number_param
 from .processing_widgets import name_param
-from .processing_common import resolve_name
 from .styles import PRESETS, StyledAlgorithm, station_text
 from .processing_common import attach_post_processor, resolve_name
 
@@ -127,8 +126,7 @@ def _param_common_local(a):
     )
 
 
-class CompleteRoadDesignAlgorithm(StyledAlgorithm):
-class CompleteRoadDesignAlgorithm(ProjectSettingsAlgorithm):
+class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     def createInstance(self):
         return CompleteRoadDesignAlgorithm()
 
@@ -924,17 +922,15 @@ class CompleteRoadDesignAlgorithm(ProjectSettingsAlgorithm):
                         cds = None
                         self.set_output_style(contour + "|layername=contours", "contours",
                                               self.parameterAsDouble(p, "CONTOUR_INTERVAL", c), surface_name=surface_name)
-                    if not flags["INCLUDE_DEM"]:
-                        os.remove(dem)
-        for index in range(ds.GetLayerCount()):
-            name = ds.GetLayer(index).GetName()
-            if name in PRESETS:
-                self.set_output_style(gpkg + "|layername=" + name, name)
                         terrain_outputs.append((contour + "|layername=contours", terrain_name + "_Contours", QgsProcessingUtils.LayerHint.Vector))
                     if not flags["INCLUDE_DEM"]:
                         os.remove(dem)
                     else:
                         terrain_outputs.append((dem, terrain_name + "_DEM", QgsProcessingUtils.LayerHint.Raster))
+        for index in range(ds.GetLayerCount()):
+            name = ds.GetLayer(index).GetName()
+            if name in PRESETS:
+                self.set_output_style(gpkg + "|layername=" + name, name)
         package_outputs = [
             (gpkg + "|layername=" + ds.GetLayer(index).GetName(),
              base + "_GIS — " + ds.GetLayer(index).GetName(), QgsProcessingUtils.LayerHint.Vector)

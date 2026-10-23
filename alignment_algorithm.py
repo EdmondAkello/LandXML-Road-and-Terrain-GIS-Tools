@@ -53,7 +53,7 @@ METHOD_MAP = {
 }
 
 
-class LandXMLAlignmentsAlgorithm(ProjectSettingsAlgorithm):
+class LandXMLAlignmentsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     INPUT = "INPUT"
     OUTPUT_CRS = "OUTPUT_CRS"
     METHOD = "METHOD"

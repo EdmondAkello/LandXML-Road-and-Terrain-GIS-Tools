@@ -15,6 +15,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-numpy python3-gdal
+      - name: Every module compiles
+        # Catches syntax errors (e.g. from a bad merge) in modules the QGIS-free tests never import.
+        run: python3 -m compileall -q -x '(^|/)(dist|\.git)/' .
+      - name: No merge-conflict markers
+        run: "! git grep -n -E '^(<<<<<<<|=======|>>>>>>>)( |$)' -- '*.py' '*.md' '*.html' '*.json' '*.txt' '*.yml'"
       - name: Run tests
         run: python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py
 
