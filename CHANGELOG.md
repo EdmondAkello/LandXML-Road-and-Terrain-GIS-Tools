@@ -2,14 +2,20 @@
 
 ## Unreleased
 
-### Fixed
-- Processing's no-argument layer-registry refresh callback now works with LandXML name dropdowns and preserves their selected value, preventing the reported missing-argument Python error.
+### Added
+- Complete Road Design has a **Load exported layers into the project** checkbox, enabled by default. Successful exports queue the generated GeoPackage layers, retained DEMs and contours for QGIS Processing to load into the run's project, with source XML links for the Profile Viewer. Disabling the option exports files only. Temporary DEMs, disabled outputs, failed/cancelled runs and runs without a project do not add layers. Part of issue #22.
+- Each tool dialog remembers its last successful inputs (files, alignment, surface and profile names, units, intervals, coordinate settings and criteria) in the current QGIS project, restored when the project is reopened. Explicit inputs from Processing history take precedence; outputs and the Prepare LandXML confirmation are not remembered; scripts, models and batch runs keep their normal defaults. Issue #21.
+- Shared road-review presets for complete-package and individual vector outputs, with role-based existing/design/datum colors where attributes support them, station and profile labels, and index/minor contour styling. Default vector styles are embedded in GeoPackages after sinks close, so they persist when reopening or sharing the file, including file-only exports. Memory outputs receive the same presentation. Existing earthworks styling is preserved; geometry, units and quantities are unchanged. Issue #25.
 
 ### Changed
+- Complete Road Design automatically names DEMs and contour GeoPackages using the XML basename, embedded surface name, and a supported terrain role (existing ground, finished grade, datum, design or proposed). Missing names have numbered fallbacks, unsafe characters are replaced, and collisions are disambiguated. Generic design surfaces are not assumed to be finished grade. The main mixed-data GeoPackage and its tables keep their existing names. Existing exports are not renamed; scripts expecting the former numbered terrain filenames need updating. See issue #22.
 - Station-point presets use a persisted `station_label` field with source-unit stationing (feet: `50+00`; metres: `5+000`) and omit `.00` on whole stations. Unknown units stay numeric. Contour labels omit unnecessary decimal zeros while retaining fractional elevations; existing-ground minor contours are brown/dashed, proposed/design contours blue/solid, and minor lines are thicker for contrast.
 
-### Added
-- Shared road-review presets for complete-package and individual vector outputs, with role-based existing/design/datum colors where attributes support them, station and profile labels, and index/minor contour styling. Default vector styles are embedded in GeoPackages after sinks close, so they persist when reopening or sharing the file, including file-only exports. Memory outputs receive the same presentation. Existing earthworks styling is preserved; geometry, units and quantities are unchanged. Issue #25.
+### Fixed
+- Terrain names from prepared LandXML use the original surface name preserved in `LandXMLTools.Prepare` metadata instead of generated `Prepared …` labels. Role wording already present in the surface name is not repeated. The preserved source filename also supplies role evidence, so an explicitly named finished-surface export can refine a proposed role to finished grade; datum surfaces remain distinct.
+- Processing's no-argument layer-registry refresh callback now works with LandXML name dropdowns and preserves their selected value, preventing the reported missing-argument Python error.
+- Main could not load after #24 and #26 were merged: conflicting class lines were both kept in `road_features.py` and `complete_export.py`, and the alignment tool lost its default style. Each tool now has both the remembered inputs and the default styles, and CI byte-compiles every module and rejects merge-conflict markers. Issue #27.
+- Remembered Processing inputs work on QGIS 4, where `processing.gui.AlgorithmDialog` was replaced by `AlgorithmWidget`. Before, every LandXML tool dialog failed to open on QGIS 4.2. Issue #27.
 
 ## 1.9.2 — 2026-10-21
 
