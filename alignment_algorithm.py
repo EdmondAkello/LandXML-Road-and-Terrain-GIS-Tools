@@ -1,6 +1,8 @@
 import os
 
 
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
     QgsProcessing,
     QgsProcessingParameterFile,
@@ -51,7 +53,7 @@ METHOD_MAP = {
 }
 
 
-class LandXMLAlignmentsAlgorithm(StyledAlgorithm):
+class LandXMLAlignmentsAlgorithm(ProjectSettingsAlgorithm):
     INPUT = "INPUT"
     OUTPUT_CRS = "OUTPUT_CRS"
     METHOD = "METHOD"

@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import os
 
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingParameterEnum,
     QgsProcessingParameterFile,
@@ -28,7 +29,7 @@ from .processing_widgets import name_param
 AXES = ["Swap: file stores northing, easting (Civil 3D)", "As stored: easting, northing"]
 
 
-class DesignReportAlgorithm(QgsProcessingAlgorithm):
+class DesignReportAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return DesignReportAlgorithm()
 

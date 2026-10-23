@@ -15,6 +15,8 @@ from .landxml.stationing import StationedPolyline
 from .landxml.reports import station_label
 from .styles import StyledAlgorithm, station_text
 from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices, coordinate_param
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
     QgsProcessing,
     QgsProcessingContext,
@@ -220,6 +222,7 @@ def _label_profile_output(context, destination, name, placement):
 
 
 class ProfileAlgorithm(StyledAlgorithm):
+class ProfileAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return ProfileAlgorithm()
 
@@ -605,6 +608,7 @@ class ProfileAlgorithm(StyledAlgorithm):
 
 
 class Centerline3DAlgorithm(StyledAlgorithm):
+class Centerline3DAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return Centerline3DAlgorithm()
 
@@ -777,6 +781,7 @@ class Centerline3DAlgorithm(StyledAlgorithm):
 
 
 class SurfaceBoundaryAlgorithm(StyledAlgorithm):
+class SurfaceBoundaryAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return SurfaceBoundaryAlgorithm()
 
@@ -903,6 +908,7 @@ class SurfaceBoundaryAlgorithm(StyledAlgorithm):
 
 
 class StationPointsAlgorithm(StyledAlgorithm):
+class StationPointsAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return StationPointsAlgorithm()
 
@@ -1010,6 +1016,7 @@ class StationPointsAlgorithm(StyledAlgorithm):
 
 
 class CrossSectionsAlgorithm(StyledAlgorithm):
+class CrossSectionsAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return CrossSectionsAlgorithm()
 
@@ -1231,6 +1238,7 @@ class CrossSectionsAlgorithm(StyledAlgorithm):
 
 
 class GenericLinesAlgorithm(StyledAlgorithm):
+class GenericLinesAlgorithm(ProjectSettingsAlgorithm):
     MODE = "FEATURE"
 
     def createInstance(self):

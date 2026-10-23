@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import os
 
+from .project_settings import ProjectSettingsAlgorithm
+
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsFeature,
     QgsField,
     QgsFields,
     QgsProcessing,
-    QgsProcessingAlgorithm,
     QgsProcessingException,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterEnum,
@@ -123,7 +124,7 @@ def collect_reviews(path, doc, alignment_filter, criteria, design_speed, speed_r
     return results
 
 
-class DesignReviewAlgorithm(QgsProcessingAlgorithm):
+class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return DesignReviewAlgorithm()
 
