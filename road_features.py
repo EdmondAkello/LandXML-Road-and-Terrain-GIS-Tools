@@ -221,8 +221,7 @@ def _label_profile_output(context, destination, name, placement):
     details.setPostProcessor(processor)
 
 
-class ProfileAlgorithm(StyledAlgorithm):
-class ProfileAlgorithm(ProjectSettingsAlgorithm):
+class ProfileAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     def createInstance(self):
         return ProfileAlgorithm()
 
@@ -607,8 +606,7 @@ class ProfileAlgorithm(ProjectSettingsAlgorithm):
         }
 
 
-class Centerline3DAlgorithm(StyledAlgorithm):
-class Centerline3DAlgorithm(ProjectSettingsAlgorithm):
+class Centerline3DAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     def createInstance(self):
         return Centerline3DAlgorithm()
 
@@ -780,8 +778,7 @@ class Centerline3DAlgorithm(ProjectSettingsAlgorithm):
         return {"OUTPUT": dest}
 
 
-class SurfaceBoundaryAlgorithm(StyledAlgorithm):
-class SurfaceBoundaryAlgorithm(ProjectSettingsAlgorithm):
+class SurfaceBoundaryAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     def createInstance(self):
         return SurfaceBoundaryAlgorithm()
 
@@ -907,8 +904,7 @@ class SurfaceBoundaryAlgorithm(ProjectSettingsAlgorithm):
         return {"OUTPUT": dest}
 
 
-class StationPointsAlgorithm(StyledAlgorithm):
-class StationPointsAlgorithm(ProjectSettingsAlgorithm):
+class StationPointsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     def createInstance(self):
         return StationPointsAlgorithm()
 
@@ -1015,8 +1011,7 @@ class StationPointsAlgorithm(ProjectSettingsAlgorithm):
         return {"OUTPUT": dest}
 
 
-class CrossSectionsAlgorithm(StyledAlgorithm):
-class CrossSectionsAlgorithm(ProjectSettingsAlgorithm):
+class CrossSectionsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     def createInstance(self):
         return CrossSectionsAlgorithm()
 
@@ -1237,8 +1232,7 @@ class CrossSectionsAlgorithm(ProjectSettingsAlgorithm):
         }
 
 
-class GenericLinesAlgorithm(StyledAlgorithm):
-class GenericLinesAlgorithm(ProjectSettingsAlgorithm):
+class GenericLinesAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     MODE = "FEATURE"
 
     def createInstance(self):
