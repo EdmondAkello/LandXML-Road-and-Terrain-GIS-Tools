@@ -13,6 +13,7 @@ from .landxml.sections import read_cross_sections
 from .landxml.corridor import placed_section_surfaces, read_corridor_sections
 from .landxml.stationing import StationedPolyline
 from .landxml.reports import station_label
+from .styles import StyledAlgorithm, station_text
 from .processing_common import BoundsTracker, attach_post_processor, coordinate_choices, coordinate_param
 from .project_settings import ProjectSettingsAlgorithm
 
@@ -220,6 +221,7 @@ def _label_profile_output(context, destination, name, placement):
     details.setPostProcessor(processor)
 
 
+class ProfileAlgorithm(StyledAlgorithm):
 class ProfileAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return ProfileAlgorithm()
@@ -593,6 +595,9 @@ class ProfileAlgorithm(ProjectSettingsAlgorithm):
             "Map profile controls (schematic)",
             QgsPalLayerSettings.Placement.OrderedPositionsAroundPoint,
         )
+        for destination, kind in ((dest, "profiles"), (control_dest, "profile_controls"),
+                                  (map_dest, "profiles"), (map_control_dest, "profile_controls")):
+            self.set_output_style(destination, kind)
         return {
             "OUTPUT": dest,
             "CONTROL_POINTS": control_dest or "",
@@ -602,6 +607,7 @@ class ProfileAlgorithm(ProjectSettingsAlgorithm):
         }
 
 
+class Centerline3DAlgorithm(StyledAlgorithm):
 class Centerline3DAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return Centerline3DAlgorithm()
@@ -770,9 +776,11 @@ class Centerline3DAlgorithm(ProjectSettingsAlgorithm):
                 )
             fb.setProgress(int(100 * (ai + 1) / max(1, len(parts_all))))
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "centerlines_3d")
         return {"OUTPUT": dest}
 
 
+class SurfaceBoundaryAlgorithm(StyledAlgorithm):
 class SurfaceBoundaryAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return SurfaceBoundaryAlgorithm()
@@ -895,9 +903,11 @@ class SurfaceBoundaryAlgorithm(ProjectSettingsAlgorithm):
             )
             sink.addFeature(f)
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "surface_boundary")
         return {"OUTPUT": dest}
 
 
+class StationPointsAlgorithm(StyledAlgorithm):
 class StationPointsAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return StationPointsAlgorithm()
@@ -947,7 +957,7 @@ class StationPointsAlgorithm(ProjectSettingsAlgorithm):
 
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
-        m, out, src, tp = _transform_params(p, c, self, fb, path)
+        m, out, src, tp, document = coordinate_choices(self, p, c, fb, path)
         alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         include_end = self.parameterAsBoolean(p, "INCLUDE_ENDPOINT", c)
         fields = QgsFields()
@@ -955,6 +965,7 @@ class StationPointsAlgorithm(ProjectSettingsAlgorithm):
             fields.append(
                 QgsField(n, FIELD_DOUBLE if n != "alignment" else FIELD_STRING, len=254)
             )
+        fields.append(QgsField("station_label", FIELD_STRING, len=254))
         sink, dest = _sink(self, p, c, fields, QgsWkbTypes.Type.Point)
         interval = self.parameterAsDouble(p, "INTERVAL", c)
         for name, desc, sta0, sta1, parts, _, distances in _alignment_parts(
@@ -997,12 +1008,14 @@ class StationPointsAlgorithm(ProjectSettingsAlgorithm):
                 f.setGeometry(
                     QgsGeometry.fromPointXY(QgsPointXY(float(xy[0]), float(xy[1])))
                 )
-                f.setAttributes([name, station, bearing])
+                f.setAttributes([name, station, bearing, station_text(station, document.horizontal_unit)])
                 sink.addFeature(f)
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "station_points")
         return {"OUTPUT": dest}
 
 
+class CrossSectionsAlgorithm(StyledAlgorithm):
 class CrossSectionsAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return CrossSectionsAlgorithm()
@@ -1215,6 +1228,8 @@ class CrossSectionsAlgorithm(ProjectSettingsAlgorithm):
         transformed_bounds.report(fb)
         attach_post_processor(c, dest, source_path=path)
         attach_post_processor(c, point_dest, source_path=path)
+        self.set_output_style(dest, "cross_sections")
+        self.set_output_style(point_dest, "section_points")
         return {
             "OUTPUT": dest,
             "POINTS": point_dest or "",
@@ -1222,6 +1237,7 @@ class CrossSectionsAlgorithm(ProjectSettingsAlgorithm):
         }
 
 
+class GenericLinesAlgorithm(StyledAlgorithm):
 class GenericLinesAlgorithm(ProjectSettingsAlgorithm):
     MODE = "FEATURE"
 
@@ -1365,6 +1381,7 @@ class GenericLinesAlgorithm(ProjectSettingsAlgorithm):
             )
         transformed_bounds.report(fb)
         attach_post_processor(c, dest, source_path=path)
+        self.set_output_style(dest, "feature_lines" if self.mode == "FEATURE" else "breaklines")
         return {"OUTPUT": dest}
 
 
