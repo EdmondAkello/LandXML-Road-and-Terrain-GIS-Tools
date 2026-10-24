@@ -10,6 +10,30 @@ from __future__ import annotations
 
 from bisect import bisect_left
 import math
+import re
+
+from .quantity_units import LINEAR_UNITS
+
+
+def parse_station(text, horizontal_unit=None):
+    """Parse numeric or signed engineering stationing in declared source units."""
+    match = re.fullmatch(r"([+-]?)([0-9]+)\s*\+\s*([0-9]+(?:\.[0-9]*)?|\.[0-9]+)", text.strip())
+    if match:
+        unit = (horizontal_unit or "").lower()
+        if unit not in LINEAR_UNITS and unit != "kilometre":
+            raise ValueError("Engineering station input requires declared horizontal units; enter a numeric station instead.")
+        base = 100 if unit in {"foot", "internationalfoot", "ussurveyfoot"} else 1000
+        minor = float(match[3])
+        if minor >= base:
+            raise ValueError(f"Station value after '+' must be less than {base}.")
+        station = float(match[2]) * base + minor
+        if match[1] == "-":
+            station = -station
+    else:
+        station = float(text)
+    if not math.isfinite(station):
+        raise ValueError("Station must be a finite number.")
+    return station
 
 
 class StationedPolyline:
