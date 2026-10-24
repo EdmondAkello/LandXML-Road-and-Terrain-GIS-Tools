@@ -42,7 +42,7 @@ from ..landxml.common import descendants
 from ..landxml.geometry import read_alignments
 from ..landxml.parser import load_document
 from ..landxml.reports import station_label
-from ..landxml.stationing import StationedPolyline
+from ..landxml.stationing import StationedPolyline, parse_station
 from ..processing_common import coordinate_choices, coordinate_param
 
 
@@ -85,8 +85,9 @@ class StationOffsetDock(QgsDockWidget):
         self.method_combo.addItem("Choose coordinate interpretation…", None)
         for index, label in enumerate(METHODS):
             self.method_combo.addItem(label, index)
-        self.method_combo.setToolTip(coordinate_param("METHOD", METHODS).help())
-        form.addRow("Coordinate interpretation", self.method_combo)
+        coordinate = coordinate_param("METHOD", METHODS)
+        self.method_combo.setToolTip(coordinate.help())
+        form.addRow(coordinate.description(), self.method_combo)
         self.output_crs = QgsProjectionSelectionWidget()
         self.source_crs = QgsProjectionSelectionWidget()
         for widget in (self.output_crs, self.source_crs):
@@ -110,7 +111,7 @@ class StationOffsetDock(QgsDockWidget):
             self.numbers[key] = spin
             form.addRow(label, spin)
         self.station_edit = QLineEdit()
-        self.station_edit.setPlaceholderText("Numeric station in source units")
+        self.station_edit.setPlaceholderText("Numeric or engineering station (e.g. 803+19.359 ft)")
         self.offset_edit = QLineEdit("0")
         form.addRow("Station", self.station_edit)
         form.addRow("Offset (− left / + right)", self.offset_edit)
@@ -223,8 +224,7 @@ class StationOffsetDock(QgsDockWidget):
                 raise ValueError("Map position must have finite coordinates.")
             station, offset, distance = self.polyline.locate(point.x(), point.y())
             self.show_position(station, offset / self.offset_scale)
-            self.station_edit.setText(f"{station:.9f}")
-            self.offset_edit.setText(f"{offset / self.offset_scale:.9f}")
+            self.offset_edit.setText(f"{offset / self.offset_scale:.3f}")
             # Beyond endpoints the perpendicular offset differs from distance.
             self.result_label.setText(
                 self.result_label.text() + f"; nearest distance {distance / self.offset_scale:.3f}"
@@ -234,7 +234,9 @@ class StationOffsetDock(QgsDockWidget):
 
     def locate_entered(self):
         try:
-            station, offset = float(self.station_edit.text()), float(self.offset_edit.text())
+            unit = self.document.horizontal_unit if self.document else None
+            station = parse_station(self.station_edit.text(), unit)
+            offset = float(self.offset_edit.text())
             if not all(math.isfinite(v) for v in (station, offset)):
                 raise ValueError("Station and offset must be finite numbers.")
             self.prepare()
@@ -269,9 +271,10 @@ class StationOffsetDock(QgsDockWidget):
             marker.show()
         side = "right" if offset > 0 else "left" if offset < 0 else "on alignment"
         unit = self.document.horizontal_unit or "undeclared source units"
-        label = station_label(station, unit) if self.document.horizontal_unit else f"{station:.3f}"
+        label = station_label(station, unit, decimals=3) if self.document.horizontal_unit else f"{station:.3f}"
+        self.station_edit.setText(label)
         self.result_label.setText(
-            f"Station {label} ({station:.3f}); offset {offset:+.3f} {side}; units: {unit}"
+            f"Station {label}; offset {offset:+.3f} {side}; units: {unit}"
         )
         return points[1]
 

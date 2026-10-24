@@ -16,19 +16,19 @@ GROUND_COLOR = "#8c5a2b"
 DESIGN_COLOR = "#1f5fbf"
 
 
-def station_label(station, horizontal_unit=None):
+def station_label(station, horizontal_unit=None, decimals=2):
     """Format 1234.5 as 1+234.50 (metric) or 12+34.50 (feet/undeclared)."""
     if station is None or not math.isfinite(station):
         return ""
     unit = (horizontal_unit or "").lower()
     base = 1000 if unit in {"meter", "metre", "kilometer", "kilometre", "millimeter", "centimeter"} else 100
     width = 3 if base == 1000 else 2
-    rounded = round(station, 2)
+    rounded = round(station, decimals)
     sign = "-" if rounded < 0 else ""
     rounded = abs(rounded)
     major = math.floor(rounded / base + 1e-12)
     minor = rounded - major * base
-    return f"{sign}{major}+{minor:0{width + 3}.2f}"
+    return f"{sign}{major}+{minor:0{width + decimals + 1}.{decimals}f}"
 
 
 def write_csv(path, header, rows):

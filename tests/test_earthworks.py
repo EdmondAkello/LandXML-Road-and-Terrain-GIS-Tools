@@ -55,7 +55,7 @@ from landxml_plugin.landxml.reports import (
     station_label,
 )
 from landxml_plugin.landxml.sections import read_cross_sections
-from landxml_plugin.landxml.stationing import StationedPolyline
+from landxml_plugin.landxml.stationing import StationedPolyline, parse_station
 
 CORRIDOR = FIXTURES / "civil3d" / "corridor_synthetic.xml"
 CIVIL3D = FIXTURES / "civil3d" / "road_minimal.xml"
@@ -101,6 +101,34 @@ class QuantityUnitTests(unittest.TestCase):
 
 
 class StationingTests(unittest.TestCase):
+    def test_numeric_and_engineering_station_input(self):
+        for text, unit, expected in (
+            ("803+19.359", "USSurveyFoot", 80319.359),
+            ("50+25.123", "foot", 5025.123),
+            ("50 + 25.123", "internationalFoot", 5025.123),
+            ("1+025.359", "meter", 1025.359),
+            ("-1+025.359", "metre", -1025.359),
+            ("-0+025.359", "meter", -25.359),
+            ("+1+025.359", "meter", 1025.359),
+            (" 1025.359 ", None, 1025.359),
+            ("1e+3", None, 1000),
+        ):
+            with self.subTest(text=text, unit=unit):
+                self.assertAlmostEqual(parse_station(text, unit), expected)
+        for text, unit in (
+            ("1+25", None), ("1+25", "degree"), ("1+100", "foot"),
+            ("1+1000", "meter"), ("1++25", "meter"), ("1+-25", "meter"),
+            ("1.5+25", "meter"), ("nan", "meter"), ("inf", "meter"),
+        ):
+            with self.subTest(text=text, unit=unit), self.assertRaises(ValueError):
+                parse_station(text, unit)
+
+    def test_three_decimal_station_labels(self):
+        self.assertEqual(station_label(80319.359468623, "USSurveyFoot", decimals=3), "803+19.359")
+        self.assertEqual(station_label(1999.9996, "meter", decimals=3), "2+000.000")
+        self.assertEqual(station_label(-0.001, "meter", decimals=3), "-0+000.001")
+        self.assertEqual(station_label(5025.123, "foot"), "50+25.12")
+
     def test_locator_circle_and_spiral_against_independent_geometry(self):
         records, warnings = read_alignments(str(FIXTURES / "generic" / "station_locator.xml"), 0.1)
         self.assertTrue(any("Unsupported" in warning for warning in warnings))
