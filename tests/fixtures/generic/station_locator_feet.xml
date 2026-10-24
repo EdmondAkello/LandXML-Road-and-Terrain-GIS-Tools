@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LandXML xmlns="urn:synthetic:vendor:landxml" version="1.2">
+  <Units><Imperial linearUnit="USSurveyFoot"/></Units>
+  <Alignments><Alignment name="Feet" staStart="5000" length="100">
+    <CoordGeom><Line><Start>3000000 10000000</Start><End>3000100 10000000</End></Line></CoordGeom>
+  </Alignment></Alignments>
+</LandXML>

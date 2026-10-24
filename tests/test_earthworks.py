@@ -101,6 +101,41 @@ class QuantityUnitTests(unittest.TestCase):
 
 
 class StationingTests(unittest.TestCase):
+    def test_locator_circle_and_spiral_against_independent_geometry(self):
+        records, warnings = read_alignments(str(FIXTURES / "generic" / "station_locator.xml"), 0.1)
+        self.assertTrue(any("Unsupported" in warning for warning in warnings))
+        records = {record["name"]: record for record in records}
+        circle = StationedPolyline.from_alignment(records["Circle"])
+        self.assertAlmostEqual(circle.station_end, 2000 + 50 * math.pi)
+        for fraction in (0.1, 0.375, 0.8):
+            angle = fraction * math.pi / 2
+            station = 2000 + 100 * angle
+            for offset in (-5, 0, 5):
+                point = ((100 + offset) * math.cos(angle), (100 + offset) * math.sin(angle))
+                found, signed, _distance = circle.locate(*point)
+                self.assertAlmostEqual(found, station, delta=0.005)
+                self.assertAlmostEqual(signed, offset, delta=0.001)
+                self.assertLess(math.dist(circle.point_at(station, offset), point), 0.003)
+        spiral = StationedPolyline.from_alignment(records["Spiral"])
+        self.assertEqual(spiral.station_end, 3100)
+        # Independent Simpson integration of the analytic clothoid tangent.
+        for distance in (25, 50, 75):
+            count = 10000
+            step = distance / count
+            x = y = 0.0
+            for i in range(count + 1):
+                theta = (i * step) ** 2 / 40000
+                weight = 1 if i in (0, count) else 4 if i % 2 else 2
+                x += weight * math.cos(theta) * step / 3
+                y += weight * math.sin(theta) * step / 3
+            theta = distance ** 2 / 40000
+            for offset in (-5, 0, 5):
+                point = (x + math.sin(theta) * offset, y - math.cos(theta) * offset)
+                found, signed, _distance = spiral.locate(*point)
+                self.assertAlmostEqual(found, 3000 + distance, delta=0.003)
+                self.assertAlmostEqual(signed, offset, delta=0.001)
+                self.assertLess(math.dist(spiral.point_at(3000 + distance, offset), point), 0.003)
+
     def test_vertex_distances_use_arc_length(self):
         road, _ = read_alignments(str(CIVIL3D), segment_length=1)
         distances = road[0]["vertex_distances"]

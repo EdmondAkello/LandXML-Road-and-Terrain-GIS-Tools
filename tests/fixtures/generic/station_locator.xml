@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LandXML xmlns="urn:synthetic:vendor:landxml" version="1.2">
+  <Units><Metric linearUnit="meter"/></Units>
+  <Alignments>
+    <Alignment name="Tangent" staStart="1000" length="100">
+      <CoordGeom><Line><Start>500000 4500000</Start><End>500100 4500000</End></Line></CoordGeom>
+    </Alignment>
+    <Alignment name="Circle" staStart="2000" length="157.07963267948966">
+      <CoordGeom><Curve radius="100" length="157.07963267948966" rot="cw">
+        <Start>100 0</Start><Center>0 0</Center><End>0 100</End>
+      </Curve></CoordGeom>
+    </Alignment>
+    <Alignment name="Spiral" staStart="3000" length="100">
+      <CoordGeom><Spiral spiType="clothoid" length="100" radiusStart="INF" radiusEnd="200" rot="cw">
+        <Start>0 0</Start><PI>50 0</PI><End>99.37680584295895 8.296204853709495</End>
+      </Spiral></CoordGeom>
+    </Alignment>
+    <Alignment name="No station">
+      <CoordGeom><Line><Start>0 0</Start><End>100 0</End></Line></CoordGeom>
+    </Alignment>
+    <Alignment name="Station equation" staStart="0">
+      <StaEquation staInternal="50" staBack="50" staAhead="100"/>
+      <CoordGeom><Line><Start>0 0</Start><End>100 0</End></Line></CoordGeom>
+    </Alignment>
+    <Alignment name="Unsupported" staStart="0">
+      <CoordGeom><Spiral spiType="bloss" length="100"><Start>0 0</Start><End>100 0</End></Spiral></CoordGeom>
+    </Alignment>
+    <Alignment name="Disconnected" staStart="0">
+      <CoordGeom>
+        <Line><Start>0 0</Start><End>10 0</End></Line>
+        <Line><Start>20 0</Start><End>30 0</End></Line>
+      </CoordGeom>
+    </Alignment>
+  </Alignments>
+</LandXML>
