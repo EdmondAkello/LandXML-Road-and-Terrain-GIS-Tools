@@ -31,7 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE = "landxml_tin_to_geotiff"
 
 EXCLUDE_PREFIXES = ("tests/", "tools/", "docs/", "examples/", "dist/", ".")
-EXCLUDE_FILES = {"HISTORY.md"}
+EXCLUDE_FILES = {"HISTORY.md", "AGENTS.md"}
 
 REQUIRED_METADATA = ("name", "description", "version", "qgisMinimumVersion", "author", "email", "about", "tracker", "repository")
 
