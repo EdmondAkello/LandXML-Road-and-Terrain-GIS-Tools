@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- `AGENTS.md` is kept out of the release ZIP; it is for contributors' coding agents, not plugin users.
 - Contribution instructions define patch, minor and major version bumps, require a new version for each delivered runtime update, and require consistent release metadata and rebuilt ZIPs.
 
 ## 1.10.0 — 2026-10-24

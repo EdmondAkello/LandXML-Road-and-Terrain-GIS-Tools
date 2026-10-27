@@ -24,9 +24,10 @@ class ReleaseTests(unittest.TestCase):
             module.write_text("VOLUME_UNIT = 'CY'\n", encoding="utf-8")
             (root / "private").mkdir()
             (root / "private" / "notes.txt").write_text("excluded", encoding="utf-8")
+            (root / "AGENTS.md").write_text("contributor instructions", encoding="utf-8")
             (root / "tests").mkdir()
             (root / "tests" / "test_example.py").write_text("excluded", encoding="utf-8")
-            subprocess.run(["git", "add", ".gitignore", "metadata.txt"], cwd=root, check=True)
+            subprocess.run(["git", "add", ".gitignore", "metadata.txt", "AGENTS.md"], cwd=root, check=True)
             with patch.object(build_release, "ROOT", str(root)):
                 archive = build_release.build(str(root / "dist"))
             with zipfile.ZipFile(archive) as zipped:
