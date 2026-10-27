@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+### Changed
+- Contribution instructions define patch, minor and major version bumps, require a new version for each delivered runtime update, and require consistent release metadata and rebuilt ZIPs.
+
+## 1.10.0 — 2026-10-24
+
 ### Added
+- Interactive **Station & Offset Locator** dock with LandXML alignment selection, arbitrary map clicks, signed left/right offsets, alignment/position markers and manual station/offset lookup. Reuses true-distance stationing for sampled tangents, circular curves and clothoids; supports the existing explicit coordinate operations and CRS/unit validation, preserves source station/offset units, and works with QGIS 3.44 and QGIS 4. Unsupported station equations and missing start stations are reported. Issue #29.
 - Complete Road Design has a **Load exported layers into the project** checkbox, enabled by default. Successful exports queue the generated GeoPackage layers, retained DEMs and contours for QGIS Processing to load into the run's project, with source XML links for the Profile Viewer. Disabling the option exports files only. Temporary DEMs, disabled outputs, failed/cancelled runs and runs without a project do not add layers. Part of issue #22.
 - Each tool dialog remembers its last successful inputs (files, alignment, surface and profile names, units, intervals, coordinate settings and criteria) in the current QGIS project, restored when the project is reopened. Explicit inputs from Processing history take precedence; outputs and the Prepare LandXML confirmation are not remembered; scripts, models and batch runs keep their normal defaults. Issue #21.
 - Shared road-review presets for complete-package and individual vector outputs, with role-based existing/design/datum colors where attributes support them, station and profile labels, and index/minor contour styling. Default vector styles are embedded in GeoPackages after sinks close, so they persist when reopening or sharing the file, including file-only exports. Memory outputs receive the same presentation. Existing earthworks styling is preserved; geometry, units and quantities are unchanged. Issue #25.
@@ -12,6 +18,8 @@
 - Station-point presets use a persisted `station_label` field with source-unit stationing (feet: `50+00`; metres: `5+000`) and omit `.00` on whole stations. Unknown units stay numeric. Contour labels omit unnecessary decimal zeros while retaining fractional elevations; existing-ground minor contours are brown/dashed, proposed/design contours blue/solid, and minor lines are thicker for contrast.
 
 ### Fixed
+- Station & Offset Locator uses the shared **Coordinate interpretation (OpenRoads: usually Swap X / Y)** label and help text to match the Processing tools. Issue #29.
+- Station & Offset Locator accepts engineering station input with `+` (feet: `803+19.359`; metric: `1+025.359`). Station fields and results always use engineering notation after map clicks and manual lookup when source units are declared. Stations and clicked offsets show three decimal places while markers retain calculation precision. Issue #29.
 - Terrain names from prepared LandXML use the original surface name preserved in `LandXMLTools.Prepare` metadata instead of generated `Prepared …` labels. Role wording already present in the surface name is not repeated. The preserved source filename also supplies role evidence, so an explicitly named finished-surface export can refine a proposed role to finished grade; datum surfaces remain distinct.
 - Processing's no-argument layer-registry refresh callback now works with LandXML name dropdowns and preserves their selected value, preventing the reported missing-argument Python error.
 - Main could not load after #24 and #26 were merged: conflicting class lines were both kept in `road_features.py` and `complete_export.py`, and the alignment tool lost its default style. Each tool now has both the remembered inputs and the default styles, and CI byte-compiles every module and rejects merge-conflict markers. Issue #27.

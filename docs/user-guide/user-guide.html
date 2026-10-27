@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LandXML Road &amp; Terrain GIS Tools 1.9.2 — User Guide and Technical Manual</title>
+<title>LandXML Road &amp; Terrain GIS Tools 1.10.0 — User Guide and Technical Manual</title>
 <style>
 :root {
   --ink: #1d2330; --muted: #5b6575; --line: #d9dee7; --soft: #f4f6f9;
@@ -125,7 +125,7 @@ a { color: var(--accent); }
 <section class="cover">
   <div class="hero"></div>
   <div class="text">
-    <div class="kicker">QGIS plugin · Version 1.9.2</div>
+    <div class="kicker">QGIS plugin · Version 1.10.0</div>
     <h1>LandXML Road &amp; Terrain GIS Tools</h1>
     <div class="sub">User Guide and Technical Manual</div>
     <div class="meta">
@@ -135,7 +135,7 @@ a { color: var(--accent); }
       <b>Repository</b><span>github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools</span>
       <b>QGIS</b><span>3.44 to 4.x (Qt5 and Qt6 builds)</span>
       <b>DOI</b><span>10.5281/zenodo.23402501 (Zenodo, all versions)</span>
-      <b>Cite as</b><span>Akello, E. and Winstead, C. (2026). <i>LandXML Road &amp; Terrain GIS Tools</i> (version 1.9.2) [Software]. Zenodo. https://doi.org/10.5281/zenodo.23402501</span>
+      <b>Cite as</b><span>Akello, E. and Winstead, C. (2026). <i>LandXML Road &amp; Terrain GIS Tools</i> (version 1.10.0) [Software]. Zenodo. https://doi.org/10.5281/zenodo.23402501</span>
       <b>Licence</b><span>GNU General Public License v2 or later</span>
       <b>Edition</b><span>October 2026</span>
     </div>
@@ -384,6 +384,18 @@ a { color: var(--accent); }
   <figcaption><b>Figure 3.</b> The Cross-sections tab follows the profile marker: here an embankment at CH 1+240 with 1:2 slopes, the pavement layers, daylight offsets, FRL and EG levels, and the fill area. ◀ ▶ step through sections; vertical exaggeration and export are on the same row.</figcaption>
 </figure>
 <p>Layers created by the plugin remember their LandXML file in the QGIS project, so clicking them opens the right file. For other layers the viewer asks for the file once.</p>
+
+<h3 id="station-locator">Interactive Station &amp; Offset Locator</h3>
+<p>Open <b>Plugins → LandXML Road &amp; Terrain → Station &amp; Offset Locator</b>. This separate dock can be moved or floated in QGIS 3.44 and QGIS 4. Open the imported LandXML file and select its alignment. Explicitly choose the same <b>Coordinate interpretation (OpenRoads: usually Swap X / Y)</b>, output CRS, shifts, rotation, scale and source CRS used for import; these are not inferred from the layer or map. Verify a known control point.</p>
+<ol>
+  <li>Press <b>Click map</b> and click anywhere. The dock displays station, signed perpendicular offset and nearest distance. Negative offsets are left and positive offsets are right, facing increasing station.</li>
+  <li>The red circle marks the corresponding alignment point; the blue cross marks the station/offset position. Beyond endpoints, station is clamped and nearest distance includes the distance beyond the endpoint; the perpendicular offset does not.</li>
+  <li>Enter a numeric station or engineering notation with a plus separator, and a signed offset, then press <b>Locate station / offset</b>. For feet, <code>803+19.359</code> means <code>80319.359</code>; for metric source units, <code>1+025.359</code> means <code>1025.359</code>. A leading minus applies to the whole station. Engineering notation requires declared horizontal units; otherwise enter a numeric station. Out-of-range stations and non-finite inputs are rejected.</li>
+  <li>The station field and result always display <b>engineering notation with three decimal places</b> after map clicks and manual lookup, including when a plain number was entered. Clicked offsets also show three decimals. Without declared horizontal units, stations stay numeric. Marker coordinates retain calculation precision.</li>
+  <li>Choose another map tool or close the dock to stop picking. Closing hides the markers; changing alignment or coordinate settings invalidates old results. Clearing the project clears the loaded file.</li>
+</ol>
+<p>Stations and offsets use source horizontal units, with no implicit conversion between metres, feet or US survey feet. Helmert scaling affects map geometry but preserves source station/offset values. With reprojection, calculations use the projected source CRS and markers are transformed into the map CRS. Geographic calculation CRSs are rejected. Undeclared units are labelled; elevations and vertical datums are not changed.</p>
+<p>Tangents, circular curves and declared clothoids use the shared stationing helper with true source distances, so chord lengths do not accumulate into stationing error. Position and direction are interpolated on sampled geometry. <b>Maximum curve segment</b> defaults to 0.1 source units; reduce it for tight curves or large offsets. Accuracy depends on this sampling and source geometry. Missing start stations, station equations, duplicate names, disconnected geometry and unsupported spiral types are reported rather than guessed.</p>
 
 <h2 id="cutfill"><span class="sec">13</span>Profile Cut/Fill Analysis</h2>
 <p><b>Earthwork reporting units (all three quantity tools).</b> Choose <b>Volume units</b>: Automatic (default), Cubic yards (CY), Cubic feet (CF), or Cubic metres (m³). Automatic uses CY for foot-based projects and m³ for metric projects. An explicit choice converts all cut, fill, net, material volumes and mass-haul ordinates into that unit, regardless of the input unit system. Report labels update to match; interval and footprint tables include <code>volume_unit</code>, and corridor/surface Processing results include <code>VOLUME_UNIT</code>. Numeric volume field names are unchanged, but values follow the selection: regenerate older reports and tables. Lengths, depths and areas retain their coordinate units; depth rasters are not converted to volume units.</p>

@@ -19,6 +19,7 @@ class LandXMLTinToGeoTIFFPlugin:
         self.iface = iface
         self.provider = None
         self.viewer = None
+        self.locator = None
         self.actions = []
 
     def initGui(self):
@@ -34,7 +35,10 @@ class LandXMLTinToGeoTIFFPlugin:
         pick_action = QAction(icon, "Pick Alignment Profile on Map", self.iface.mainWindow())
         pick_action.setToolTip("Click an alignment in the map to open its long-section at that station")
         pick_action.triggered.connect(self.pick_on_map)
-        for action in (viewer_action, pick_action):
+        locator_action = QAction(icon, "Station && Offset Locator", self.iface.mainWindow())
+        locator_action.setToolTip("Locate map clicks or entered station/offset positions along a LandXML alignment")
+        locator_action.triggered.connect(self.show_locator)
+        for action in (viewer_action, pick_action, locator_action):
             self.iface.addPluginToMenu(MENU, action)
             self.actions.append(action)
         self.iface.addToolBarIcon(pick_action)
@@ -55,12 +59,27 @@ class LandXMLTinToGeoTIFFPlugin:
     def pick_on_map(self):
         self._ensure_viewer().pick_button.setChecked(True)
 
+    def show_locator(self):
+        if self.locator is None:
+            from .gui.station_locator import StationOffsetDock
+
+            self.locator = StationOffsetDock(self.iface, self.iface.mainWindow())
+            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.locator)
+        self.locator.show()
+        self.locator.raise_()
+
     def unload(self):
         for action in self.actions:
             if self.iface is not None:
                 self.iface.removePluginMenu(MENU, action)
                 self.iface.removeToolBarIcon(action)
         self.actions = []
+        if self.locator is not None:
+            if not sip.isdeleted(self.locator):
+                self.locator.cleanup()
+                self.iface.removeDockWidget(self.locator)
+                self.locator.deleteLater()
+            self.locator = None
         if self.viewer is not None:
             if not sip.isdeleted(self.viewer):
                 self.viewer.cleanup()
