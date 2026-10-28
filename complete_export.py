@@ -35,6 +35,22 @@ from .styles import PRESETS, StyledAlgorithm, station_text
 from .processing_common import attach_post_processor, resolve_name
 
 
+# Drawing order when the package is loaded (higher is drawn on top): terrain
+# rasters at the bottom, then areas, contours, lines, the alignment, points.
+ORDER_RASTER, ORDER_POLYGON, ORDER_CONTOURS, ORDER_LINE, ORDER_ALIGNMENT, ORDER_POINT = range(6)
+
+
+def _layer_order(name, geometry_type):
+    flat = ogr.GT_Flatten(geometry_type)
+    if flat in (ogr.wkbPoint, ogr.wkbMultiPoint):
+        return ORDER_POINT
+    if flat in (ogr.wkbPolygon, ogr.wkbMultiPolygon):
+        return ORDER_POLYGON
+    if name.startswith("alignment") or name.startswith("centerline"):
+        return ORDER_ALIGNMENT
+    return ORDER_LINE
+
+
 def _ogr_srs(crs):
     s = osr.SpatialReference()
     s.ImportFromWkt(crs.toWkt())
@@ -922,27 +938,29 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                         cds = None
                         self.set_output_style(contour + "|layername=contours", "contours",
                                               self.parameterAsDouble(p, "CONTOUR_INTERVAL", c), surface_name=surface_name)
-                        terrain_outputs.append((contour + "|layername=contours", terrain_name + "_Contours", QgsProcessingUtils.LayerHint.Vector))
+                        terrain_outputs.append((contour + "|layername=contours", terrain_name + "_Contours", QgsProcessingUtils.LayerHint.Vector, ORDER_CONTOURS))
                     if not flags["INCLUDE_DEM"]:
                         os.remove(dem)
                     else:
-                        terrain_outputs.append((dem, terrain_name + "_DEM", QgsProcessingUtils.LayerHint.Raster))
+                        terrain_outputs.append((dem, terrain_name + "_DEM", QgsProcessingUtils.LayerHint.Raster, ORDER_RASTER))
         for index in range(ds.GetLayerCount()):
             name = ds.GetLayer(index).GetName()
             if name in PRESETS:
                 self.set_output_style(gpkg + "|layername=" + name, name)
         package_outputs = [
             (gpkg + "|layername=" + ds.GetLayer(index).GetName(),
-             base + "_GIS — " + ds.GetLayer(index).GetName(), QgsProcessingUtils.LayerHint.Vector)
+             base + "_GIS — " + ds.GetLayer(index).GetName(), QgsProcessingUtils.LayerHint.Vector,
+             _layer_order(ds.GetLayer(index).GetName(), ds.GetLayer(index).GetGeomType()))
             for index in range(ds.GetLayerCount())
         ]
         ds = None
         if fb.isCanceled():
             raise QgsProcessingException("Complete export cancelled.")
         if self.parameterAsBoolean(p, "LOAD_OUTPUTS", c) and c.project() is not None:
-            for uri, name, hint in package_outputs + terrain_outputs:
+            for uri, name, hint, order in package_outputs + terrain_outputs:
                 details = QgsProcessingContext.LayerDetails(name, c.project(), "", hint)
                 details.forceName = True
+                details.layerSortKey = order  # higher keys are drawn over lower ones
                 c.addLayerToLoadOnCompletion(uri, details)
                 attach_post_processor(c, uri, source_path=path)
         return {"OUTPUT_DIR": out}
