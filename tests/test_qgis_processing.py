@@ -484,6 +484,17 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertIn("corridor_synthetic_Design_Contours", names)
             for layer in layers:
                 self.assertEqual(layer.customProperty("landxml/source_path"), CORRIDOR)
+            # Drawing order (top of the layer tree first): points, then the
+            # alignment and other lines, contours, and the DEMs at the bottom.
+            order = [layer.name() for layer in project.layerTreeRoot().layerOrder()]
+            rank = {name: i for i, name in enumerate(order)}
+            dems = [name for name in order if name.endswith("_DEM")]
+            contours = [name for name in order if name.endswith("_Contours")]
+            self.assertTrue(dems and contours)
+            self.assertLess(max(rank[name] for name in contours), min(rank[name] for name in dems))
+            self.assertLess(rank["corridor_synthetic_GIS — alignments"], min(rank[name] for name in contours))
+            self.assertLess(rank["corridor_synthetic_GIS — station_points"], rank["corridor_synthetic_GIS — alignments"])
+            self.assertEqual(order[-len(dems):], dems)
             project.clear()
 
     def test_complete_export_map_loading_can_be_disabled_or_have_no_project(self):
