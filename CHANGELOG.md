@@ -7,7 +7,7 @@
 
 ### Changed
 - `AGENTS.md` is kept out of the release ZIP; it is for contributors' coding agents, not plugin users.
-- Contribution instructions define patch, minor and major version bumps, require a new version for each delivered runtime update, and require consistent release metadata and rebuilt ZIPs.
+- Contribution instructions use branches in the main repository for collaborators, require both CI checks, an up-to-date branch and Edmond's approval, and reserve version tags and releases for Edmond. Feature PRs keep changelog entries under `Unreleased` without changing version numbers or release dates; release preparation retains semantic versioning and consistent metadata checks.
 
 ## 1.10.0 — 2026-10-24
 

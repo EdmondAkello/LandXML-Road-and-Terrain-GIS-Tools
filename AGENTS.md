@@ -2,19 +2,24 @@
 
 - Open an issue for each feature before starting implementation.
 - Submit one pull request per feature, linked to its issue. Keep unrelated features in separate pull requests to make review easier.
-- Work on a branch in the fork and target upstream `main`. Open an issue for any other change beyond a small fix.
+- Collaborators with write access work on feature branches in Edmond's repository (`origin`); a fork is not required. Target `main` in pull requests. Open an issue for any other change beyond a small fix.
+- `main` is protected: all changes go through pull requests. Both CI checks must pass, the branch must be up to date with `main`, and each PR needs one approval from Edmond before merging. Do not push changes directly to `main`.
+- If GitHub reports a merge conflict, update the feature branch from `origin/main` locally, resolve the conflicts, and re-run the tests before pushing the updated branch.
 - Explain what changed and why in the PR, link the issue with `Closes #...`, and report validation results.
-- Update `CHANGELOG.md` with each change. Also update the README and user guide to reflect affected behavior.
+- Update `CHANGELOG.md` under `Unreleased` with each change. Also update the README and user guide to reflect affected behavior.
 
-## Versioning
+## Versioning and releases
 
-- Before delivering an updated plugin or release ZIP, bump the version using semantic versioning (`MAJOR.MINOR.PATCH`). Choose the bump from user impact and compatibility, rather than the number of changed lines.
+- Edmond manages releases and version tags unless he explicitly delegates them. Do not create release tags or publish GitHub or QGIS releases as part of feature work.
+- Publishing a GitHub release automatically creates a permanent Zenodo version carrying the plugin's DOI and citation; these versions cannot be deleted. Coordinate releases with Edmond to keep QGIS, the changelog and Zenodo in step.
+- Leave version numbers and release dates unchanged in feature PRs, including in `metadata.txt` and `CITATION.cff`. Keep changelog entries under `Unreleased` and plan releases with Edmond through a release roadmap rather than releasing per PR.
+- Users can build from `main` when needed; a development build does not require a new version, tag or published release.
+- For a release coordinated with Edmond, use semantic versioning (`MAJOR.MINOR.PATCH`). Choose the bump from user impact and compatibility, rather than the number of changed lines.
 - **Patch** (for example, `1.10.0` → `1.10.1`): compatible bug fixes, small UI corrections, or internal improvements.
 - **Minor** (for example, `1.10.0` → `1.11.0`): new features or substantial enhancements that preserve existing supported workflows.
 - **Major** (for example, `1.10.0` → `2.0.0`): incompatible changes, such as removing a Processing algorithm, renaming parameters used by saved models, removing output fields used by scripts, or changing established station/offset meanings. Explain the migration in the changelog and user guide.
-- Use one version for intermediate edits within the same undelivered release. Once a plugin ZIP has been delivered, give any subsequent runtime update a new version. Documentation-only or contributor-instruction changes do not require a plugin version bump.
-- Keep `metadata.txt` (version and changelog), `CITATION.cff` (version and release date), `CHANGELOG.md`, and current README/user-guide version references consistent. Keep historical release references intact, and identify older PDF editions explicitly.
-- Rebuild with `python tools/build_release.py`, confirm the ZIP filename and embedded metadata use the new version, and report validation results before delivery.
+- During coordinated release preparation, keep `metadata.txt` (version and changelog), `CITATION.cff` (version and release date), `CHANGELOG.md`, and current README/user-guide version references consistent. Keep historical release references intact, and identify older PDF editions explicitly.
+- When a plugin ZIP is requested, build with `python tools/build_release.py`, confirm the ZIP filename and embedded metadata match the intended version, and report validation results before delivery. Building a ZIP does not authorize tagging or publishing a release.
 
 ## Upstream contribution rules
 
