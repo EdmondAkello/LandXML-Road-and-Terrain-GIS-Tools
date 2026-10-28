@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- GitHub Actions runs the full synthetic test suite in headless QGIS 3.44.15 and 4.2.3 containers on pull requests and pushes to `main`, including Processing, preparation, GUI, project settings, styles and station/offset locator regressions. Tests use QGIS's application fixture for initialization and shutdown. The existing parser/earthworks and Bandit checks remain. Issue #35.
+
 ### Changed
 - `AGENTS.md` is kept out of the release ZIP; it is for contributors' coding agents, not plugin users.
 - Contribution instructions define patch, minor and major version bumps, require a new version for each delivered runtime update, and require consistent release metadata and rebuilt ZIPs.

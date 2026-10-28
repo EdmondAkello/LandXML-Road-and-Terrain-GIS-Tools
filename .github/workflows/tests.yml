@@ -23,6 +23,30 @@ jobs:
       - name: Run tests
         run: python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py
 
+  qgis-tests:
+    name: QGIS runtime tests (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [3.44.15-trixie, 4.2.3-trixie]
+    container: qgis/qgis:${{ matrix.image }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QGIS_PREFIX_PATH: /usr
+      PYTHONPATH: /usr/share/qgis/python:/usr/share/qgis/python/plugins
+    steps:
+      - name: Install Git for checkout and packaging tests
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git
+      - uses: actions/checkout@v4
+      - name: Report QGIS version
+        run: python3 -c "from qgis.core import Qgis; print(Qgis.QGIS_VERSION)"
+      - name: Run all tests with QGIS
+        run: python3 -m unittest discover -s tests -t . -v
+
   bandit:
     name: Bandit security scan
     runs-on: ubuntu-24.04

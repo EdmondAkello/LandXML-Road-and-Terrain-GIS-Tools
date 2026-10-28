@@ -235,12 +235,14 @@ This writes `dist/landxml_tin_to_geotiff-<version>.zip` from the working tree, i
 Run the parser and headless QGIS Processing suite from an environment with QGIS Python bindings and GDAL/OGR available:
 
 ```sh
-QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v
+QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -t . -v
 ```
 
 `tests/test_landxml.py` and `tests/test_earthworks.py` need only Python and NumPy (plus GDAL for `core.py`). `tests/test_qgis_processing.py`, `tests/test_prepare.py`, `tests/test_gui.py` and `tests/test_station_locator.py` need the QGIS bindings; the GUI tests run headless with the `offscreen` Qt platform. Locator tests cover map clicks, manual lookup, coordinate operations, metre/US survey foot values, map reprojection, invalid inputs and tool cleanup; earthworks tests independently check circular-curve and clothoid positions and stationing. Preparation tests cover split and complete exports, unit/CRS conflicts, coverage holes, repeated runs, atomic writes and downstream reports. The synthetic corridor fixture is a level-section template whose areas, volumes and slope lengths have closed-form answers.
 
 Some QGIS distributions require their bundled Python executable and environment variables. See [the compatibility audit](docs/qgis4-audit.md) for the tested runtime and coverage.
+
+GitHub Actions runs this full suite in official QGIS 3.44.15 and 4.2.3 containers on pull requests and pushes to `main`, including Processing, preparation, GUI, project settings, styles and station/offset locator tests. The separate parser/earthworks and Bandit checks also run. Headless tests do not replace the desktop checks below or verification against survey control.
 
 Manual check in QGIS 4.2.2:
 
