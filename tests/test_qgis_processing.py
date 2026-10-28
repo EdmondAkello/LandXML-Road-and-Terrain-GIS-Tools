@@ -39,6 +39,7 @@ from qgis.core import (
 )
 from osgeo import gdal, ogr
 from qgis.PyQt import sip
+from qgis.testing import start_app
 
 from landxml_plugin.landxml_tin_to_geotiff import LandXMLTinToGeoTIFFPlugin
 from landxml_plugin.provider import LandXMLTinToGeoTIFFProvider
@@ -54,11 +55,7 @@ class QgisProcessingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        cls.app = QgsApplication.instance()
-        if cls.app is None:
-            # GUI-enabled so the profile viewer tests can share this instance.
-            cls.app = QgsApplication([], True)
-            cls.app.initQgis()
+        cls.app = start_app()
         cls.provider = LandXMLTinToGeoTIFFProvider()
         cls.provider.loadAlgorithms()
         cls.algorithms = {

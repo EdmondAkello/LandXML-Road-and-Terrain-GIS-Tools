@@ -13,6 +13,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsProject
+from qgis.testing import start_app
 
 ROOT = Path(__file__).resolve().parents[1]
 if "landxml_plugin" not in sys.modules:
@@ -27,10 +28,7 @@ if "landxml_plugin" not in sys.modules:
 class ProjectSettingsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.app = QgsApplication.instance()
-        if cls.app is None:
-            cls.app = QgsApplication([], True)
-            cls.app.initQgis()
+        cls.app = start_app()
         sys.path.append(str(Path(QgsApplication.pkgDataPath()) / "python" / "plugins"))
         from landxml_plugin.provider import LandXMLTinToGeoTIFFProvider
 

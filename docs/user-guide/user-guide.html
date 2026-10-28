@@ -701,6 +701,7 @@ a { color: var(--accent); }
 <h2 id="validation"><span class="sec">29</span>Validation</h2>
 <ul>
   <li><b>Automated tests:</b> 89 tests (parser, earthworks, design review, Processing algorithms and offscreen GUI) pass on QGIS 3.44 with synthetic fixtures whose quantities have closed-form answers.</li>
+  <li><b>GitHub Actions:</b> pull requests and pushes to <code>main</code> run the full synthetic suite in headless QGIS 3.44.15 and 4.2.3 containers, including Processing, preparation, GUI, project settings, styles and station/offset locator checks. Desktop checks and verification against survey control remain necessary.</li>
   <li><b>Civil 3D volumes:</b> on two private exports, TIN-difference volumes match the volumes Civil 3D recorded in the same files to within 0.1 m³ (for example fill 1,358.8 m³ recorded, 1,359.0 m³ computed).</li>
   <li><b>Independent methods:</b> on a 16.7 km corridor, TIN difference gave 67,282 m³ of cut against 67,056 m³ from the corridor sections.</li>
   <li><b>Design review:</b> run on six private Civil 3D exports (9 short to 36 km alignments) under both standards without errors; findings were checked against the manual's tables, and the phasing fix was verified on synthetic cases.</li>

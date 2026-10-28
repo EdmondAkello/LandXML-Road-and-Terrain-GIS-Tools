@@ -17,7 +17,7 @@ A LandXML file that reproduces the problem helps most. If the design is confiden
 
 1. Open an issue first for anything beyond a small fix.
 2. Fork the repository and work on a branch (`fix/...`, `feat/...`, `docs/...`).
-3. Open a pull request against `main` that refers to the issue. CI runs the parser and earthworks tests and Bandit, and both must pass.
+3. Open a pull request against `main` that refers to the issue. CI runs the parser, earthworks and criteria-table tests, Bandit, and the full test suite in headless QGIS 3.44.15 and 4.2.3 containers. All checks should pass; Edmond manages which checks branch protection requires.
 
 ### Ground rules
 
@@ -33,7 +33,7 @@ You need Python with NumPy and GDAL (the Python that ships with QGIS works).
 
 ```bash
 python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py   # as CI runs them
-python3 -m unittest -v tests/test_qgis_processing.py tests/test_prepare.py tests/test_gui.py tests/test_project_settings.py  # need QGIS
+QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -t . -v  # full suite; needs QGIS, as in the QGIS CI jobs
 bandit -q -r . -x ./tests,./dist
 ```
 
