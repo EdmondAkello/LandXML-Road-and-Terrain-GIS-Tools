@@ -22,7 +22,6 @@ if "landxml_plugin" not in sys.modules:
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from qgis.core import (
-    QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsFeature,
     QgsGeometry,
@@ -31,22 +30,15 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapCanvas
+from qgis.testing import start_app
 from qgis.PyQt.QtCore import QRectF
 from qgis.PyQt.QtGui import QColor, QImage, QPainter
 
 CORRIDOR = str(ROOT / "tests" / "fixtures" / "civil3d" / "corridor_synthetic.xml")
 
 
-_APPLICATION = []
-
-
 def application():
-    app = QgsApplication.instance()
-    if app is None:
-        app = QgsApplication([], True)
-        app.initQgis()
-    _APPLICATION[:] = [app]  # keep a reference so it is never collected
-    return app
+    return start_app()
 
 
 class ProfileViewerTests(unittest.TestCase):
