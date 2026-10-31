@@ -10,6 +10,7 @@
 - Contribution instructions use branches in the main repository for collaborators, require both CI checks, an up-to-date branch and Edmond's approval, and reserve version tags and releases for Edmond. Feature PRs keep changelog entries under `Unreleased` without changing version numbers or release dates; release preparation retains semantic versioning and consistent metadata checks.
 
 ### Fixed
+- Complete Road Design automatically omits empty output layers when optional LandXML data or required dependencies are absent, including after alignment/surface filtering. The Processing log reports skipped outputs; unchecked options and existing invalid-data validation are preserved. Empty engineering and contour GeoPackages are not retained or loaded. Issue #39.
 - Complete Road Design: layers loaded into the project are stacked for reading. DEMs sit at the bottom, then surface boundaries, contours, other lines, the alignment and points on top. Before, the DEMs were added last and hid everything under them. Issue #37.
 
 ## 1.10.0 — 2026-10-24

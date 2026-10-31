@@ -49,6 +49,8 @@ from landxml_plugin.core import rasterize_tin, surface_difference
 OPENROADS = str(ROOT / "tests" / "fixtures" / "openroads" / "terrain_minimal.xml")
 CIVIL3D = str(ROOT / "tests" / "fixtures" / "civil3d" / "road_minimal.xml")
 CORRIDOR = str(ROOT / "tests" / "fixtures" / "civil3d" / "corridor_synthetic.xml")
+ALIGNMENTS_ONLY = str(ROOT / "tests" / "fixtures" / "generic" / "alignments_only.xml")
+COMPLETE_ROAD = str(ROOT / "tests" / "fixtures" / "generic" / "complete_road.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
@@ -428,11 +430,116 @@ class QgisProcessingTests(unittest.TestCase):
                     self.assertEqual(bool(grid_messages), bool(threshold))
                     self.assertTrue(list(Path(directory).glob("*.tif")))
 
+    def test_complete_export_only_retains_available_layers(self):
+        road_layers = {"alignments", "alignment_elements", "station_points"}
+        for source, crs, expected, rasters in (
+            (ALIGNMENTS_ONLY, "EPSG:26915", road_layers, 0),
+            (OPENROADS, "EPSG:2277", {"breaklines", "surface_boundary"}, 1),
+            (COMPLETE_ROAD, "EPSG:26915", road_layers | {
+                "profiles", "profile_controls", "centerlines_3d", "cross_sections",
+                "feature_lines", "breaklines", "surface_boundary",
+            }, 2),
+        ):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                self.context = QgsProcessingContext()
+                project = QgsProject()
+                self.context.setProject(project)
+                params = self._params(source, crs)
+                params.update(OUTPUT_DIR=directory, RESOLUTION=1, CONTOUR_INTERVAL=1)
+                self.algorithms["landxml_complete_road_design"].processAlgorithm(
+                    params, self.context, self.feedback
+                )
+                package = ogr.Open(str(Path(directory) / (Path(source).stem + "_GIS.gpkg")))
+                self.assertEqual({layer.GetName() for layer in package}, expected)
+                self.assertTrue(all(layer.GetFeatureCount() > 0 for layer in package))
+                package = None
+                queued = self.context.layersToLoadOnCompletion()
+                self.assertEqual(
+                    {uri.split("|layername=")[1] for uri in queued if "_GIS.gpkg|" in uri},
+                    expected,
+                )
+                self.assertEqual(len(list(Path(directory).glob("*.tif"))), rasters)
+                self.assertEqual(len(list(Path(directory).glob("*_Contours.gpkg"))), rasters)
+
+    def test_complete_export_availability_respects_filters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(COMPLETE_ROAD, "EPSG:26915")
+            params.update(OUTPUT_DIR=directory, ALIGNMENT="Short", SURFACE="Design",
+                          RESOLUTION=1, CONTOUR_INTERVAL=1)
+            with patch.object(self.feedback, "pushInfo") as info:
+                self.algorithms["landxml_complete_road_design"].processAlgorithm(
+                    params, self.context, self.feedback
+                )
+            package = ogr.Open(str(Path(directory) / "complete_road_GIS.gpkg"))
+            self.assertEqual({layer.GetName() for layer in package}, {
+                "alignments", "alignment_elements", "surface_boundary",
+            })
+            self.assertEqual(next(iter(package.GetLayerByName("alignments"))).GetField("name"), "Short")
+            package = None
+            messages = "\n".join(call.args[0] for call in info.call_args_list)
+            for name in ("station_points", "profiles", "centerlines_3d", "cross_sections", "feature_lines", "breaklines"):
+                self.assertIn(name, messages)
+            self.assertEqual(len(list(Path(directory).glob("*.tif"))), 1)
+
+    def test_complete_export_unchecked_outputs_stay_excluded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(COMPLETE_ROAD, "EPSG:26915")
+            params["OUTPUT_DIR"] = directory
+            for parameter in self.algorithms["landxml_complete_road_design"].parameterDefinitions():
+                if parameter.name().startswith("INCLUDE_"):
+                    params[parameter.name()] = False
+            params["INCLUDE_CENTERLINES"] = True
+            self.algorithms["landxml_complete_road_design"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            package = ogr.Open(str(Path(directory) / "complete_road_GIS.gpkg"))
+            self.assertEqual({layer.GetName() for layer in package}, {"centerlines_3d"})
+            self.assertEqual(package.GetLayer(0).GetFeatureCount(), 1)
+            package = None
+            self.assertEqual(len(list(Path(directory).iterdir())), 1)
+
+    def test_complete_export_no_available_requested_data_leaves_no_empty_package(self):
+        project = QgsProject()
+        self.context.setProject(project)
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(ALIGNMENTS_ONLY, "EPSG:26915")
+            params.update(OUTPUT_DIR=directory, INCLUDE_ALIGNMENTS=False, INCLUDE_STATIONS=False)
+            self.algorithms["landxml_complete_road_design"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            self.assertEqual(list(Path(directory).iterdir()), [])
+            self.assertEqual(self.context.layersToLoadOnCompletion(), {})
+
+    def test_complete_export_drops_empty_contours_and_keeps_dem(self):
+        project = QgsProject()
+        self.context.setProject(project)
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(OPENROADS, "EPSG:2277")
+            params.update(OUTPUT_DIR=directory, RESOLUTION=1, CONTOUR_INTERVAL=1000)
+            self.algorithms["landxml_complete_road_design"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            self.assertEqual(list(Path(directory).glob("*_Contours.gpkg")), [])
+            self.assertEqual(len(list(Path(directory).glob("*.tif"))), 1)
+            self.assertFalse(any("_Contours" in uri for uri in self.context.layersToLoadOnCompletion()))
+
+    def test_complete_export_invalid_profile_still_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "invalid.xml"
+            source.write_text(Path(COMPLETE_ROAD).read_text().replace("<PVI>0 1</PVI>", "<PVI>bad</PVI>"))
+            params = self._params(str(source), "EPSG:26915")
+            params["OUTPUT_DIR"] = str(Path(directory) / "export")
+            with self.assertRaisesRegex(QgsProcessingException, "Profile 'Design' is invalid"):
+                self.algorithms["landxml_complete_road_design"].processAlgorithm(
+                    params, self.context, self.feedback
+                )
+            self.assertEqual(self.context.layersToLoadOnCompletion(), {})
+
     def test_complete_export_descriptive_terrain_filenames(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "combined.xml"
             source.write_text(
-                Path(CORRIDOR).read_text(encoding="utf-8").replace(
+                Path(COMPLETE_ROAD).read_text(encoding="utf-8").replace(
                     '<Surface name="Design">', '<Surface name="FG Road/Top">'
                 ), encoding="utf-8",
             )
@@ -465,7 +572,7 @@ class QgisProcessingTests(unittest.TestCase):
         algorithm = self.algorithms["landxml_complete_road_design"]
         self.assertTrue(algorithm.parameterDefinition("LOAD_OUTPUTS").defaultValue())
         with tempfile.TemporaryDirectory() as directory:
-            params = self._params(CORRIDOR, "EPSG:32637")
+            params = self._params(COMPLETE_ROAD, "EPSG:32637")
             params.update(OUTPUT_DIR=directory, RESOLUTION=1, CONTOUR_INTERVAL=1)
             # Existing files in the output directory are not results of this run.
             (Path(directory) / "unrelated.tif").write_text("not an exported layer")
@@ -479,11 +586,11 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertEqual(len(layers), len(queued))
             self.assertTrue(all(layer.isValid() for layer in layers))
             names = {layer.name() for layer in layers}
-            self.assertIn("corridor_synthetic_GIS — alignments", names)
-            self.assertIn("corridor_synthetic_Existing_Ground_EG_DEM", names)
-            self.assertIn("corridor_synthetic_Design_Contours", names)
+            self.assertIn("complete_road_GIS — alignments", names)
+            self.assertIn("complete_road_Existing_Ground_EG_DEM", names)
+            self.assertIn("complete_road_Design_Contours", names)
             for layer in layers:
-                self.assertEqual(layer.customProperty("landxml/source_path"), CORRIDOR)
+                self.assertEqual(layer.customProperty("landxml/source_path"), COMPLETE_ROAD)
             # Drawing order (top of the layer tree first): points, then the
             # alignment and other lines, contours, and the DEMs at the bottom.
             order = [layer.name() for layer in project.layerTreeRoot().layerOrder()]
@@ -492,8 +599,8 @@ class QgisProcessingTests(unittest.TestCase):
             contours = [name for name in order if name.endswith("_Contours")]
             self.assertTrue(dems and contours)
             self.assertLess(max(rank[name] for name in contours), min(rank[name] for name in dems))
-            self.assertLess(rank["corridor_synthetic_GIS — alignments"], min(rank[name] for name in contours))
-            self.assertLess(rank["corridor_synthetic_GIS — station_points"], rank["corridor_synthetic_GIS — alignments"])
+            self.assertLess(rank["complete_road_GIS — alignments"], min(rank[name] for name in contours))
+            self.assertLess(rank["complete_road_GIS — station_points"], rank["complete_road_GIS — alignments"])
             self.assertEqual(order[-len(dems):], dems)
             project.clear()
 
@@ -515,7 +622,7 @@ class QgisProcessingTests(unittest.TestCase):
         project = QgsProject()
         self.context.setProject(project)
         with tempfile.TemporaryDirectory() as directory:
-            params = self._params(CORRIDOR, "EPSG:32637")
+            params = self._params(COMPLETE_ROAD, "EPSG:32637")
             params.update(OUTPUT_DIR=directory, INCLUDE_DEM=False, INCLUDE_CONTOURS=True,
                           RESOLUTION=1, CONTOUR_INTERVAL=1)
             self.algorithms["landxml_complete_road_design"].processAlgorithm(params, self.context, self.feedback)
