@@ -165,7 +165,7 @@ a { color: var(--accent); }
   <a href="#viewer"><span>12</span>Profile Viewer</a>
   <a href="#cutfill"><span>13</span>Profile Cut/Fill Analysis</a>
   <a href="#corridor"><span>14</span>Corridor Section Quantities</a>
-  <a href="#tin-diff"><span>15</span>Surface Cut/Fill (TIN difference)</a>
+  <a href="#tin-diff"><span>15</span>Surface Cut/Fill and Grading Quantities</a>
   <a href="#sheets"><span>16</span>Cross-Section Sheets and Report</a>
   <a href="#report"><span>17</span>Road Design Report</a>
   <div class="part-title">Part D — Geometric design review</div>
@@ -216,7 +216,7 @@ a { color: var(--accent); }
     <tr><td>3. Vector extraction</td><td>Extract LandXML Alignments to Lines</td></tr>
     <tr><td>4. Terrain conversion</td><td>LandXML TIN to GeoTIFF</td></tr>
     <tr><td>5. Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
-    <tr><td>6. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference)</td></tr>
+    <tr><td>6. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference) · Grading Quantities (Volume Surface)</td></tr>
     <tr><td>7. Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
     <tr><td>8. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report</td></tr>
     <tr><td>Outside the Toolbox</td><td>LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
@@ -426,8 +426,13 @@ a { color: var(--accent); }
 </figure>
 <p>Sections farther apart than the maximum spacing (default 100) and excluded ranges are not integrated; the report lists what was skipped. No curvature correction is applied.</p>
 
-<h2 id="tin-diff"><span class="sec">15</span>Surface Cut/Fill (TIN difference)</h2>
+<h2 id="tin-diff"><span class="sec">15</span>Surface Cut/Fill and Grading Quantities</h2>
+<h3>Surface Cut/Fill (TIN difference)</h3>
 <p>Grids two TINs on a shared raster and writes compare − base as a GeoTIFF styled orange (cut) to green (fill), with cut, fill and net volumes. Leave both names blank to use a recorded Civil 3D volume-surface pair, or existing ground against the corridor datum surface. When the file contains a <code>SurfVolume</code> for the same pair, the Civil 3D volumes are printed beside the grid result for comparison.</p>
+<h3 id="grading">Grading Quantities (volume surface)</h3>
+<p>For site grading, export the Civil 3D <b>TIN volume surface</b> (design minus existing ground) with the other surfaces, and run <b>Grading Quantities (Volume Surface)</b> on it. Each triangle is integrated exactly as a linear prism and split at zero depth, so the result does not depend on a grid. The tool reports cut, fill and net volumes; plan, cut, fill and at-grade areas; maximum depths; and the exact plan area in each depth band (default limits −5, −3, −2, −1, −0.5, 0, 0.5, 1, 2, 3 and 5; a band includes its lower limit). Volumes are in place, with no shrinkage or bulking factors. Outputs are an HTML report and an optional depth-band CSV.</p>
+<p><b>Reconciliation.</b> Enter the cut, fill and plan area from the Civil 3D cut/fill summary (unadjusted, factor 1.0) in the reported units. Each value is compared with the computed one and the run reports <b>PASS</b> when every difference is within the tolerance (default 0.01), otherwise <b>FAIL</b>. Civil 3D tables are rounded to two decimals, so differences up to 0.005 are rounding.</p>
+<p>Leave the surface blank only when the file identifies exactly one volume surface (a Civil 3D volume record, or one surface named as earthworks, volume, cut/fill or difference); otherwise choose it. If the chosen surface has depths beyond 100 vertical units the log warns that it looks like an elevation surface. Civil 3D metric exports often omit the vertical unit; use <b>Prepare LandXML</b> to declare it.</p>
 
 <h2 id="sheets"><span class="sec">16</span>Cross-Section Sheets and Report</h2>
 <p>Plots corridor sections as multi-page PDF sheets (A4, A3 or A1; 1–12 sections per sheet) with a title block and legend, an HTML report with a section table and drawings, and one PNG per section. A station range and interval select what to plot, for example every 50 m between 10000 and 12000.</p>
@@ -655,6 +660,8 @@ a { color: var(--accent); }
 <p>Section areas come from the polygon between the ground and design lines (to the Datum where used). Volumes use average end areas, V = (A<sub>1</sub> + A<sub>2</sub>)/2 · d, between sections no farther apart than the maximum spacing. The mass-haul ordinate is the running sum of factored cut minus fill. Side-slope areas are the sloped lengths from hinge to daylight, averaged between adjacent sections and multiplied by their spacing.</p>
 <h4>TIN rasterization and difference</h4>
 <p>Each cell centre takes the elevation of the visible triangle containing it, by barycentric interpolation. TIN difference grids both surfaces on the same cells and sums (compare − base) × cell area over cells where both exist.</p>
+<h4>Exact volumes from a volume surface</h4>
+<p>With depths sorted a ≤ b ≤ c and plan area A, a triangle's signed volume is A(a + b + c)/3. When the depth changes sign, the sub-triangle at the lone vertex has plan fraction (a/(a − b))(a/(a − c)) and volume A·fraction·a/3 (using c for a lone positive vertex), which gives cut and fill separately. The plan fraction below a depth t is (t − a)²/((b − a)(c − a)) for a &lt; t ≤ b and 1 − (c − t)²/((c − a)(c − b)) for b &lt; t &lt; c, which gives exact depth-band areas.</p>
 <h4>Stopping sight distance on the profile (S1)</h4>
 <p>The profile is sampled every 2 m. From each station, in both directions, the line from the driver's eye (eye height above the road) to an object (object height) is extended until the road surface rises above it; the distance reached is compared with the SSD required at that speed and grade.</p>
 <h4>Superelevation lookup</h4>
@@ -704,6 +711,7 @@ a { color: var(--accent); }
   <li><b>Automated tests:</b> 89 tests (parser, earthworks, design review, Processing algorithms and offscreen GUI) pass on QGIS 3.44 with synthetic fixtures whose quantities have closed-form answers.</li>
   <li><b>GitHub Actions:</b> pull requests and pushes to <code>main</code> run the full synthetic suite in headless QGIS 3.44.15 and 4.2.3 containers, including Processing, preparation, GUI, project settings, styles and station/offset locator checks. Desktop checks and verification against survey control remain necessary.</li>
   <li><b>Civil 3D volumes:</b> on two private exports, TIN-difference volumes match the volumes Civil 3D recorded in the same files to within 0.1 m³ (for example fill 1,358.8 m³ recorded, 1,359.0 m³ computed).</li>
+  <li><b>Grading quantities:</b> on two private industrial-site exports, Grading Quantities reproduced the Civil 3D cut/fill summaries within 0.005 m³ and the plan areas within 0.003 m², the rounding of the Civil 3D tables (0.6 and 0.9 million triangles).</li>
   <li><b>Independent methods:</b> on a 16.7 km corridor, TIN difference gave 67,282 m³ of cut against 67,056 m³ from the corridor sections.</li>
   <li><b>Design review:</b> run on six private Civil 3D exports (9 short to 36 km alignments) under both standards without errors; findings were checked against the manual's tables, and the phasing fix was verified on synthetic cases.</li>
 </ul>
