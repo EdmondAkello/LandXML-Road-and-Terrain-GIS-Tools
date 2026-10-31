@@ -101,6 +101,10 @@ class DesignReportAlgorithm(ProjectSettingsAlgorithm):
                 raise QgsProcessingException(str(exc)) from exc
         doc = load_document(path)
         try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        try:
             records, unsupported = read_alignments(path, 2.0)
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
@@ -189,5 +193,6 @@ class DesignReportAlgorithm(ProjectSettingsAlgorithm):
                     os.path.basename(path),
                     normal_crown,
                     self.parameterAsDouble(p, "STRIP", c),
+                    doc.station_maps(),
                 ))
         return {"OUTPUT": output, "ALIGNMENT_COUNT": len(items)}

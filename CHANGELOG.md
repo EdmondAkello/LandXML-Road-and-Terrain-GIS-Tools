@@ -3,13 +3,16 @@
 ## Unreleased
 
 ### Added
+- Roadway station equations: shared validated internal/engineering mapping, explicit locator regions for repeated stations, gap errors and back/ahead boundary labels in metric and foot notation. Station-point exports add engineering station, region and distance; Complete Road Design retains an equation table. Reports identify internal stationing; section drawings and Profile Viewer CSVs expose engineering labels/regions. Preparation and recommended LandXML retain equations. Numeric station fields, physical sampling, profiles and quantities retain internal stationing. Decreasing progression is explicitly unsupported. Synthetic Civil 3D/OpenRoads metadata fixtures and a private ORD comparison cover the feature. Issue #40.
 - GitHub Actions runs the full synthetic test suite in headless QGIS 3.44.15 and 4.2.3 containers on pull requests and pushes to `main`, including Processing, preparation, GUI, project settings, styles and station/offset locator regressions. Tests use QGIS's application fixture for initialization and shutdown. The existing parser/earthworks and Bandit checks remain. Issue #35.
 
 ### Changed
+- Station-point layers from Create Alignment Station Points and Complete Road Design always add `engineering_station`, `station_region` and `distance_along`, including files without equations (`station_region = 1`). Existing numeric station fields remain internal; scripts and joins should account for the added fields. Issue #40.
 - `AGENTS.md` is kept out of the release ZIP; it is for contributors' coding agents, not plugin users.
 - Contribution instructions use branches in the main repository for collaborators, require both CI checks, an up-to-date branch and Edmond's approval, and reserve version tags and releases for Edmond. Feature PRs keep changelog entries under `Unreleased` without changing version numbers or release dates; release preparation retains semantic versioning and consistent metadata checks.
 
 ### Fixed
+- Invalid station equations are reported by inspection without blocking independent terrain exports or surface cut/fill. Station-dependent Processing tools reject them with a clear QGIS error; Complete Road Design rejects the package before creating outputs. Issue #40.
 - Complete Road Design automatically omits empty output layers when optional LandXML data or required dependencies are absent, including after alignment/surface filtering. The Processing log reports skipped outputs; unchecked options and existing invalid-data validation are preserved. Empty engineering and contour GeoPackages are not retained or loaded. Issue #39.
 - Complete Road Design: layers loaded into the project are stacked for reading. DEMs sit at the bottom, then surface boundaries, contours, other lines, the alignment and points on top. Before, the DEMs were added last and hid everything under them. Issue #37.
 

@@ -79,6 +79,79 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(len(self.algorithms), 18)
         self.assertIn("inspect_landxml", self.algorithms)
 
+    def test_invalid_equations_warn_without_changing_surface_outputs(self):
+        fixtures = ROOT / "tests/fixtures/generic"
+        for tool in ("landxml_tin_to_geotiff", "landxml_surface_cut_fill"):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
+                invalid = fixtures / "invalid_station_equation.xml"
+                valid = Path(directory) / "valid.xml"
+                valid.write_text(invalid.read_text().replace(
+                    '      <StaEquation staInternal="20" staBack="999" staAhead="100"/>\n', ''))
+                rasters = []
+                for source in (valid, invalid):
+                    name = source.stem
+                    params = self._params(str(source), "EPSG:32615")
+                    params.update(SURFACE="EG", BASE_SURFACE="EG", COMPARE_SURFACE="Design",
+                                  RESOLUTION=1, OUTPUT=str(Path(directory) / (name + ".tif")))
+                    with patch.object(self.feedback, "pushWarning") as warning:
+                        self.algorithms[tool].processAlgorithm(params, self.context, self.feedback)
+                    if name == "invalid_station_equation":
+                        messages = [args[0] for args, _ in warning.call_args_list]
+                        self.assertTrue(any("staBack disagrees" in message and
+                                            "Station-dependent outputs are unavailable" in message
+                                            for message in messages))
+                    dataset = gdal.Open(params["OUTPUT"])
+                    self.assertIsNotNone(dataset)
+                    rasters.append((dataset.GetGeoTransform(), dataset.GetProjection(), dataset.ReadAsArray()))
+                    dataset = None
+                self.assertEqual(rasters[0][:2], rasters[1][:2])
+                np.testing.assert_array_equal(rasters[0][2], rasters[1][2])
+
+    def test_invalid_equations_raise_processing_errors_for_station_tools(self):
+        path = str(ROOT / "tests/fixtures/generic/invalid_station_equation.xml")
+        for tool in ("landxml_station_points", "landxml_complete_road_design",
+                     "landxml_profile_cut_fill", "landxml_corridor_quantities",
+                     "landxml_design_review", "landxml_design_report", "landxml_cross_section_sheets"):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
+                params = self._params(path, "EPSG:32615")
+                params.update(OUTPUT="memory:", OUTPUT_DIR=str(Path(directory) / "package"))
+                with self.assertRaisesRegex(QgsProcessingException, "staBack disagrees"):
+                    self.algorithms[tool].processAlgorithm(params, self.context, self.feedback)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+                self.assertEqual(self.context.layersToLoadOnCompletion(), {})
+
+    def test_equation_station_points_package_profiles_and_report(self):
+        path = str(ROOT / "tests/fixtures/civil3d/station_equations.xml")
+        params = self._params(path, "EPSG:32615")
+        params.update(OUTPUT="memory:", INTERVAL=50)
+        result = self.algorithms["landxml_station_points"].processAlgorithm(params, self.context, self.feedback)
+        points = list(self.context.getMapLayer(result["OUTPUT"]).getFeatures())
+        repeated = [p for p in points if p["engineering_station"] == 1950]
+        self.assertEqual([p["station"] for p in repeated], [1950, 2050])
+        self.assertEqual([p["station_region"] for p in repeated], [1, 2])
+        self.assertEqual([p["distance_along"] for p in repeated], [950, 1050])
+        self.assertEqual([p["station_label"] for p in repeated], ["1+950 R1", "1+950 R2"])
+        with tempfile.TemporaryDirectory() as directory:
+            params.update(OUTPUT_DIR=directory, INCLUDE_DEM=False, INCLUDE_CONTOURS=False, STATION_INTERVAL=50)
+            package = self.algorithms["landxml_complete_road_design"].processAlgorithm(params, self.context, self.feedback)
+            dataset = ogr.Open(str(Path(package["OUTPUT_DIR"]) / "station_equations_GIS.gpkg"))
+            equations = dataset.GetLayerByName("station_equations")
+            self.assertEqual(equations.GetFeatureCount(), 2)
+            self.assertEqual(equations.GetNextFeature().GetField("station_ahead"), 1900)
+            station_points = dataset.GetLayerByName("station_points")
+            station_points.SetAttributeFilter('station = 2050')
+            feature = station_points.GetNextFeature()
+            self.assertEqual(feature.GetField("engineering_station"), 1950)
+            self.assertEqual(feature.GetField("distance_along"), 1050)
+            dataset = None
+            report_path = str(Path(directory) / "report.html")
+            result = self.algorithms["landxml_design_report"].processAlgorithm(
+                {"INPUT": path, "OUTPUT": report_path}, self.context, self.feedback)
+            self.assertEqual(result["ALIGNMENT_COUNT"], 1)
+            report = Path(report_path).read_text()
+            self.assertIn("Station equations", report)
+            self.assertIn("continuous internal station", report)
+
     def test_toolbox_groups_follow_workflow(self):
         groups = sorted({algorithm.group() for algorithm in self.algorithms.values()})
         self.assertEqual(groups, [

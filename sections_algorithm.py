@@ -55,7 +55,7 @@ def select_sections(sections, station_range=None, interval=0.0, require_ground=N
     return result
 
 
-def section_report_html(views, unit, title, svgs, source_file, settings):
+def section_report_html(views, unit, title, svgs, source_file, settings, station_maps=None):
     rows = []
     for view in views:
         depth = (
@@ -98,7 +98,7 @@ def section_report_html(views, unit, title, svgs, source_file, settings):
         body.append("<style>.sheet{display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:12px}"
                     ".sheet svg{border:1px solid #d8dde5;border-radius:6px} @media print{.sheet>div{break-inside:avoid}}</style>")
         body.append("<div class='sheet'>" + "".join(f"<div>{svg}</div>" for svg in svgs) + "</div>")
-    return _document(title or "Cross-sections", "".join(body))
+    return _document(title or "Cross-sections", "".join(body), station_maps, unit)
 
 
 class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
@@ -183,6 +183,10 @@ class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
         requested = self.parameterAsString(p, "ALIGNMENT", c).strip()
         alignment_name = _resolve(catalog.alignments, requested, "alignment") if requested else with_sections[0]
         doc = load_document(path)
+        try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         sections, warnings, surface_names, _shapes = read_corridor_sections(doc.root, alignment_name)
         for warning in warnings[:10]:
             fb.pushWarning(warning)
@@ -232,6 +236,8 @@ class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
             for section in chosen
         ]
         exaggeration = self.parameterAsDouble(p, "EXAGGERATION", c)
+        for view in views:
+            view["station_map"] = doc.station_maps().get(alignment_name)
         half = self.parameterAsDouble(p, "HALF_WIDTH", c)
         x_range = (-half, half) if half > 0 else None
         title = self.parameterAsString(p, "TITLE", c).strip()
@@ -245,7 +251,7 @@ class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
             per_page,
             exaggeration,
             doc.horizontal_unit,
-            title or "Cross-sections",
+            (title or "Cross-sections") + (" — internal stations" if doc.station_maps() else ""),
             alignment_name,
             x_range,
             progress=lambda value: fb.setProgress(int(value * 0.7)),
@@ -270,7 +276,7 @@ class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
             svgs = [section_svg(view, style) for view in views[::step]] if step else []
             settings = f"Alignment {alignment_name} · ground {ground_name or '–'} · design {design_name or '–'} · VE {exaggeration:g}"
             with open(report, "w", encoding="utf-8") as stream:
-                stream.write(section_report_html(views, doc.horizontal_unit, title, svgs, os.path.basename(path), settings))
+                stream.write(section_report_html(views, doc.horizontal_unit, title, svgs, os.path.basename(path), settings, doc.station_maps()))
             if step > 1:
                 fb.pushInfo(f"The HTML report draws every {step}th section ({len(svgs)} drawings); the table lists all.")
         return {

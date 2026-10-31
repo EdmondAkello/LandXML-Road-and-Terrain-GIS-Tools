@@ -921,7 +921,7 @@ class StationPointsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         return "road_design_extraction"
 
     def shortHelpString(self):
-        return "Creates points at whole multiples of the station interval (for example, 20, 40, 60), with an optional off-grid alignment endpoint."
+        return "Creates points at whole multiples of the continuous internal station interval (for example, 20, 40, 60), with an optional off-grid alignment endpoint."
 
     def initAlgorithm(self, config=None):
         self.addParameter(
@@ -962,6 +962,12 @@ class StationPointsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                 QgsField(n, FIELD_DOUBLE if n != "alignment" else FIELD_STRING, len=254)
             )
         fields.append(QgsField("station_label", FIELD_STRING, len=254))
+        for name in ("engineering_station", "station_region", "distance_along"):
+            fields.append(QgsField(name, FIELD_INT if name == "station_region" else FIELD_DOUBLE))
+        try:
+            station_maps = document.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         sink, dest = _sink(self, p, c, fields, QgsWkbTypes.Type.Point)
         interval = self.parameterAsDouble(p, "INTERVAL", c)
         for name, desc, sta0, sta1, parts, _, distances in _alignment_parts(
@@ -1004,7 +1010,13 @@ class StationPointsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                 f.setGeometry(
                     QgsGeometry.fromPointXY(QgsPointXY(float(xy[0]), float(xy[1])))
                 )
-                f.setAttributes([name, station, bearing, station_text(station, document.horizontal_unit)])
+                mapping = station_maps.get(name)
+                engineering = mapping.station(station) if mapping else station
+                region = mapping.region(station) + 1 if mapping else 1
+                label = station_text(engineering, document.horizontal_unit)
+                if mapping:
+                    label += f" R{region}"
+                f.setAttributes([name, station, bearing, label, engineering, region, distance])
                 sink.addFeature(f)
         attach_post_processor(c, dest, source_path=path)
         self.set_output_style(dest, "station_points")

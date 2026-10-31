@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+import csv
 import math
 from pathlib import Path
 import sys
@@ -55,11 +56,137 @@ from landxml_plugin.landxml.reports import (
     station_label,
 )
 from landxml_plugin.landxml.sections import read_cross_sections
-from landxml_plugin.landxml.stationing import StationedPolyline, parse_station
+from landxml_plugin.landxml.stationing import StationMap, StationedPolyline, parse_station
 
 CORRIDOR = FIXTURES / "civil3d" / "corridor_synthetic.xml"
 CIVIL3D = FIXTURES / "civil3d" / "road_minimal.xml"
 SQRT5 = math.sqrt(5.0)
+
+
+class StationEquationTests(unittest.TestCase):
+    def test_csv_retains_internal_columns_and_adds_engineering_context(self):
+        from landxml_plugin.landxml.reports import write_csv
+        mapping = StationMap(1000, 3000, [{"staInternal": 2000, "staAhead": 1900}])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stations.csv"
+            write_csv(path, ["station", "depth"], [(1950, 2), (2050, 2), (3500, 2)], mapping, "meter")
+            with path.open(newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([r["station"] for r in rows], ["1950", "2050", "3500"])
+            self.assertEqual([r["station_engineering_label"] for r in rows], ["1+950.00", "1+950.00", ""])
+            self.assertEqual([r["station_region"] for r in rows], ["1", "2", ""])
+            self.assertEqual([r["station_distance_along"] for r in rows], ["950.0", "1050.0", ""])
+
+    def test_inspection_does_not_ignore_invalid_equations(self):
+        source = (FIXTURES / "civil3d" / "station_equations.xml").read_text()
+        for invalid in (source.replace('staBack="2400"', 'staBack="2500"'),
+                        source.replace('staInternal="2000"', 'staInternal="4000"'),
+                        source.replace('staIncrement="increasing"', 'staIncrement="decreasing"')):
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "invalid.xml"
+                path.write_text(invalid)
+                document = load_document(str(path))
+                for _ in range(2):
+                    report = document.inspect()
+                    self.assertIn("station equation", report["station_equation_error"])
+                    self.assertTrue(any("Station-dependent outputs are unavailable" in warning
+                                        for warning in report["warnings"]))
+                    self.assertEqual(report["alignments"][0]["station_equations"], [])
+                    with self.assertRaisesRegex(ValueError, "station equation"):
+                        document.station_maps()
+
+    def test_recommended_landxml_preserves_equations_and_internal_profile(self):
+        from landxml_plugin.landxml.review_report import recommended_landxml
+        from landxml_plugin.landxml.review import ProfileModel
+        path = str(FIXTURES / "civil3d" / "station_equations.xml")
+        doc = load_document(path)
+        element = doc.alignments()[0]
+        design, _ = default_pair(read_alignment_profiles(element))
+        controls = read_profile_controls(design.element)
+        model = ProfileModel.from_controls(controls)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "review.xml"
+            output.write_text(recommended_landxml(element, model, "Reviewed", "meter"))
+            result = load_document(str(output))
+            self.assertEqual(result.station_maps()["Equation road"].equations, doc.station_maps()["Equation road"].equations)
+            reviewed, _ = default_pair(read_alignment_profiles(result.alignments()[0]))
+            self.assertAlmostEqual(reviewed.elevation_at(2050), 112.5)
+
+    def test_regions_gaps_boundaries_and_multiple_equations(self):
+        doc = load_document(str(FIXTURES / "civil3d" / "station_equations.xml"))
+        mapping = doc.station_maps()["Equation road"]
+        self.assertEqual(mapping.candidates(parse_station("1+950", "meter")), [(1950, 0), (2050, 1)])
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            mapping.resolve(1950)
+        self.assertEqual(mapping.resolve(1950, 1), (2050, 1))
+        with self.assertRaisesRegex(ValueError, "does not exist"):
+            mapping.resolve(2450)
+        self.assertEqual(mapping.station(2000), 1900)
+        self.assertEqual(mapping.station(2000, 0), 2000)
+        self.assertAlmostEqual(mapping.station(2000 - 1e-7), 2000 - 1e-7)
+        self.assertAlmostEqual(mapping.station(2000 + 1e-7), 1900 + 1e-7)
+        self.assertEqual(mapping.station(2500), 2600)
+        self.assertEqual(mapping.station(3000), 3100)
+        identity = StationMap(0, 10, [{"staInternal": 5, "staAhead": 5}])
+        self.assertEqual(identity.resolve(5), (5, 1))
+
+    def test_equation_at_alignment_start_keeps_both_boundary_labels(self):
+        mapping = StationMap(100, 200, [{"staInternal": 100, "staAhead": 200}])
+        self.assertEqual(mapping.station(100), 200)
+        self.assertEqual(mapping.station(100, 0), 100)
+        self.assertEqual(mapping.resolve(100), (100, 0))
+        self.assertEqual(mapping.resolve(200), (100, 1))
+        self.assertAlmostEqual(mapping.station(100 + 1e-7), 200 + 1e-7)
+        self.assertEqual(mapping.candidates(150), [])
+        self.assertEqual(mapping.station(200), 300)
+
+    def test_metric_and_both_foot_types_with_optional_attributes_and_namespaces(self):
+        fixture = (FIXTURES / "civil3d" / "station_equations.xml").read_text()
+        for unit, text in (("meter", "1+950"), ("foot", "19+50"), ("USSurveyFoot", "19+50")):
+            for namespace in ("http://www.landxml.org/schema/LandXML-1.2", "urn:vendor:landxml", ""):
+                with self.subTest(unit=unit, namespace=namespace), tempfile.TemporaryDirectory() as directory:
+                    source = fixture.replace('linearUnit="meter"', f'linearUnit="{unit}"').replace('verticalLinearUnit="meter"', f'verticalLinearUnit="{unit}"')
+                    source = source.replace(' staBack="2000"', '').replace('http://www.landxml.org/schema/LandXML-1.2', namespace)
+                    path = Path(directory) / "road.xml"
+                    path.write_text(source)
+                    mapping = load_document(str(path)).station_maps()["Equation road"]
+                    self.assertEqual(mapping.resolve(parse_station(text, unit), 1), (2050, 1))
+
+    def test_invalid_equations_are_rejected(self):
+        for attributes in ({"staInternal": "nan", "staAhead": 5}, {"staInternal": 5},
+                           {"staInternal": 11, "staAhead": 5}, {"staInternal": 5, "staAhead": 7, "staBack": 6},
+                           {"staInternal": 5, "staAhead": 7, "staIncrement": "decreasing"},
+                           {"staInternal": 5, "staAhead": "inf"}):
+            with self.subTest(attributes=attributes), self.assertRaisesRegex(ValueError, "station equation 1"):
+                StationMap(0, 10, [attributes], "Road")
+        for values in ([5, 5], [7, 5]):
+            with self.assertRaisesRegex(ValueError, "strictly increasing"):
+                StationMap(0, 10, [{"staInternal": v, "staAhead": v} for v in values])
+        negative = StationMap(-2000, 1000, [{"staInternal": -1000, "staAhead": -1100}])
+        self.assertEqual(negative.candidates(parse_station("-1+050", "meter")), [(-1050, 0), (-950, 1)])
+
+    def test_equations_do_not_change_geometry_profiles_sections_or_quantities(self):
+        for vendor in ("civil3d", "openroads"):
+            path = str(FIXTURES / vendor / "station_equations.xml")
+            doc = load_document(path)
+            records, _ = read_alignments(path)
+            polyline = StationedPolyline.from_alignment(records[0])
+            self.assertEqual(polyline.point_at(2050), (501050, 4500000))
+            self.assertEqual(polyline.station_map.station(2050), 1950)
+            design, ground = default_pair(read_alignment_profiles(doc.alignments()[0]))
+            self.assertAlmostEqual(design.elevation_at(2050), 112.5)
+            sections, _, _, _ = read_corridor_sections(doc.root)
+            self.assertEqual([s.station for s in sections], [1900, 2100])
+            runs = compare_profiles(design, ground)
+            segments, _ = cut_fill_segments(runs)
+            self.assertEqual(summarize_segments(segments)["covered_length"], 2000)
+            estimate = template_estimate(runs, 10, 2, 2)
+            self.assertAlmostEqual(estimate["fill_volume"], 56000)
+            from landxml_plugin.landxml.reports import stationing_html
+            report = stationing_html(doc.station_maps(), doc.horizontal_unit)
+            self.assertIn("continuous internal station", report)
+            self.assertIn("R1 → R2", report)
+            self.assertEqual(doc.inspect()["alignments"][0]["station_equations"][0]["staBack"], 2000)
 
 
 def line(name, points, kind="surface"):
