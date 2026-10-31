@@ -499,7 +499,7 @@ def clip_runs(runs, low, high):
     return exclude_ranges(runs, [(-math.inf, low), (high, math.inf)])
 
 
-def design_report_html(items, unit, title, source_file, normal_crown=2.5, strip=0.0):
+def design_report_html(items, unit, title, source_file, normal_crown=2.5, strip=0.0, station_maps=None):
     speed_unit = "mph" if (unit or "").lower() in ("foot", "internationalfoot", "ussurveyfoot") else "km/h"
     rows = []
     for item in items:
@@ -527,4 +527,4 @@ def design_report_html(items, unit, title, source_file, normal_crown=2.5, strip=
         _table(["Alignment", "Start", "End", "Length", f"Design speed {speed_unit}", "Findings H / M / L"], rows, 1),
     ]
     body += [alignment_section(item, unit, normal_crown, strip) for item in items]
-    return _document(title or "Road design report", "".join(body))
+    return _document(title or "Road design report", "".join(body), station_maps, unit)

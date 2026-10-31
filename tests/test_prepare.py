@@ -109,6 +109,20 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((second["GENERATED_PROFILES"], second["GENERATED_SECTIONS"]), (0, 0))
         self.assertEqual(Path(second["OUTPUT"]).read_bytes(), Path(result["OUTPUT"]).read_bytes())
 
+    def test_equations_preserve_internal_sampling_and_quantity_length(self):
+        geometry = alignment().replace('<CoordGeom>', '<StaEquation staInternal="120.5" staBack="120.5" staAhead="110.5"/><CoordGeom>')
+        primary = self.write("equation.xml", document(geometry))
+        result = self.run_prepare(INPUT=primary)
+        doc = load_document(result["OUTPUT"])
+        mapping = doc.station_maps()["Road"]
+        self.assertEqual(mapping.resolve(125, 1), (135, 1))
+        profiles = read_alignment_profiles(doc.alignments()[0])
+        ground = next(p for p in profiles if p.kind == "surface" and "Existing" in p.name)
+        self.assertAlmostEqual(ground.elevation_at(130.5), 103)
+        sections, _, _, _ = read_corridor_sections(doc.root)
+        self.assertEqual([s.station for s in sections], [100.5, 120, 140, 140.5])
+        self.assertEqual(result["COVERAGE_GAPS"], 0)
+
     def test_complete_input_needs_no_terrain_and_preserves_data(self):
         result = self.run_prepare()
         prepared = Path(result["OUTPUT"]).read_bytes()

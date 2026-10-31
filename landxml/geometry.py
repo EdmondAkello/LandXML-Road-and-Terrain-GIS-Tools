@@ -4,6 +4,7 @@ import math
 
 from .common import child, descendants
 from .parser import load_document
+from .stationing import StationMap
 
 
 def _xy(node):
@@ -258,6 +259,7 @@ def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
                 unsupported.append(f"{name}: {tag} skipped ({exc})")
 
         if complete and len(pts) >= 2:
+            station_map = StationMap.from_element(a, float(sta_start or 0) + vertex_distances[-1])
             results.append(
                 {
                     "name": name,
@@ -265,6 +267,8 @@ def read_alignments(path, segment_length=5.0, feedback=None, cancel=None):
                     "length": length,
                     "sta_start": sta_start,
                     "sta_end": sta_end,
+                    "station_map": station_map,
+                    "station_equations": station_map.equations if station_map else [],
                     "points": pts,
                     # True distance along the source geometry at each vertex
                     # (arc length on curves and spirals, not chord length).

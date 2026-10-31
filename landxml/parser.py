@@ -117,6 +117,23 @@ class LandXMLDocument:
     def alignments(self):
         return list(descendants(self.root, "Alignment"))
 
+    def station_maps(self):
+        """Validate equations against sampled geometry and retain internal source stations."""
+        if not hasattr(self, "_station_maps"):
+            maps = {}
+            if any(True for _ in descendants(self.root, "StaEquation")):
+                from .geometry import read_alignments
+
+                records, warnings = read_alignments(self.path)
+                maps = {r["name"]: r["station_map"] for r in records if r.get("station_map")}
+                expected = [a for a in self.alignments() if any(True for _ in descendants(a, "StaEquation"))]
+                names = [a.attrib.get("name") for a in expected]
+                all_names = [a.attrib.get("name") for a in self.alignments()]
+                if any(all_names.count(name) != 1 or name not in maps for name in names):
+                    raise ValueError("Station equations require unique named, supported connected alignments. " + "; ".join(warnings))
+            self._station_maps = maps
+        return self._station_maps
+
     def profiles(self):
         """Yield (alignment name, profile) using nesting, then explicit references."""
         seen = set()
@@ -130,6 +147,7 @@ class LandXMLDocument:
 
     def inspect(self) -> dict:
         """Report source entities, units and raw bounds without changing coordinates."""
+        maps = self.station_maps()
         bounds, elevations = _bounds(self.root)
         surfaces = []
         for surface in self.surfaces():
@@ -157,6 +175,7 @@ class LandXMLDocument:
                     "name": alignment.attrib.get("name"),
                     "description": alignment.attrib.get("desc"),
                     "station_start": alignment.attrib.get("staStart"),
+                    "station_equations": maps[alignment.attrib.get("name")].equations if alignment.attrib.get("name") in maps else [],
                     "profiles": [
                         item.attrib.get("name")
                         for item in descendants(alignment, "ProfAlign")

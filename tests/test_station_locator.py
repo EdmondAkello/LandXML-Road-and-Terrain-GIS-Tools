@@ -129,6 +129,32 @@ class StationLocatorTests(unittest.TestCase):
         self.assertIsNone(self.dock.polyline)
         self.assertFalse(self.dock.markers[0].isVisible())
 
+    def test_equation_regions_metric_and_us_survey_feet(self):
+        for vendor, crs, label in (("civil3d", "EPSG:32615", "1+950.000"),
+                                   ("openroads", "EPSG:2277", "19+50.000")):
+            with self.subTest(vendor=vendor):
+                path = Path(FIXTURE).parents[1] / vendor / "station_equations.xml"
+                self.assertTrue(self.dock.load(str(path)))
+                self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem(crs))
+                self.dock.output_crs.setCrs(QgsCoordinateReferenceSystem(crs))
+                self.dock.station_edit.setText(label)
+                self.dock.locate_entered()
+                self.assertIn("ambiguous", self.dock.result_label.text())
+                self.dock.region_combo.setCurrentIndex(2)
+                self.dock.locate_entered()
+                self.assertAlmostEqual(self.dock.markers[0].center().x(), 501050)
+                self.assertIn("R2", self.dock.result_label.text())
+                self.dock.map_clicked(QgsPointXY(501050, 4500005))
+                self.assertEqual(self.dock.station_edit.text(), label)
+                self.assertIn("internal 2050", self.dock.result_label.text())
+                self.dock.station_edit.setText("2450")
+                self.dock.locate_entered()
+                self.assertIn("does not exist", self.dock.result_label.text())
+                self.assertFalse(self.dock.markers[0].isVisible())
+                self.dock.map_clicked(QgsPointXY(501000, 4500000))
+                self.assertIn("equation back", self.dock.result_label.text())
+                self.assertIn("ahead", self.dock.result_label.text())
+
     def test_invalid_input_clears_old_markers(self):
         self.dock.map_clicked(QgsPointXY(500025, 4500010))
         for station, offset in (("999", "0"), ("1101", "0"), ("nan", "0"), ("1025", "inf"), ("bad", "0")):
@@ -137,7 +163,7 @@ class StationLocatorTests(unittest.TestCase):
                 self.dock.offset_edit.setText(offset)
                 self.dock.locate_entered()
                 self.assertFalse(self.dock.markers[0].isVisible())
-        for name, error in (("No station", "start station"), ("Station equation", "Station equations")):
+        for name, error in (("No station", "start station"),):
             self.dock.alignment_combo.setCurrentText(name)
             self.dock.map_clicked(QgsPointXY(25, 5))
             self.assertIn(error, self.dock.result_label.text())

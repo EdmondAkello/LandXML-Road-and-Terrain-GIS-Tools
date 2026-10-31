@@ -89,13 +89,16 @@ def _ogr_line(points, method, params, dimension=2):
     return geometry
 
 
-def _write_points(ds, name, records, srs, horizontal_unit):
+def _write_points(ds, name, records, srs, horizontal_unit, station_maps=None, starts=None):
     _delete_layer(ds, name)
     lyr = ds.CreateLayer(name, srs, ogr.wkbPoint)
     _fld(lyr, "alignment")
     _fld(lyr, "station", ogr.OFTReal)
     _fld(lyr, "station_label")
     _fld(lyr, "bearing", ogr.OFTReal)
+    _fld(lyr, "engineering_station", ogr.OFTReal)
+    _fld(lyr, "station_region", ogr.OFTInteger)
+    _fld(lyr, "distance_along", ogr.OFTReal)
     for x, y, a, st, b in records:
         f = ogr.Feature(lyr.GetLayerDefn())
         g = ogr.Geometry(ogr.wkbPoint)
@@ -103,7 +106,14 @@ def _write_points(ds, name, records, srs, horizontal_unit):
         f.SetGeometry(g)
         f.SetField("alignment", a)
         f.SetField("station", st)
-        f.SetField("station_label", station_text(st, horizontal_unit))
+        mapping = (station_maps or {}).get(a)
+        engineering = mapping.station(st) if mapping else st
+        region = mapping.region(st) + 1 if mapping else 1
+        label = station_text(engineering, horizontal_unit) + (f" R{region}" if mapping else "")
+        f.SetField("station_label", label)
+        f.SetField("engineering_station", engineering)
+        f.SetField("station_region", region)
+        f.SetField("distance_along", st - (starts or {}).get(a, 0))
         f.SetField("bearing", b)
         lyr.CreateFeature(f)
 
@@ -476,7 +486,26 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                                 bearing,
                             )
                         )
-                _write_points(ds, "station_points", ptsrec, srs, document.horizontal_unit)
+                _write_points(ds, "station_points", ptsrec, srs, document.horizontal_unit, document.station_maps(),
+                              {a["name"]: float(a["sta_start"]) for a in al if a["sta_start"] not in (None, "")})
+
+        station_maps = {name: mapping for name, mapping in document.station_maps().items()
+                        if not alignment_filter or name == alignment_filter}
+        if station_maps:
+            equations = ds.CreateLayer("station_equations", None, ogr.wkbNone)
+            _fld(equations, "alignment_name")
+            for field in ("internal_station", "distance_along", "station_back", "station_ahead"):
+                _fld(equations, field, ogr.OFTReal)
+            for field in ("region_back", "region_ahead"):
+                _fld(equations, field, ogr.OFTInteger)
+            for name, mapping in station_maps.items():
+                for region, equation in enumerate(mapping.equations, 1):
+                    feature = ogr.Feature(equations.GetLayerDefn())
+                    _set_fields(feature, dict(alignment_name=name, internal_station=equation["staInternal"],
+                                             distance_along=equation["staInternal"] - mapping.start,
+                                             station_back=equation["staBack"], station_ahead=equation["staAhead"],
+                                             region_back=region, region_ahead=region + 1))
+                    equations.CreateFeature(feature)
 
         if flags["INCLUDE_CENTERLINES"] or flags["INCLUDE_PROFILES"]:
             profile_records = []

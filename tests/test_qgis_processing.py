@@ -77,6 +77,38 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(len(self.algorithms), 18)
         self.assertIn("inspect_landxml", self.algorithms)
 
+    def test_equation_station_points_package_profiles_and_report(self):
+        path = str(ROOT / "tests/fixtures/civil3d/station_equations.xml")
+        params = self._params(path, "EPSG:32615")
+        params.update(OUTPUT="memory:", INTERVAL=50)
+        result = self.algorithms["landxml_station_points"].processAlgorithm(params, self.context, self.feedback)
+        points = list(self.context.getMapLayer(result["OUTPUT"]).getFeatures())
+        repeated = [p for p in points if p["engineering_station"] == 1950]
+        self.assertEqual([p["station"] for p in repeated], [1950, 2050])
+        self.assertEqual([p["station_region"] for p in repeated], [1, 2])
+        self.assertEqual([p["distance_along"] for p in repeated], [950, 1050])
+        self.assertEqual([p["station_label"] for p in repeated], ["1+950 R1", "1+950 R2"])
+        with tempfile.TemporaryDirectory() as directory:
+            params.update(OUTPUT_DIR=directory, INCLUDE_DEM=False, INCLUDE_CONTOURS=False, STATION_INTERVAL=50)
+            package = self.algorithms["landxml_complete_road_design"].processAlgorithm(params, self.context, self.feedback)
+            dataset = ogr.Open(str(Path(package["OUTPUT_DIR"]) / "station_equations_GIS.gpkg"))
+            equations = dataset.GetLayerByName("station_equations")
+            self.assertEqual(equations.GetFeatureCount(), 2)
+            self.assertEqual(equations.GetNextFeature().GetField("station_ahead"), 1900)
+            station_points = dataset.GetLayerByName("station_points")
+            station_points.SetAttributeFilter('station = 2050')
+            feature = station_points.GetNextFeature()
+            self.assertEqual(feature.GetField("engineering_station"), 1950)
+            self.assertEqual(feature.GetField("distance_along"), 1050)
+            dataset = None
+            report_path = str(Path(directory) / "report.html")
+            result = self.algorithms["landxml_design_report"].processAlgorithm(
+                {"INPUT": path, "OUTPUT": report_path}, self.context, self.feedback)
+            self.assertEqual(result["ALIGNMENT_COUNT"], 1)
+            report = Path(report_path).read_text()
+            self.assertIn("Station equations", report)
+            self.assertIn("continuous internal station", report)
+
     def test_toolbox_groups_follow_workflow(self):
         groups = sorted({algorithm.group() for algorithm in self.algorithms.values()})
         self.assertEqual(groups, [
