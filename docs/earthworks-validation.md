@@ -54,3 +54,14 @@ Alignments, profile graphs and map overlays, 3D centerlines, station points and 
 - **Phasing fix:** in a synthetic case, a crest overlapping a sharp 600 m radius curve (chainage 400–700) is moved to the curve middle at 550 with L = 300 m, so both ends coincide; the tests also check K, grades and the exported Civil 3D text.
 - **Figure 12.4:** the chart is only an image in the manual; its stated example is encoded, so treat barrier findings near the thresholds as prompts for judgement.
 - **Design speed variations:** C steps from 70 to 50 km/h along three alignments, and D alternates between 50 and 70 km/h in sections of 220–1,010 m. The review followed them, listed the speed sections, and flagged 20 km/h steps as acceptable but not preferred, short oscillating sections, and curves (for example R183 against 185 m at 70 km/h, 63 m past a reduction) that are sharper than the approach speed allows. One alignment in C lists 50 and then 70 km/h at chainage 0; 70 km/h, the later entry, is used.
+
+## Grading quantities (Unreleased)
+
+Grading Quantities (Volume Surface) was run on two private site-grading exports, E1 and E2, each holding a Civil 3D TIN volume surface for one graded platform (about 0.57 and 0.93 million visible triangles; 4,724 and 3,160 hidden triangles excluded). The reference is the Civil 3D cut/fill summary on the grading drawings, which is rounded to 0.01 and uses factor 1.0. The vertical unit was declared first, as Prepare LandXML does, because the exports omit it.
+
+| Export | Cut difference (m³) | Fill difference (m³) | Plan-area difference (m²) | Check at ±0.01 |
+|---|---|---|---|---|
+| E1 | −0.001 | −0.004 | 0.000 | PASS |
+| E2 | +0.003 | −0.004 | −0.002 | PASS |
+
+All differences are within the rounding of the Civil 3D tables. Cut, fill and at-grade areas and the depth-band areas each sum to the plan area. Each run took about 55 s on a 136 MB file, most of it parsing. Project names, volumes and coordinates are withheld.

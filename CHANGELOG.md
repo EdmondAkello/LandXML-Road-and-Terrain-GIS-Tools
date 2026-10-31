@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Grading Quantities (Volume Surface)** in Earthworks and quantities: exact cut, fill and net volumes from a volume (depth) TIN surface such as a Civil 3D TIN volume surface, integrating each triangle as a linear prism split exactly at zero depth (no grid). Reports plan, cut, fill and at-grade areas, maximum depths and exact plan area by depth band, with an HTML report and optional depth-band CSV. Optional reconciliation against the Civil 3D cut/fill summary reports PASS or FAIL within a tolerance (default 0.01). The volume surface is detected only from unambiguous evidence; an elevation surface selected by mistake is flagged. Synthetic closed-form fixture and tests; on two private exports the results matched the Civil 3D summaries within 0.005 m³.
 - GitHub Actions runs the full synthetic test suite in headless QGIS 3.44.15 and 4.2.3 containers on pull requests and pushes to `main`, including Processing, preparation, GUI, project settings, styles and station/offset locator regressions. Tests use QGIS's application fixture for initialization and shutdown. The existing parser/earthworks and Bandit checks remain. Issue #35.
 
 ### Changed
