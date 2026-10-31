@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!-- Synthetic roadway; not an observed vendor export. -->
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Metric linearUnit="meter" verticalLinearUnit="meter"/></Units>
+  <Application name="Autodesk Civil 3D"/>
+  <Alignments><Alignment name="Equation road" staStart="1000" length="2000">
+    <StaEquation staInternal="2000" staBack="2000" staAhead="1900"/>
+    <StaEquation staInternal="2500" staBack="2400" staAhead="2600" staIncrement="increasing"/>
+    <CoordGeom><Line length="2000"><Start>500000 4500000</Start><End>502000 4500000</End></Line></CoordGeom>
+    <Profile>
+      <ProfAlign name="Design"><PVI>1000 102</PVI><PVI>3000 122</PVI></ProfAlign>
+      <ProfSurf name="Ground" state="existing"><PntList2D>1000 100 3000 120</PntList2D></ProfSurf>
+    </Profile>
+    <CrossSects>
+      <CrossSect sta="1900"><CrossSectSurf name="Ground"><PntList2D>-10 109 10 109</PntList2D></CrossSectSurf><CrossSectSurf name="Design"><PntList2D>-10 111 10 111</PntList2D></CrossSectSurf></CrossSect>
+      <CrossSect sta="2100"><CrossSectSurf name="Ground"><PntList2D>-10 111 10 111</PntList2D></CrossSectSurf><CrossSectSurf name="Design"><PntList2D>-10 113 10 113</PntList2D></CrossSectSurf></CrossSect>
+    </CrossSects>
+  </Alignment></Alignments>
+</LandXML>

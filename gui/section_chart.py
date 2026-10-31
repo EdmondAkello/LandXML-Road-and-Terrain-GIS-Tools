@@ -229,6 +229,12 @@ def draw_section(painter, rect, view, style, hover=None):
     painter.setFont(bold)
     painter.setPen(QColor("#1d2430"))
     chainage = station_label(view["station"], style.unit)
+    mapping = view.get("station_map")
+    if mapping and mapping.start <= view["station"] <= mapping.end:
+        chainage = (f"{station_label(mapping.station(view['station']), style.unit)} R{mapping.region(view['station']) + 1}"
+                    f" (internal {chainage})")
+    elif mapping:
+        chainage += " (internal; outside alignment)"
     header_left, header_right = rect.left() + left, rect.right() - 10
     painter.drawText(QPointF(header_left, rect.top() + line_height * 1.25), f"CH {chainage}")
     painter.setFont(font)

@@ -38,7 +38,6 @@ from qgis.PyQt.QtWidgets import (
 
 from ..alignment_algorithm import LandXMLAlignmentsAlgorithm, METHODS
 from ..core import transform_vertices
-from ..landxml.common import descendants
 from ..landxml.geometry import read_alignments
 from ..landxml.parser import load_document
 from ..landxml.reports import station_label
@@ -114,6 +113,10 @@ class StationOffsetDock(QgsDockWidget):
         self.station_edit.setPlaceholderText("Numeric or engineering station (e.g. 803+19.359 ft)")
         self.offset_edit = QLineEdit("0")
         form.addRow("Station", self.station_edit)
+        self.region_combo = QComboBox()
+        self.region_combo.addItem("Automatic (unique station only)", None)
+        form.addRow("Station region (equations)", self.region_combo)
+        self.station_edit.textChanged.connect(lambda: self.region_combo.setCurrentIndex(0))
         form.addRow("Offset (− left / + right)", self.offset_edit)
         layout.addLayout(form)
         row = QHBoxLayout()
@@ -148,6 +151,7 @@ class StationOffsetDock(QgsDockWidget):
         self.clear()
         try:
             document = load_document(path)
+            document.station_maps()
             # Use the parser's records for names, including unnamed alignments.
             alignments, warnings = read_alignments(path)
             if not alignments:
@@ -190,12 +194,6 @@ class StationOffsetDock(QgsDockWidget):
             raise ValueError("Station/offset lookup requires a projected calculation CRS with linear units.")
         if not self.canvas.mapSettings().destinationCrs().isValid():
             raise ValueError("Set a valid map CRS before locating positions.")
-        element = next(
-            a for i, a in enumerate(self.document.alignments())
-            if a.attrib.get("name", f"Alignment {i + 1}") == self.alignment_combo.currentText()
-        )
-        if next(descendants(element, "StaEquation"), None) is not None:
-            raise ValueError("Station equations are not supported by this locator.")
         # shortcut: sampled curve normals; reduce segment length for tight curves or large offsets.
         records, warnings = read_alignments(self.path, self.numbers["SEGMENT"].value())
         record = next((a for a in records if a["name"] == self.alignment_combo.currentText()), None)
@@ -213,6 +211,12 @@ class StationOffsetDock(QgsDockWidget):
         )
         self.offset_scale = params["scale"] if method == "helmert" else 1.0
         self.polyline = polyline
+        self.region_combo.clear()
+        self.region_combo.addItem("Automatic (unique station only)", None)
+        if polyline.station_map:
+            bounds = [polyline.station_map.start, *polyline.station_map.breaks, polyline.station_map.end]
+            for region, (low, high) in enumerate(zip(bounds, bounds[1:])):
+                self.region_combo.addItem(f"R{region + 1}: internal {low:g}–{high:g}", region)
 
     def map_clicked(self, point, button=Qt.MouseButton.LeftButton):
         if button != Qt.MouseButton.LeftButton:
@@ -240,13 +244,16 @@ class StationOffsetDock(QgsDockWidget):
             if not all(math.isfinite(v) for v in (station, offset)):
                 raise ValueError("Station and offset must be finite numbers.")
             self.prepare()
-            point = self.show_position(station, offset)
+            region = self.region_combo.currentData()
+            if self.polyline.station_map:
+                station, region = self.polyline.station_map.resolve(station, region)
+            point = self.show_position(station, offset, region)
             self.canvas.setCenter(point)
             self.canvas.refresh()
         except (ValueError, QgsProcessingException, QgsCsException) as exc:
             self.fail(str(exc))
 
-    def show_position(self, station, offset):
+    def show_position(self, station, offset, region=None):
         foot = self.polyline.point_at(station)
         target = self.polyline.point_at(station, offset * self.offset_scale)
         if target is None:
@@ -271,11 +278,23 @@ class StationOffsetDock(QgsDockWidget):
             marker.show()
         side = "right" if offset > 0 else "left" if offset < 0 else "on alignment"
         unit = self.document.horizontal_unit or "undeclared source units"
-        label = station_label(station, unit, decimals=3) if self.document.horizontal_unit else f"{station:.3f}"
+        mapping = self.polyline.station_map
+        engineering = mapping.station(station, region) if mapping else station
+        label = station_label(engineering, unit, decimals=3) if self.document.horizontal_unit else f"{engineering:.3f}"
         self.station_edit.setText(label)
         self.result_label.setText(
             f"Station {label}; offset {offset:+.3f} {side}; units: {unit}"
         )
+        if mapping:
+            region = mapping.region(station) if region is None else region
+            self.region_combo.setCurrentIndex(region + 1)
+            detail = f"; R{region + 1}; internal {station:.3f}; distance along {station - mapping.start:.3f}"
+            for equation in mapping.equations:
+                if station == equation["staInternal"]:
+                    back = station_label(equation["staBack"], unit, decimals=3)
+                    ahead = station_label(equation["staAhead"], unit, decimals=3)
+                    detail += f"; equation back {back} = ahead {ahead}"
+            self.result_label.setText(self.result_label.text() + detail)
         return points[1]
 
     def hide_markers(self):
@@ -288,6 +307,8 @@ class StationOffsetDock(QgsDockWidget):
 
     def invalidate(self, *_args):
         self.polyline = None
+        self.region_combo.clear()
+        self.region_combo.addItem("Automatic (unique station only)", None)
         self.hide_markers()
         self.result_label.setText("Settings changed. Click map or locate a station to recalculate.")
 

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Roadway station equations: shared validated internal/engineering mapping, explicit locator regions for repeated stations, gap errors and back/ahead boundary labels in metric and foot notation. Station-point exports add engineering station, region and distance; Complete Road Design retains an equation table. Reports identify internal stationing; section drawings and Profile Viewer CSVs expose engineering labels/regions. Preparation and recommended LandXML retain equations. Numeric station fields, physical sampling, profiles and quantities retain internal stationing. Decreasing progression is explicitly unsupported. Synthetic Civil 3D/OpenRoads metadata fixtures and a private ORD comparison cover the feature. Issue #40.
 - GitHub Actions runs the full synthetic test suite in headless QGIS 3.44.15 and 4.2.3 containers on pull requests and pushes to `main`, including Processing, preparation, GUI, project settings, styles and station/offset locator regressions. Tests use QGIS's application fixture for initialization and shutdown. The existing parser/earthworks and Bandit checks remain. Issue #35.
 
 ### Changed
