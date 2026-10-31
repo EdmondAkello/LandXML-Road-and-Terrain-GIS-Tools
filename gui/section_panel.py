@@ -133,7 +133,9 @@ class SectionPanel(QWidget):
             if require and ground and section.surface(ground) is None:
                 continue
             grade = self.design_profile.elevation_at(section.station) if self.design_profile else None
-            result.append(build_section_view(section, ground, design, grade, True))
+            view = build_section_view(section, ground, design, grade, True)
+            view["station_map"] = self.document.station_maps().get(self.alignment)
+            result.append(view)
         return result
 
     def rebuild(self):
@@ -187,7 +189,14 @@ class SectionPanel(QWidget):
                 f"  ({self.chart.index + 1}/{total})"
             )
         else:
-            self.station_label.setText(f"CH {station_label(view['station'], unit)}  ({self.chart.index + 1}/{total})")
+            mapping = self.document.station_maps().get(self.alignment) if self.document else None
+            engineering = "CH "
+            if mapping:
+                engineering = "Internal CH (outside alignment) "
+                if mapping.start <= view["station"] <= mapping.end:
+                    engineering = (f"CH {station_label(mapping.station(view['station']), unit)} "
+                                   f"R{mapping.region(view['station']) + 1}; internal ")
+            self.station_label.setText(f"{engineering}{station_label(view['station'], unit)}  ({self.chart.index + 1}/{total})")
 
     # ----------------------------------------------------------- export
     def _path(self, title, suffix, filters):

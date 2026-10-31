@@ -376,6 +376,7 @@ class ProfileCutFillAlgorithm(ProjectSettingsAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
+        doc.station_maps()
         alignment_filter = _resolve_alignment(self, p, c, path)
         design_name = self.parameterAsString(p, "DESIGN_PROFILE", c).strip()
         ground_name = self.parameterAsString(p, "GROUND_PROFILE", c).strip()
@@ -564,7 +565,7 @@ class ProfileCutFillAlgorithm(ProjectSettingsAlgorithm):
         if report:
             _write_text(
                 report,
-                profile_report_html(results, doc.horizontal_unit, doc.vertical_unit, os.path.basename(path), volume_unit),
+                profile_report_html(results, doc.horizontal_unit, doc.vertical_unit, os.path.basename(path), volume_unit, doc.station_maps()),
             )
             outputs["REPORT"] = report
         outputs["ALIGNMENT_COUNT"] = len(results)
@@ -667,6 +668,7 @@ class CorridorQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
+        doc.station_maps()
         alignment_filter = _resolve_alignment(self, p, c, path)
         ground_override = self.parameterAsString(p, "GROUND_SURFACE", c).strip()
         design_override = self.parameterAsString(p, "DESIGN_SURFACE", c).strip()
@@ -946,7 +948,7 @@ class CorridorQuantitiesAlgorithm(ProjectSettingsAlgorithm):
 
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
-            _write_text(report, corridor_report_html(results, doc.horizontal_unit, os.path.basename(path), doc.vertical_unit, volume_unit))
+            _write_text(report, corridor_report_html(results, doc.horizontal_unit, os.path.basename(path), doc.vertical_unit, volume_unit, doc.station_maps()))
             outputs["REPORT"] = report
         totals = [item["quantities"]["totals"] for item in results]
         outputs.update(
