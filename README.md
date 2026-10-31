@@ -7,6 +7,8 @@ A QGIS Processing provider for inspecting and importing LandXML terrain and road
 
 The **[User Guide and Technical Manual](docs/user-guide/user-guide.html)** for version **1.10.0** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. The [previous PDF edition (1.9.2)](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.9.2_User_Guide.pdf) remains available. Source and figure scripts are in `docs/user-guide` and `tools/guide`.
 
+Contributors can explore the [repository architecture snapshot](graphify-out/README.md), including an interactive Graphify graph and its audit reports. It records a specific source commit, includes inferred relationships and is excluded from plugin release ZIPs.
+
 ## Compatibility and validation
 
 - **Version 1.10.0 (QGIS 3.44 and QGIS 4):** 158 parser, earthworks, criteria, Processing, preparation, GUI and locator tests pass on Windows QGIS 3.44.9 and 4.2.3. The locator supports map clicks, manual engineering station input and source-unit offsets. Its coordinate label and help match the Processing tools. Release ZIP checks include Bandit, detect-secrets and flake8; ZIP installation has not been rechecked.

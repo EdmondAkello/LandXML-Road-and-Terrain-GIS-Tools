@@ -30,7 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The folder name QGIS uses to identify the plugin; it must never change between versions.
 PACKAGE = "landxml_tin_to_geotiff"
 
-EXCLUDE_PREFIXES = ("tests/", "tools/", "docs/", "examples/", "dist/", ".")
+EXCLUDE_PREFIXES = ("tests/", "tools/", "docs/", "examples/", "dist/", "graphify-out/", ".")
 EXCLUDE_FILES = {"HISTORY.md", "AGENTS.md"}
 
 REQUIRED_METADATA = ("name", "description", "version", "qgisMinimumVersion", "author", "email", "about", "tracker", "repository")
