@@ -27,7 +27,13 @@ class ReleaseTests(unittest.TestCase):
             (root / "AGENTS.md").write_text("contributor instructions", encoding="utf-8")
             (root / "tests").mkdir()
             (root / "tests" / "test_example.py").write_text("excluded", encoding="utf-8")
-            subprocess.run(["git", "add", ".gitignore", "metadata.txt", "AGENTS.md"], cwd=root, check=True)
+            (root / "graphify-out").mkdir()
+            for name in ("graph.json", "graph.html"):
+                (root / "graphify-out" / name).write_text("developer snapshot", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", ".gitignore", "metadata.txt", "AGENTS.md", "graphify-out/graph.json"],
+                cwd=root, check=True,
+            )
             with patch.object(build_release, "ROOT", str(root)):
                 archive = build_release.build(str(root / "dist"))
             with zipfile.ZipFile(archive) as zipped:

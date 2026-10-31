@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Developer instructions for generating local Graphify architecture graphs, with source-commit provenance and review of inferred links and health warnings. All graph outputs are ignored by Git and excluded from plugin release ZIPs, with packaging regression coverage. Issue #43.
 - GitHub Actions runs the full synthetic test suite in headless QGIS 3.44.15 and 4.2.3 containers on pull requests and pushes to `main`, including Processing, preparation, GUI, project settings, styles and station/offset locator regressions. Tests use QGIS's application fixture for initialization and shutdown. The existing parser/earthworks and Bandit checks remain. Issue #35.
 
 ### Changed
