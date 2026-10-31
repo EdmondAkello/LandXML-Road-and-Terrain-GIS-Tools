@@ -12,6 +12,8 @@ Issue #40 adds increasing roadway station regions. An ahead jump leaves a gap in
 - HTML reports include the equation table and basis note. Profile charts identify internal stationing. Section drawings show engineering station/region and internal station. Profile Viewer CSV exports retain the old columns and append engineering context for numeric station columns. Engineering context is blank for source profile rows beyond the horizontal alignment; section drawings identify such stations as internal and outside the alignment.
 - Prepared XML and recommended-profile XML preserve the equations. Their geometry/profile/section station values stay internal; equations must not be applied to them a second time.
 
+Equation-aware CSV station columns retain full precision so rounding cannot move a row across a station jump. Files without equations retain their existing CSV formatting.
+
 Metric input uses a 1000-unit separator (`1+950.000`); feet use 100 (`19+50.000`). Equations use source horizontal units without conversion. International feet and US survey feet remain separate unit declarations.
 
 ## Format evidence
@@ -26,7 +28,7 @@ The same attribute-driven mapping handles Civil 3D and OpenRoads metadata. XML a
 
 Committed fixtures under `tests/fixtures/civil3d/station_equations.xml` and `tests/fixtures/openroads/station_equations.xml` are synthetic, not copies of vendor exports. They exercise metric and US survey feet, different application metadata, two cumulative equations, internal profile stations and sections on both sides of a back jump. Additional tests cover international feet, namespace variants, optional attributes, negative/nonzero starts, exact boundaries, repeated stations, gaps, invalid equations, CSV, station-point/GeoPackage/report output, preparation and recommended-profile round trips. Unchanged physical profile length and a hand-calculated 56,000 source-unit-cubed fill estimate are checked independently of labels.
 
-The local QGIS 4.2.2 full suite passed 185 tests; CI results are recorded in the PR. The required parser/earthworks/criteria and Bandit checks apply; CI also runs QGIS 3.44 and 4.2.3.
+The local QGIS 4.2.2 full suite passed 186 tests; CI results are recorded in the PR. The required parser/earthworks/criteria and Bandit checks apply; CI also runs QGIS 3.44 and 4.2.3.
 
 The private ORD reference comparison passed 30 forward/inverse cases, including six equation cases, using a maximum geometry segment of 0.01 source units and the existing 0.001 ftUS station, offset and coordinate tolerances. Maximum residuals were 0.000470106 ftUS station, 0.000000104 ftUS offset and 0.000470106 ftUS coordinate. At the equation boundary the reference coordinates are rounded: both boundary labels were checked within the original station tolerance. These are software comparison tolerances, not certified field accuracy. The locator's default segment remains 0.1; its sampled-geometry accuracy limitation remains in force.
 

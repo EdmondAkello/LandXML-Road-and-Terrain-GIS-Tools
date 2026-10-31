@@ -75,6 +75,24 @@ class ProfileViewerTests(unittest.TestCase):
         self.dock.refresh()
         self.assertIn("b3261e", self.dock.exclude_edit.styleSheet())
 
+    def test_equation_csv_mapping_precedes_station_rounding(self):
+        import csv
+        from landxml_plugin.landxml.reports import write_csv
+
+        path = str(ROOT / "tests/fixtures/civil3d/station_equations.xml")
+        self.assertTrue(self.dock.load(path))
+        rows = self.dock.sample_rows(1999.9999)
+        before = next(row for row in rows if row[1] == 1999.9999)
+        mapping = self.dock.document.station_maps()["Equation road"]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "stations.csv"
+            write_csv(output, ["station_label", "station", "design", "ground", "depth", "kind"],
+                      [before], mapping, "meter")
+            with output.open(newline="") as stream:
+                row = next(csv.DictReader(stream))
+            self.assertEqual(row["station_region"], "1")
+            self.assertAlmostEqual(float(row["station_engineering"]), 1999.9999)
+
     def test_chart_renders_shading_and_interaction(self):
         chart = self.dock.chart
         chart.resize(900, 500)
