@@ -162,6 +162,7 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         return (
             "Export a configurable LandXML road design package with alignment, profile, station, "
             "cross-section, feature-line, breakline, surface-boundary, DEM and contour outputs. "
+            "Enabled outputs without exportable data are skipped automatically. "
             "Load exported layers into the project is enabled by default; disable it to export files only. "
             "Profile graphs use station/elevation coordinates, not map coordinates."
         )
@@ -702,6 +703,8 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                 )
                 for item in placed
             ]
+            if not records:
+                fb.pushInfo("Skipped cross_sections: no exportable data for the selected alignment(s).")
             for dimension in (2, 3):
                 selected = [row for row in records if len(row[6][0]) == dimension]
                 if not selected:
@@ -773,6 +776,8 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                         surface_filter is None or record.surface_name == surface_filter
                     )
                 ]
+                if not matching:
+                    fb.pushInfo(f"Skipped {layer_name}: no exportable data for the selected surface(s).")
                 for dimension in (2, 3):
                     selected = [
                         record
@@ -935,14 +940,31 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                             0,
                         )
                         dem_ds = None
+                        has_contours = clyr.GetFeatureCount() > 0
+                        clyr = None
                         cds = None
-                        self.set_output_style(contour + "|layername=contours", "contours",
-                                              self.parameterAsDouble(p, "CONTOUR_INTERVAL", c), surface_name=surface_name)
-                        terrain_outputs.append((contour + "|layername=contours", terrain_name + "_Contours", QgsProcessingUtils.LayerHint.Vector, ORDER_CONTOURS))
+                        if has_contours:
+                            self.set_output_style(contour + "|layername=contours", "contours",
+                                                  self.parameterAsDouble(p, "CONTOUR_INTERVAL", c), surface_name=surface_name)
+                            terrain_outputs.append((contour + "|layername=contours", terrain_name + "_Contours", QgsProcessingUtils.LayerHint.Vector, ORDER_CONTOURS))
+                        else:
+                            os.remove(contour)
+                            fb.pushInfo(f"Skipped contours for '{surface_name}': no contours at the requested interval.")
                     if not flags["INCLUDE_DEM"]:
                         os.remove(dem)
                     else:
                         terrain_outputs.append((dem, terrain_name + "_DEM", QgsProcessingUtils.LayerHint.Raster, ORDER_RASTER))
+        # Decide from actual exported features so filters and missing dependencies
+        # cannot leave empty placeholders in the package or project.
+        for index in reversed(range(ds.GetLayerCount())):
+            layer = ds.GetLayer(index)
+            name = layer.GetName()
+            empty = layer.GetFeatureCount() == 0
+            layer = None
+            if empty:
+                if ds.DeleteLayer(index) != ogr.OGRERR_NONE:
+                    raise QgsProcessingException(f"Could not remove empty layer '{name}'.")
+                fb.pushInfo(f"Skipped {name}: no exportable data for the selected input and options.")
         for index in range(ds.GetLayerCount()):
             name = ds.GetLayer(index).GetName()
             if name in PRESETS:
@@ -956,6 +978,9 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         ds = None
         if fb.isCanceled():
             raise QgsProcessingException("Complete export cancelled.")
+        if not package_outputs:
+            os.remove(gpkg)
+            fb.pushInfo("No engineering vector layers were exported; no engineering GeoPackage was retained.")
         if self.parameterAsBoolean(p, "LOAD_OUTPUTS", c) and c.project() is not None:
             for uri, name, hint, order in package_outputs + terrain_outputs:
                 details = QgsProcessingContext.LayerDetails(name, c.project(), "", hint)
