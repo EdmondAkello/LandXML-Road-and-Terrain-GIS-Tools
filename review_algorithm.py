@@ -217,7 +217,10 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
         except (ValueError, IndexError) as exc:
             raise QgsProcessingException(str(exc)) from exc
         doc = load_document(path)
-        doc.station_maps()
+        try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         try:
             criteria.set_linear_unit(doc.horizontal_unit, doc.vertical_unit)
         except ValueError as exc:

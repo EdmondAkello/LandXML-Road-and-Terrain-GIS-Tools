@@ -964,7 +964,10 @@ class StationPointsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         fields.append(QgsField("station_label", FIELD_STRING, len=254))
         for name in ("engineering_station", "station_region", "distance_along"):
             fields.append(QgsField(name, FIELD_INT if name == "station_region" else FIELD_DOUBLE))
-        station_maps = document.station_maps()
+        try:
+            station_maps = document.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         sink, dest = _sink(self, p, c, fields, QgsWkbTypes.Type.Point)
         interval = self.parameterAsDouble(p, "INTERVAL", c)
         for name, desc, sta0, sta1, parts, _, distances in _alignment_parts(

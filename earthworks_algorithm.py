@@ -376,7 +376,10 @@ class ProfileCutFillAlgorithm(ProjectSettingsAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
-        doc.station_maps()
+        try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         alignment_filter = _resolve_alignment(self, p, c, path)
         design_name = self.parameterAsString(p, "DESIGN_PROFILE", c).strip()
         ground_name = self.parameterAsString(p, "GROUND_PROFILE", c).strip()
@@ -668,7 +671,10 @@ class CorridorQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         doc = load_document(path)
-        doc.station_maps()
+        try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         alignment_filter = _resolve_alignment(self, p, c, path)
         ground_override = self.parameterAsString(p, "GROUND_SURFACE", c).strip()
         design_override = self.parameterAsString(p, "DESIGN_SURFACE", c).strip()

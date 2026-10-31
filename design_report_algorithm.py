@@ -100,7 +100,10 @@ class DesignReportAlgorithm(ProjectSettingsAlgorithm):
             except ValueError as exc:
                 raise QgsProcessingException(str(exc)) from exc
         doc = load_document(path)
-        doc.station_maps()
+        try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         try:
             records, unsupported = read_alignments(path, 2.0)
         except ValueError as exc:

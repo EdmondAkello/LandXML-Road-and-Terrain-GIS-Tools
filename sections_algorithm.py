@@ -183,7 +183,10 @@ class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
         requested = self.parameterAsString(p, "ALIGNMENT", c).strip()
         alignment_name = _resolve(catalog.alignments, requested, "alignment") if requested else with_sections[0]
         doc = load_document(path)
-        doc.station_maps()
+        try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         sections, warnings, surface_names, _shapes = read_corridor_sections(doc.root, alignment_name)
         for warning in warnings[:10]:
             fb.pushWarning(warning)

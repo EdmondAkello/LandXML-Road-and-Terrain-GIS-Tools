@@ -129,6 +129,12 @@ class StationLocatorTests(unittest.TestCase):
         self.assertIsNone(self.dock.polyline)
         self.assertFalse(self.dock.markers[0].isVisible())
 
+    def test_invalid_equations_are_reported_without_loading_alignment(self):
+        path = Path(FIXTURE).parent / "invalid_station_equation.xml"
+        self.assertFalse(self.dock.load(str(path)))
+        self.assertIn("staBack disagrees", self.dock.result_label.text())
+        self.assertIsNone(self.dock.polyline)
+
     def test_equation_regions_metric_and_us_survey_feet(self):
         for vendor, crs, label in (("civil3d", "EPSG:32615", "1+950.000"),
                                    ("openroads", "EPSG:2277", "19+50.000")):

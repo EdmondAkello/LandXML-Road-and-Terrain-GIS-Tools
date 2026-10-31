@@ -147,7 +147,12 @@ class LandXMLDocument:
 
     def inspect(self) -> dict:
         """Report source entities, units and raw bounds without changing coordinates."""
-        maps = self.station_maps()
+        equation_error = None
+        try:
+            maps = self.station_maps()
+        except ValueError as exc:
+            maps = {}
+            equation_error = str(exc)
         bounds, elevations = _bounds(self.root)
         surfaces = []
         for surface in self.surfaces():
@@ -226,7 +231,10 @@ class LandXMLDocument:
             "feature_lines": len(list(descendants(self.root, "FeatureLine"))),
             "bounds": bounds,
             "elevation_range": elevations,
-            "warnings": self.warnings,
+            "station_equation_error": equation_error,
+            "warnings": self.warnings + ([f"Invalid station equations: {equation_error} "
+                                          "Station-dependent outputs are unavailable for this file."]
+                                         if equation_error else []),
         }
 
 

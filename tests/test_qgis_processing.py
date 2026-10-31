@@ -79,6 +79,47 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(len(self.algorithms), 18)
         self.assertIn("inspect_landxml", self.algorithms)
 
+    def test_invalid_equations_warn_without_changing_surface_outputs(self):
+        fixtures = ROOT / "tests/fixtures/generic"
+        for tool in ("landxml_tin_to_geotiff", "landxml_surface_cut_fill"):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
+                invalid = fixtures / "invalid_station_equation.xml"
+                valid = Path(directory) / "valid.xml"
+                valid.write_text(invalid.read_text().replace(
+                    '      <StaEquation staInternal="20" staBack="999" staAhead="100"/>\n', ''))
+                rasters = []
+                for source in (valid, invalid):
+                    name = source.stem
+                    params = self._params(str(source), "EPSG:32615")
+                    params.update(SURFACE="EG", BASE_SURFACE="EG", COMPARE_SURFACE="Design",
+                                  RESOLUTION=1, OUTPUT=str(Path(directory) / (name + ".tif")))
+                    with patch.object(self.feedback, "pushWarning") as warning:
+                        self.algorithms[tool].processAlgorithm(params, self.context, self.feedback)
+                    if name == "invalid_station_equation":
+                        messages = [args[0] for args, _ in warning.call_args_list]
+                        self.assertTrue(any("staBack disagrees" in message and
+                                            "Station-dependent outputs are unavailable" in message
+                                            for message in messages))
+                    dataset = gdal.Open(params["OUTPUT"])
+                    self.assertIsNotNone(dataset)
+                    rasters.append((dataset.GetGeoTransform(), dataset.GetProjection(), dataset.ReadAsArray()))
+                    dataset = None
+                self.assertEqual(rasters[0][:2], rasters[1][:2])
+                np.testing.assert_array_equal(rasters[0][2], rasters[1][2])
+
+    def test_invalid_equations_raise_processing_errors_for_station_tools(self):
+        path = str(ROOT / "tests/fixtures/generic/invalid_station_equation.xml")
+        for tool in ("landxml_station_points", "landxml_complete_road_design",
+                     "landxml_profile_cut_fill", "landxml_corridor_quantities",
+                     "landxml_design_review", "landxml_design_report", "landxml_cross_section_sheets"):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
+                params = self._params(path, "EPSG:32615")
+                params.update(OUTPUT="memory:", OUTPUT_DIR=str(Path(directory) / "package"))
+                with self.assertRaisesRegex(QgsProcessingException, "staBack disagrees"):
+                    self.algorithms[tool].processAlgorithm(params, self.context, self.feedback)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+                self.assertEqual(self.context.layersToLoadOnCompletion(), {})
+
     def test_equation_station_points_package_profiles_and_report(self):
         path = str(ROOT / "tests/fixtures/civil3d/station_equations.xml")
         params = self._params(path, "EPSG:32615")

@@ -55,7 +55,7 @@ def coordinate_choices(algorithm, parameters, context, feedback, path):
     """Read explicitly supplied CRS/transform settings; never infer source CRS."""
     document = load_document(path)
     report = document.inspect()
-    if document.station_maps():
+    if any(alignment["station_equations"] for alignment in report["alignments"]):
         feedback.pushInfo("Station equations: numeric station fields, sampling intervals and range inputs use continuous internal station. "
                           "Station-point labels and engineering_station apply equations; station_region disambiguates repeated labels.")
     feedback.pushInfo(

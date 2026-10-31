@@ -277,6 +277,10 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         if not path or not os.path.isfile(path):
             raise QgsProcessingException("Input LandXML file does not exist.")
         m, crs, src, tp, document = coordinate_choices(self, p, c, fb, path)
+        try:
+            document.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
         os.makedirs(out, exist_ok=True)
         alignment_filter = resolve_name(path, "alignments", self.parameterAsString(p, "ALIGNMENT", c), "alignment")
         surface_filter = resolve_name(path, "surfaces", self.parameterAsString(p, "SURFACE", c), "surface") or None

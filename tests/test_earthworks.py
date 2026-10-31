@@ -87,8 +87,13 @@ class StationEquationTests(unittest.TestCase):
                 path.write_text(invalid)
                 document = load_document(str(path))
                 for _ in range(2):
+                    report = document.inspect()
+                    self.assertIn("station equation", report["station_equation_error"])
+                    self.assertTrue(any("Station-dependent outputs are unavailable" in warning
+                                        for warning in report["warnings"]))
+                    self.assertEqual(report["alignments"][0]["station_equations"], [])
                     with self.assertRaisesRegex(ValueError, "station equation"):
-                        document.inspect()
+                        document.station_maps()
 
     def test_recommended_landxml_preserves_equations_and_internal_profile(self):
         from landxml_plugin.landxml.review_report import recommended_landxml
@@ -124,6 +129,16 @@ class StationEquationTests(unittest.TestCase):
         self.assertEqual(mapping.station(3000), 3100)
         identity = StationMap(0, 10, [{"staInternal": 5, "staAhead": 5}])
         self.assertEqual(identity.resolve(5), (5, 1))
+
+    def test_equation_at_alignment_start_keeps_both_boundary_labels(self):
+        mapping = StationMap(100, 200, [{"staInternal": 100, "staAhead": 200}])
+        self.assertEqual(mapping.station(100), 200)
+        self.assertEqual(mapping.station(100, 0), 100)
+        self.assertEqual(mapping.resolve(100), (100, 0))
+        self.assertEqual(mapping.resolve(200), (100, 1))
+        self.assertAlmostEqual(mapping.station(100 + 1e-7), 200 + 1e-7)
+        self.assertEqual(mapping.candidates(150), [])
+        self.assertEqual(mapping.station(200), 300)
 
     def test_metric_and_both_foot_types_with_optional_attributes_and_namespaces(self):
         fixture = (FIXTURES / "civil3d" / "station_equations.xml").read_text()
