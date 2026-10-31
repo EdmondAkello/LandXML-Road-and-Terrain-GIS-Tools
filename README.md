@@ -52,7 +52,7 @@ Sampling interpolates the original visible TIN triangles, retaining triangle-edg
 | 3. Vector extraction | Horizontal alignments |
 | 4. Terrain conversion | TIN to GeoTIFF |
 | 5. Surface extraction | TIN surface boundary; feature lines; breaklines |
-| 6. Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference); Grading Quantities (exact volumes from a volume surface, with a Civil 3D check) |
+| 6. Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference); Grading Quantities (exact volumes from a volume surface, with a Civil 3D check); Platform Levels and Falls |
 | 7. Design review | Geometric Design Review: alignment phasing, sight distance, vertical and horizontal curves, grades, superelevation and barrier warrants against Kenya RDM 1.3 (2025) or AASHTO 2018 (metric or US customary), with recommended PVI changes for Civil 3D |
 | 8. Reports and sheets | Cross-Section Sheets and Report; Road Design Report: plan, curvature, gradient, long-section and superelevation diagrams with element tables, and an optional design review |
 
@@ -138,6 +138,8 @@ Section surfaces are identified from source evidence when the names are left bla
 **Surface Cut/Fill (TIN Difference)** grids two TINs on a shared raster and writes compare − base as a GeoTIFF (styled cut-orange/fill-green), with cut, fill and net volumes and areas. Triangles hidden by a surface boundary are excluded. When the LandXML contains a Civil 3D `SurfVolume` for the same pair, its recorded volumes are printed and tabulated beside the grid result.
 
 **Grading Quantities (Volume Surface)** computes exact cut, fill and net volumes from a volume (depth) surface such as a Civil 3D TIN volume surface. Each triangle is integrated as a linear prism and split exactly at zero depth, so no grid is used. It reports plan, cut, fill and at-grade areas, maximum depths and the exact plan area in each depth band, as an HTML report and an optional CSV. Volumes are in place, with no shrinkage or bulking factors. Enter the Civil 3D cut/fill summary (factor 1.0) to reconcile: each value is checked against a tolerance (default 0.01) and the run reports PASS or FAIL. On two private industrial-site exports the results matched the Civil 3D summaries within 0.005 m³, the rounding of the Civil 3D tables. Leave the surface blank only when the file identifies exactly one volume surface. Civil 3D metric exports often omit the vertical unit; use Prepare LandXML to declare it.
+
+**Platform Levels and Falls** reads a design (finished-level) surface. Each triangle is classed as flat (below the flat threshold, default 2 %), sloping (up to 30 %), batter (30–250 %) or near-vertical, and flat triangles that share an edge form a platform. Each platform polygon carries its area, mean, minimum and maximum level, overall fall and the bearing it falls towards (area-weighted plane fit), mean local grade and the share of its area flatter than the minimum fall. Platforms whose overall fall is below the minimum (default 0.5 %) are flagged, because water can pond on them. The HTML report adds the area in each slope class.
 
 ## Road Design Report
 

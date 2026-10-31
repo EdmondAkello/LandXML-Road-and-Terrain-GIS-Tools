@@ -52,6 +52,7 @@ CORRIDOR = str(ROOT / "tests" / "fixtures" / "civil3d" / "corridor_synthetic.xml
 ALIGNMENTS_ONLY = str(ROOT / "tests" / "fixtures" / "generic" / "alignments_only.xml")
 COMPLETE_ROAD = str(ROOT / "tests" / "fixtures" / "generic" / "complete_road.xml")
 GRADING = str(ROOT / "tests" / "fixtures" / "generic" / "grading_volume.xml")
+PLATFORMS = str(ROOT / "tests" / "fixtures" / "generic" / "platforms.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
@@ -77,7 +78,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 19)
+        self.assertEqual(len(self.algorithms), 20)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_toolbox_groups_follow_workflow(self):
@@ -480,6 +481,25 @@ class QgisProcessingTests(unittest.TestCase):
             algorithm.processAlgorithm(dict(params, VOLUME_SURFACE="", INPUT=CIVIL3D), self.context, self.feedback)
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, DEPTH_BANDS="1, x"), self.context, self.feedback)
+
+    def test_platform_levels_layer_report_and_flags(self):
+        algorithm = self.algorithms["landxml_platform_levels"]
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(PLATFORMS, "EPSG:26915")
+            params.update(OUTPUT=str(Path(directory) / "platforms.gpkg"), REPORT=str(Path(directory) / "platforms.html"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertEqual((result["PLATFORM_COUNT"], result["FLAGGED_COUNT"]), (2, 1))
+            package = ogr.Open(result["OUTPUT"])
+            rows = {feature.GetField("platform"): feature for feature in package.GetLayer(0)}
+            self.assertEqual(set(rows), {"P1", "P2"})
+            levels = sorted((round(f.GetField("level_mean"), 6), round(f.GetField("fall_pct"), 6), f.GetField("below_min_fall"),
+                             round(f.GetGeometryRef().GetArea(), 6)) for f in rows.values())
+            self.assertEqual(levels, [(100.0, 0.0, 1, 400.0), (101.9, 1.0, 0, 400.0)])
+            rows = package = None
+            self.assertIn("Platform levels and falls", Path(directory, "platforms.html").read_text(encoding="utf-8"))
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(self._params(GRADING, "EPSG:26915"), DESIGN_SURFACE="", OUTPUT="memory:"),
+                                       self.context, self.feedback)
 
     def test_complete_export_only_retains_available_layers(self):
         road_layers = {"alignments", "alignment_elements", "station_points"}
