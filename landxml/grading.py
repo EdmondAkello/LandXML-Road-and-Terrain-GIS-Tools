@@ -217,3 +217,231 @@ def grading_report_html(summary, surface, units, source_file="", checks=(), stat
     if warnings:
         body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
     return _document("Grading quantities", "".join(body))
+
+
+# --------------------------------------------------------------------- platforms
+SLOPE_CLASSES = (
+    ("flat", "Flat (platforms)"),
+    ("sloping", "Sloping (ramps, graded areas)"),
+    ("batter", "Batter (1V:3.3H to 1V:0.4H)"),
+    ("steep", "Near-vertical (retained edges)"),
+)
+BATTER_FROM = 0.3   # V/H
+STEEP_FROM = 2.5    # V/H
+
+
+def _oriented_faces(xyz, faces):
+    """Faces reordered counter-clockwise in plan, so shared edges run in opposite directions."""
+    faces = np.asarray(faces, dtype=np.int64).copy()
+    a, b, c = xyz[faces[:, 0]], xyz[faces[:, 1]], xyz[faces[:, 2]]
+    cross = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])
+    clockwise = cross < 0
+    faces[clockwise, 1], faces[clockwise, 2] = faces[clockwise, 2], faces[clockwise, 1].copy()
+    return faces
+
+
+def triangle_slopes(xyz, faces, vertical_factor=1.0):
+    """Slope of each triangle as V/H, with depths/elevations scaled into horizontal units."""
+    xyz = np.asarray(xyz, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    a, b, c = xyz[faces[:, 0]], xyz[faces[:, 1]], xyz[faces[:, 2]]
+    u, v = b - a, c - a
+    u[:, 2] *= vertical_factor
+    v[:, 2] *= vertical_factor
+    n = np.cross(u, v)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        slope = np.hypot(n[:, 0], n[:, 1]) / np.abs(n[:, 2])
+    return np.where(np.isfinite(slope), slope, np.inf)
+
+
+def _edge_keys(faces):
+    return np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+
+
+def connected_triangles(faces, mask):
+    """Label triangles in ``mask`` by edge-connected component (-1 elsewhere)."""
+    faces = np.asarray(faces, dtype=np.int64)
+    labels = np.full(len(faces), -1, dtype=np.int64)
+    index = np.flatnonzero(mask)
+    if not len(index):
+        return labels
+    sub = faces[index]
+    edges = np.sort(_edge_keys(sub), axis=1)
+    owner = np.tile(np.arange(len(sub)), 3)
+    span = int(faces.max()) + 1
+    key = edges[:, 0] * span + edges[:, 1]
+    order = np.argsort(key, kind="stable")
+    key, owner = key[order], owner[order]
+    same = np.flatnonzero(key[1:] == key[:-1])
+    i, j = owner[same], owner[same + 1]
+    parent = np.arange(len(sub))
+    while True:
+        ri, rj = parent[i], parent[j]
+        low = np.minimum(ri, rj)
+        before = parent.copy()
+        np.minimum.at(parent, ri, low)
+        np.minimum.at(parent, rj, low)
+        while True:
+            jumped = parent[parent]
+            if np.array_equal(jumped, parent):
+                break
+            parent = jumped
+        if np.array_equal(parent, before):
+            break
+    _roots, compact = np.unique(parent, return_inverse=True)
+    labels[index] = compact
+    return labels
+
+
+def _ring_area(ring):
+    x, y = ring[:, 0], ring[:, 1]
+    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y))
+
+
+def _inside(point, ring):
+    x, y = point
+    xs, ys = ring[:, 0], ring[:, 1]
+    xn, yn = np.roll(xs, -1), np.roll(ys, -1)
+    crosses = ((ys > y) != (yn > y)) & (x < (xn - xs) * (y - ys) / np.where(yn == ys, 1e-300, yn - ys) + xs)
+    return bool(np.count_nonzero(crosses) % 2)
+
+
+def outline_polygons(xyz, faces):
+    """Plan outline of a set of triangles as [(outer ring, [holes]), ...]; rings are (n, 2) arrays."""
+    faces = _oriented_faces(xyz, faces)
+    directed = _edge_keys(faces)
+    span = int(faces.max()) + 1
+    forward = directed[:, 0] * span + directed[:, 1]
+    reverse = directed[:, 1] * span + directed[:, 0]
+    boundary = directed[~np.isin(forward, reverse)]
+    outgoing = {}
+    for start, end in boundary.tolist():
+        outgoing.setdefault(start, []).append(end)
+    rings = []
+    while outgoing:
+        start = next(iter(outgoing))
+        ring, vertex = [start], start
+        while True:
+            ends = outgoing.get(vertex)
+            if not ends:
+                break
+            nxt = ends.pop()
+            if not ends:
+                del outgoing[vertex]
+            if nxt == start:
+                break
+            ring.append(nxt)
+            vertex = nxt
+        if len(ring) >= 3:
+            rings.append(xyz[ring, :2])
+    outers = [ring for ring in rings if _ring_area(ring) > 0]
+    holes = [ring for ring in rings if _ring_area(ring) < 0]
+    polygons = [(outer, []) for outer in sorted(outers, key=_ring_area, reverse=True)]
+    for hole in holes:
+        for outer, inner in sorted(polygons, key=lambda item: _ring_area(item[0])):
+            if _inside(hole.mean(axis=0) if len(hole) < 3 else hole[0], outer):
+                inner.append(hole)
+                break
+    return polygons
+
+
+def platform_summary(xyz, faces, vertical_factor=1.0, flat=0.02, min_fall=0.005, min_area=50.0, outlines=True):
+    """Slope-class areas and edge-connected flat platforms of a design (finished-level) surface.
+
+    ``vertical_factor`` converts elevation units to horizontal units for slopes.
+    ``flat`` and ``min_fall`` are V/H ratios; ``min_area`` is in plan units squared.
+    Each platform reports area, area-weighted mean/min/max level, the overall fall and
+    its downhill bearing from an area-weighted plane fit, the mean local grade and the
+    share of its area flatter than ``min_fall``.
+    """
+    if not 0 < flat <= BATTER_FROM:
+        raise ValueError(f"The flat threshold must be above 0 and at most {BATTER_FROM * 100:g} %.")
+    if min_fall < 0 or min_area < 0:
+        raise ValueError("Minimum fall and minimum platform area must be zero or positive.")
+    xyz = np.asarray(xyz, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    depths, area = triangles(xyz, faces)
+    slope = triangle_slopes(xyz, faces, vertical_factor)
+    classes = {
+        "flat": slope < flat,
+        "sloping": (slope >= flat) & (slope < BATTER_FROM),
+        "batter": (slope >= BATTER_FROM) & (slope < STEEP_FROM),
+        "steep": slope >= STEEP_FROM,
+    }
+    class_areas = {key: float(area[mask].sum()) for key, mask in classes.items()}
+    labels = connected_triangles(faces, classes["flat"])
+    centroid = xyz[faces].mean(axis=1)
+    mean_z = depths.mean(axis=1)
+    platforms = []
+    for label in range(int(labels.max()) + 1 if (labels >= 0).any() else 0):
+        member = labels == label
+        weight = area[member]
+        total = float(weight.sum())
+        if total < min_area or total <= 0:
+            continue
+        cx, cy = centroid[member, 0], centroid[member, 1]
+        x0, y0 = np.average(cx, weights=weight), np.average(cy, weights=weight)
+        design = np.column_stack([cx - x0, cy - y0, np.ones_like(cx)]) * np.sqrt(weight)[:, None]
+        (gx, gy, _c), *_ = np.linalg.lstsq(design, mean_z[member] * np.sqrt(weight), rcond=None)
+        fall = float(np.hypot(gx, gy)) * vertical_factor
+        bearing = float(np.degrees(np.arctan2(-gx, -gy)) % 360.0) if fall > 1e-5 else None
+        zs = xyz[np.unique(faces[member]), 2]
+        platforms.append({
+            "area": total,
+            "level_mean": float(np.average(mean_z[member], weights=weight)),
+            "level_min": float(zs.min()),
+            "level_max": float(zs.max()),
+            "fall": fall,
+            "fall_bearing": bearing,
+            "mean_grade": float(np.average(slope[member], weights=weight)),
+            "share_below_min_fall": float(weight[slope[member] < min_fall].sum() / total),
+            "below_min_fall": fall < min_fall,
+            "triangles": int(member.sum()),
+            "polygons": outline_polygons(xyz, faces[member]) if outlines else [],
+        })
+    platforms.sort(key=lambda item: -item["area"])
+    for number, item in enumerate(platforms, 1):
+        item["id"] = f"P{number}"
+    return {
+        "plan_area": float(area.sum()),
+        "class_areas": class_areas,
+        "platforms": platforms,
+        "flat": flat,
+        "min_fall": min_fall,
+        "min_area": min_area,
+        "flat_area_in_small_patches": class_areas["flat"] - sum(item["area"] for item in platforms),
+    }
+
+
+def platform_report_html(summary, surface, units, source_file="", warnings=()):
+    """HTML report of slope classes and platforms; areas in ``units.area``, levels in ``units.depth``."""
+    from .reports import _document, _table
+
+    a, d = units.area, units.depth
+    total = summary["plan_area"] or 1.0
+    class_rows = [(label, summary["class_areas"][key], 100.0 * summary["class_areas"][key] / total)
+                  for key, label in SLOPE_CLASSES]
+    rows = [
+        (item["id"], item["area"], item["level_mean"], item["level_min"], item["level_max"],
+         100.0 * item["fall"], "–" if item["fall_bearing"] is None else f"{item['fall_bearing']:.0f}°",
+         100.0 * item["mean_grade"], 100.0 * item["share_below_min_fall"],
+         "below minimum fall" if item["below_min_fall"] else "")
+        for item in summary["platforms"]
+    ]
+    flagged = sum(1 for item in summary["platforms"] if item["below_min_fall"])
+    body = [
+        f"<p class='meta'>Source: {html.escape(source_file)} · design surface: {html.escape(surface)}</p>",
+        f"<p class='note'>Flat means a triangle slope below {100 * summary['flat']:g} %. Touching flat triangles "
+        f"form a platform; platforms under {summary['min_area']:g} {a} are not listed. Overall fall and its "
+        "downhill direction (bearing in the output coordinates) come from an area-weighted plane fit; mean "
+        f"local grade averages the triangle slopes. Platforms whose overall fall is below {100 * summary['min_fall']:g} % "
+        "are flagged, because water can pond on them.</p>",
+        "<h2>Slope classes</h2>",
+        _table(["Class", f"Area ({a})", "Share (%)"], class_rows, 2),
+        f"<h2>Platforms ({len(rows)}; {flagged} below minimum fall)</h2>",
+        _table(["Platform", f"Area ({a})", f"Mean level ({d})", f"Min ({d})", f"Max ({d})", "Overall fall (%)",
+                "Falls towards", "Mean local grade (%)", "Area flatter than minimum (%)", "Flag"], rows, 2),
+    ]
+    if warnings:
+        body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
+    return _document("Platform levels and falls", "".join(body))

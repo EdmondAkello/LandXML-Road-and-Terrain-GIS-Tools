@@ -1,8 +1,10 @@
-"""Grading Quantities (Volume Surface) Processing tool.
+"""Grading Processing tools.
 
-Exact cut/fill volumes, plan areas and depth bands from a volume (depth) TIN
-surface such as a Civil 3D TIN volume surface, with an optional check
-against the Civil 3D cut/fill summary.
+* Grading Quantities (Volume Surface): exact cut/fill volumes, plan areas and
+  depth bands from a volume (depth) TIN such as a Civil 3D TIN volume surface,
+  with an optional check against the Civil 3D cut/fill summary.
+* Platform Levels and Falls: slope classes, platforms, levels and falls of a
+  design (finished-level) surface.
 """
 
 from __future__ import annotations
@@ -12,14 +14,23 @@ import os
 
 from qgis.core import (
     Qgis,
+    QgsFeature,
+    QgsField,
+    QgsFields,
+    QgsGeometry,
+    QgsPointXY,
+    QgsProcessing,
     QgsProcessingException,
     QgsProcessingOutputNumber,
     QgsProcessingOutputString,
+    QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFileDestination,
     QgsProcessingParameterNumber,
     QgsProcessingParameterString,
+    QgsWkbTypes,
 )
 
+from .compat import FIELD_DOUBLE, FIELD_INT, FIELD_STRING
 from .core import read_tin, transform_vertices
 from .earthworks_algorithm import (
     GROUP,
@@ -33,10 +44,13 @@ from .earthworks_algorithm import (
     _write_text,
 )
 from .landxml.catalog import read_catalog
+from .landxml.quantity_units import LINEAR_UNITS
 from .landxml.grading import (
     depth_warning,
     grading_report_html,
     parse_bands,
+    platform_report_html,
+    platform_summary,
     reconcile,
     suggest_volume_surface,
     volume_summary,
@@ -215,3 +229,136 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             "CHECK": status, "VOLUME_UNIT": units.volume,
             "REPORT": report or "", "BANDS_CSV": bands_csv or "",
         }
+
+
+PLATFORM_FIELDS = (
+    ("platform", FIELD_STRING), ("area", FIELD_DOUBLE), ("level_mean", FIELD_DOUBLE),
+    ("level_min", FIELD_DOUBLE), ("level_max", FIELD_DOUBLE), ("fall_pct", FIELD_DOUBLE),
+    ("fall_bearing", FIELD_DOUBLE), ("mean_grade_pct", FIELD_DOUBLE), ("flatter_than_min_pct", FIELD_DOUBLE),
+    ("below_min_fall", FIELD_INT), ("triangles", FIELD_INT),
+)
+
+
+def _polygon(polygons):
+    parts = [[[QgsPointXY(float(x), float(y)) for x, y in ring] + [QgsPointXY(float(ring[0][0]), float(ring[0][1]))]
+              for ring in [outer, *holes]] for outer, holes in polygons]
+    return QgsGeometry.fromMultiPolygonXY(parts)
+
+
+class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
+    def createInstance(self):
+        return PlatformLevelsAlgorithm()
+
+    def name(self):
+        return "landxml_platform_levels"
+
+    def displayName(self):
+        return "Platform Levels and Falls"
+
+    def group(self):
+        return GROUP
+
+    def groupId(self):
+        return GROUP_ID
+
+    def shortHelpString(self):
+        return (
+            "Finds the platforms on a design (finished-level) TIN surface and checks their falls. Each triangle is "
+            "classed by slope as flat (below the flat threshold), sloping (up to 30 %), batter (30 % to 250 %, "
+            "1V:3.3H to 1V:0.4H) or near-vertical (retained edges). Flat triangles that share an edge form a "
+            "platform. For each platform the tool reports area, mean, minimum and maximum level, the overall fall "
+            "and the direction it falls towards (bearing in the output coordinates, from an area-weighted plane "
+            "fit), the mean local grade and the share of its area flatter than the minimum fall. Platforms whose "
+            "overall fall is below the minimum are flagged, because water can pond on them.\n\n"
+            "Outputs are platform polygons with these fields and an HTML report with the area in each slope class. "
+            "Slopes account for the horizontal and vertical units; the Helmert option's scale changes plan "
+            "distances. Leave the surface blank only when the file has a single surface."
+        )
+
+    def initAlgorithm(self, config=None):
+        _input_param(self)
+        self.addParameter(name_param("DESIGN_SURFACE", "Design (finished-level) surface", "surfaces"))
+        self.addParameter(number_param("FLAT_PCT", "Flat threshold (% slope)", 2.0, 0.01, 30.0, decimals=2))
+        self.addParameter(number_param("MIN_FALL_PCT", "Minimum platform fall (%)", 0.5, 0.0, 30.0, decimals=2))
+        self.addParameter(number_param("MIN_AREA", "Smallest platform to list (output area units)", 50.0, 0.0, 1e12, decimals=1))
+        _param_coordinates(self)
+        self.addParameter(
+            QgsProcessingParameterFeatureSink("OUTPUT", "Platforms", type=QgsProcessing.SourceType.TypeVectorPolygon)
+        )
+        self.addParameter(
+            QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
+        )
+        self.addOutput(QgsProcessingOutputNumber("PLATFORM_COUNT", "Platforms listed"))
+        self.addOutput(QgsProcessingOutputNumber("FLAGGED_COUNT", "Platforms below the minimum fall"))
+
+    def processAlgorithm(self, p, c, fb):
+        path = self.parameterAsFile(p, "INPUT", c)
+        if not path or not os.path.isfile(path):
+            raise QgsProcessingException("Input LandXML file does not exist.")
+        method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
+        horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
+        if horizontal is None:
+            raise QgsProcessingException("Platform falls require an output CRS in metres, feet or US survey feet.")
+        units = _quantity_units(doc, fb, horizontal, allow_mixed=True)
+        vertical_factor = LINEAR_UNITS[doc.vertical_unit.lower()][0] / LINEAR_UNITS[horizontal.lower()][0]
+
+        catalog = read_catalog(path)
+        requested = self.parameterAsString(p, "DESIGN_SURFACE", c).strip()
+        if requested:
+            surface = _resolve(catalog.surfaces, requested, "design surface")
+        elif len(catalog.surfaces) == 1:
+            surface = catalog.surfaces[0]
+        else:
+            raise QgsProcessingException(
+                f"Choose the design (finished-level) surface. Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
+            )
+        try:
+            xyz, faces, meta = read_tin(path, surface, cancel=fb.isCanceled)
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        if meta["invisible_face_count"]:
+            fb.pushInfo(f"{surface}: skipped {meta['invisible_face_count']:,} hidden triangles.")
+        if fb.isCanceled():
+            raise QgsProcessingException("Platform levels cancelled.")
+        try:
+            summary = platform_summary(
+                transform_vertices(xyz, method=method, **params), faces, vertical_factor,
+                self.parameterAsDouble(p, "FLAT_PCT", c) / 100.0,
+                self.parameterAsDouble(p, "MIN_FALL_PCT", c) / 100.0,
+                self.parameterAsDouble(p, "MIN_AREA", c),
+            )
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        warnings = []
+        if summary["plan_area"] and summary["class_areas"]["flat"] / summary["plan_area"] < 0.05:
+            warnings.append("Less than 5 % of this surface is flat. Check that it is the design (finished-level) "
+                            "surface, not existing ground or a volume surface.")
+        for text in warnings:
+            fb.pushWarning(text)
+
+        fields = QgsFields()
+        for name, kind in PLATFORM_FIELDS:
+            fields.append(QgsField(name, kind))
+        sink, dest = self.parameterAsSink(p, "OUTPUT", c, fields, QgsWkbTypes.Type.MultiPolygon, crs)
+        if sink is None:
+            raise QgsProcessingException("Could not create the platforms output.")
+        for item in summary["platforms"]:
+            feature = QgsFeature(fields)
+            feature.setGeometry(_polygon(item["polygons"]))
+            feature.setAttributes([
+                item["id"], item["area"], item["level_mean"], item["level_min"], item["level_max"],
+                100.0 * item["fall"], item["fall_bearing"], 100.0 * item["mean_grade"],
+                100.0 * item["share_below_min_fall"], int(item["below_min_fall"]), item["triangles"],
+            ])
+            sink.addFeature(feature)
+            bearing = "" if item["fall_bearing"] is None else f" towards {item['fall_bearing']:.0f}°"
+            fb.pushInfo(f"{item['id']}: {item['area']:,.1f} {units.area}, level {item['level_mean']:.3f} "
+                        f"({item['level_min']:.3f}–{item['level_max']:.3f}) {units.depth}, fall {100 * item['fall']:.2f} %"
+                        f"{bearing}" + ("; below minimum fall" if item["below_min_fall"] else ""))
+        flagged = sum(1 for item in summary["platforms"] if item["below_min_fall"])
+        fb.pushInfo(f"{len(summary['platforms'])} platforms; {flagged} below the minimum fall.")
+        report = self.parameterAsFileOutput(p, "REPORT", c)
+        if report:
+            _write_text(report, platform_report_html(summary, surface, units, os.path.basename(path), warnings))
+        return {"OUTPUT": dest, "REPORT": report or "", "PLATFORM_COUNT": len(summary["platforms"]),
+                "FLAGGED_COUNT": flagged}

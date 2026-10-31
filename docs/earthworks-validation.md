@@ -65,3 +65,5 @@ Grading Quantities (Volume Surface) was run on two private site-grading exports,
 | E2 | +0.003 | −0.004 | −0.002 | PASS |
 
 All differences are within the rounding of the Civil 3D tables. Cut, fill and at-grade areas and the depth-band areas each sum to the plan area. Each run took about 55 s on a 136 MB file, most of it parsing. Project names, volumes and coordinates are withheld.
+
+Platform Levels and Falls was run on the finished-level surfaces of E1 and E2 (12,707 and 9,119 triangles). E1 has five platforms, all dead level and flagged below the 0.5 % minimum fall, as designed. E2 has seven: two level pads flagged, four with falls of 1.0 to 1.8 % in the designed directions, and the main platform at 0.39 % overall fall, flagged for review. Every platform polygon is valid, and its area equals the summed area of its triangles to 0.01 m². Each run took under a second after parsing.
