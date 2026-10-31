@@ -296,6 +296,7 @@ a { color: var(--accent); }
 
 <h2 id="complete"><span class="sec">7</span>Complete Road Design to GeoPackage</h2>
 <p>For a first import, run <b>Export Complete Road Design to GeoPackage</b>. In one pass it writes an engineering GeoPackage and, optionally, a DEM and contours.</p>
+<p><b>Automatic output selection.</b> Leave the Include options enabled to export all available data. Outputs with no exportable features are skipped after applying the alignment/surface filters and checking dependencies. Missing profiles, sections or terrain do not need to be unchecked first. Empty layers are omitted from the saved package and from QGIS; the Processing log reports skipped outputs. Invalid-data errors and warnings still apply. If no engineering vector layers are produced, no engineering GeoPackage is retained; DEMs can still be exported independently. A contour GeoPackage is omitted when the requested interval produces no contour lines.</p>
 <p><b>Automatic terrain names.</b> DEM and contour filenames retain the XML basename, add the embedded surface name, and include a supported role such as existing ground or finished grade. For example, surface <code>FG Road</code> in <code>combined.xml</code> produces <code>combined_Finished_Grade_FG_Road_DEM.tif</code> and <code>combined_Finished_Grade_FG_Road_Contours.gpkg</code>. Roles come from surface names/descriptions, explicit state or Prepare LandXML metadata; datum and generic design/proposed surfaces are not labelled finished grade. Unknown or conflicting roles retain a neutral name. Unsafe characters are replaced, unnamed surfaces get numbered fallbacks, and duplicate filenames receive numeric suffixes. The mixed engineering package remains <code>combined_GIS.gpkg</code> with its existing tables. Other tools keep user-selected output paths. Earlier exports are not renamed; update scripts that expect the former numbered terrain filenames.</p>
 <table>
   <thead><tr><th style="width:34%">Parameter</th><th class="num" style="width:16%">Default</th><th>Guidance</th></tr></thead>
@@ -307,7 +308,7 @@ a { color: var(--accent); }
     <tr><td>Alignment segment length</td><td class="num">5</td><td>Densification of curves and spirals.</td></tr>
     <tr><td>Station interval</td><td class="num">20</td><td>Station points at whole multiples of the interval.</td></tr>
     <tr><td>Profile interval</td><td class="num">5</td><td>Sampling of profile graph lines.</td></tr>
-    <tr><td>Include … toggles</td><td class="num">on</td><td>Turn off layers you do not need.</td></tr>
+    <tr><td>Include … toggles</td><td class="num">on</td><td>Export all available data automatically; missing outputs are skipped. Turn off an option to exclude available data you do not need.</td></tr>
     <tr><td>Load exported layers into the project</td><td class="num">on</td><td>After success, QGIS loads the generated GeoPackage layers, retained DEMs and contours into the run's project. Turn off to export files only. Temporary DEMs used only for contours and disabled outputs are not loaded. Failed/cancelled exports do not queue partial results. Runs without a project still export normally. Source XML links support the Profile Viewer. Profile graphs remain station/elevation diagrams without a map CRS.</td></tr>
   </tbody>
 </table>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic design with every complete-export output type and partial selections. -->
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Metric linearUnit="meter"/></Units>
+  <Surfaces>
+    <Surface name="EG">
+      <SourceData>
+        <Breaklines><Breakline name="Edge"><PntList3D>0 0 1 10 0 5</PntList3D></Breakline></Breaklines>
+        <FeatureLine name="Design line"><PntList3D>0 0 1 0 10 9</PntList3D></FeatureLine>
+      </SourceData>
+      <Definition surfType="TIN"><Pnts><P id="1">0 0 1</P><P id="2">10 0 5</P><P id="3">0 10 9</P></Pnts><Faces><F>1 2 3</F></Faces></Definition>
+    </Surface>
+    <Surface name="Design">
+      <Definition surfType="TIN"><Pnts><P id="1">0 0 1</P><P id="2">10 0 5</P><P id="3">0 10 9</P></Pnts><Faces><F>1 2 3</F></Faces></Definition>
+    </Surface>
+  </Surfaces>
+  <Alignments>
+    <Alignment name="Road" staStart="0" length="40">
+      <CoordGeom><Line length="40"><Start>0 0</Start><End>40 0</End></Line></CoordGeom>
+      <Profile><ProfAlign name="Design"><PVI>0 1</PVI><PVI>40 5</PVI></ProfAlign></Profile>
+      <CrossSects><CrossSect sta="20"><CrossSectSurf name="Pavement"><PntList3D>20 -2 3 20 2 3</PntList3D></CrossSectSurf></CrossSect></CrossSects>
+    </Alignment>
+    <Alignment name="Short" staStart="103" length="2">
+      <CoordGeom><Line length="2"><Start>0 10</Start><End>2 10</End></Line></CoordGeom>
+    </Alignment>
+  </Alignments>
+</LandXML>
