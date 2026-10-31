@@ -641,13 +641,14 @@ class ProfileViewerDock(QgsDockWidget):
 
     def sample_rows(self, interval):
         unit = self.document.horizontal_unit if self.document else None
+        mapping = self.document.station_maps().get(self.alignment_combo.currentText()) if self.document else None
         rows = []
         for row in regular_rows(self.result["runs"], interval):
             kind = "fill" if row["depth"] > 0 else "cut" if row["depth"] < 0 else "grade"
             rows.append(
                 (
                     station_label(row["station"], unit),
-                    f"{row['station']:.3f}",
+                    row["station"] if mapping else f"{row['station']:.3f}",
                     f"{row['design']:.3f}",
                     f"{row['ground']:.3f}",
                     f"{row['depth']:.3f}",
@@ -704,6 +705,7 @@ class ProfileViewerDock(QgsDockWidget):
         if not path:
             return
         unit = self.document.horizontal_unit if self.document else None
+        mapping = self.document.station_maps().get(self.alignment_combo.currentText()) if self.document else None
         write_csv(
             path,
             ["from", "to", "sta_start", "sta_end", "kind", "length", "max_depth", "max_station", "mean_depth", "flag"],
@@ -711,18 +713,18 @@ class ProfileViewerDock(QgsDockWidget):
                 (
                     station_label(s["start"], unit),
                     station_label(s["end"], unit),
-                    f"{s['start']:.3f}",
-                    f"{s['end']:.3f}",
+                    s["start"] if mapping else f"{s['start']:.3f}",
+                    s["end"] if mapping else f"{s['end']:.3f}",
                     s["kind"],
                     f"{s['length']:.3f}",
                     f"{s['max_depth']:.3f}",
-                    f"{s['max_station']:.3f}",
+                    s["max_station"] if mapping else f"{s['max_station']:.3f}",
                     f"{s['mean_depth']:.3f}",
                     s["severity"],
                 )
                 for s in self.result["segments"]
             ],
-            self.document.station_maps().get(self.alignment_combo.currentText()), unit,
+            mapping, unit,
         )
         self._message(f"Saved {path}", Qgis.MessageLevel.Success)
 
