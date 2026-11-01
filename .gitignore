@@ -9,3 +9,5 @@ landxml_*-test.zip
 tests/fixtures/openroads/private/
 dist/
 qgis/
+# Local developer architecture graphs
+/graphify-out/
