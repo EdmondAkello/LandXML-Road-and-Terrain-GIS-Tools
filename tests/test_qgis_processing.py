@@ -51,6 +51,8 @@ CIVIL3D = str(ROOT / "tests" / "fixtures" / "civil3d" / "road_minimal.xml")
 CORRIDOR = str(ROOT / "tests" / "fixtures" / "civil3d" / "corridor_synthetic.xml")
 ALIGNMENTS_ONLY = str(ROOT / "tests" / "fixtures" / "generic" / "alignments_only.xml")
 COMPLETE_ROAD = str(ROOT / "tests" / "fixtures" / "generic" / "complete_road.xml")
+GRADING = str(ROOT / "tests" / "fixtures" / "generic" / "grading_volume.xml")
+PLATFORMS = str(ROOT / "tests" / "fixtures" / "generic" / "platforms.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
@@ -76,7 +78,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 18)
+        self.assertEqual(len(self.algorithms), 20)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_toolbox_groups_follow_workflow(self):
@@ -429,6 +431,75 @@ class QgisProcessingTests(unittest.TestCase):
                     grid_messages = [args[0] for args, _ in warning.call_args_list if args[0].startswith("Large raster:")]
                     self.assertEqual(bool(grid_messages), bool(threshold))
                     self.assertTrue(list(Path(directory).glob("*.tif")))
+
+    def test_grading_quantities_exact_volumes_and_reconciliation(self):
+        algorithm = self.algorithms["landxml_grading_quantities"]
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(GRADING, "EPSG:26915")
+            params.update(
+                CIVIL3D_CUT=100.004, CIVIL3D_FILL=99.995, CIVIL3D_AREA=200.0, TOLERANCE=0.01,
+                DEPTH_BANDS="-1, 0, 0.5",
+                REPORT=str(Path(directory) / "grading.html"), BANDS_CSV=str(Path(directory) / "bands.csv"),
+            )
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertAlmostEqual(result["CUT_VOLUME"], 100.0, places=6)
+            self.assertAlmostEqual(result["FILL_VOLUME"], 100.0, places=6)
+            self.assertAlmostEqual(result["NET_VOLUME"], 0.0, places=6)
+            self.assertAlmostEqual(result["PLAN_AREA"], 200.0, places=6)
+            self.assertEqual(result["CHECK"], "PASS")
+            self.assertEqual(result["VOLUME_UNIT"], "m³")
+            report = Path(directory, "grading.html").read_text(encoding="utf-8")
+            self.assertIn("Pad Earthworks", report)
+            self.assertIn("Reconciliation: PASS", report)
+            rows = Path(directory, "bands.csv").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(rows[0], "band,depth_from_m,depth_to_m,area_m²")
+            self.assertEqual(len(rows), 5)
+
+            params.update(CIVIL3D_FILL=101.0, REPORT="", BANDS_CSV="")
+            self.assertEqual(algorithm.processAlgorithm(params, self.context, self.feedback)["CHECK"], "FAIL")
+            for key in ("CIVIL3D_CUT", "CIVIL3D_FILL", "CIVIL3D_AREA"):
+                params.pop(key)
+            self.assertEqual(algorithm.processAlgorithm(params, self.context, self.feedback)["CHECK"], "NOT CHECKED")
+
+            cubic_yards = dict(params, VOLUME_UNITS=1)
+            result = algorithm.processAlgorithm(cubic_yards, self.context, self.feedback)
+            self.assertEqual(result["VOLUME_UNIT"], "CY")
+            self.assertAlmostEqual(result["CUT_VOLUME"], 100.0 / 0.9144 ** 3, places=6)
+            self.assertAlmostEqual(result["PLAN_AREA"], 200.0, places=6)
+
+    def test_grading_quantities_surface_choice(self):
+        algorithm = self.algorithms["landxml_grading_quantities"]
+        params = self._params(GRADING, "EPSG:26915")
+        result = algorithm.processAlgorithm(dict(params, VOLUME_SURFACE=""), self.context, self.feedback)
+        self.assertAlmostEqual(result["CUT_VOLUME"], 100.0, places=6)
+        warnings = []
+        feedback = QgsProcessingFeedback()
+        feedback.pushWarning = warnings.append
+        algorithm.processAlgorithm(dict(params, VOLUME_SURFACE="Pad EG"), self.context, feedback)
+        self.assertTrue(any("elevation surface" in text for text in warnings))
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, VOLUME_SURFACE="", INPUT=CIVIL3D), self.context, self.feedback)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, DEPTH_BANDS="1, x"), self.context, self.feedback)
+
+    def test_platform_levels_layer_report_and_flags(self):
+        algorithm = self.algorithms["landxml_platform_levels"]
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(PLATFORMS, "EPSG:26915")
+            params.update(OUTPUT=str(Path(directory) / "platforms.gpkg"), REPORT=str(Path(directory) / "platforms.html"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertEqual((result["PLATFORM_COUNT"], result["FLAGGED_COUNT"]), (2, 1))
+            package = ogr.Open(result["OUTPUT"])
+            rows = {feature.GetField("platform"): feature for feature in package.GetLayer(0)}
+            self.assertEqual(set(rows), {"P1", "P2"})
+            levels = sorted((round(f.GetField("level_mean"), 6), round(f.GetField("fall_pct"), 6), f.GetField("below_min_fall"),
+                             round(f.GetGeometryRef().GetArea(), 6)) for f in rows.values())
+            self.assertEqual(levels, [(100.0, 0.0, 1, 400.0), (101.9, 1.0, 0, 400.0)])
+            rows = package = None
+            self.assertIn("Platform levels and falls", Path(directory, "platforms.html").read_text(encoding="utf-8"))
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(self._params(GRADING, "EPSG:26915"), DESIGN_SURFACE="", OUTPUT="memory:"),
+                                       self.context, self.feedback)
 
     def test_complete_export_only_retains_available_layers(self):
         road_layers = {"alignments", "alignment_elements", "station_points"}
