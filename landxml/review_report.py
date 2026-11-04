@@ -234,6 +234,7 @@ def recommended_landxml(alignment_element, model, profile_name, unit="meter"):
     ]
     if geometry is not None:
         lines.append(_serialize(geometry, level=3))
+    lines.extend(_serialize(e, level=3) for e in alignment_element if local_name(e.tag) == "StaEquation")
     lines.append(f"      <Profile name={quoteattr(attributes.get('name', 'Profile'))}>")
     lines.append(f"        <ProfAlign name={quoteattr(profile_name)}>")
     for index, p in enumerate(model.pvis):

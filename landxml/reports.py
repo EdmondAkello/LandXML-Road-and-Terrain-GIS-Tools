@@ -31,12 +31,25 @@ def station_label(station, horizontal_unit=None, decimals=2):
     return f"{sign}{major}+{minor:0{width + decimals + 1}.{decimals}f}"
 
 
-def write_csv(path, header, rows):
+def write_csv(path, header, rows, station_map=None, horizontal_unit=None):
+    columns = [(i, name) for i, name in enumerate(header)
+               if station_map and name in {"station", "sta_start", "sta_end", "max_station"}]
+    extra = [f"{name}_{suffix}" for _, name in columns
+             for suffix in ("engineering", "engineering_label", "region", "distance_along")]
     with open(path, "w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
-        writer.writerow(header)
+        writer.writerow(list(header) + extra)
         for row in rows:
-            writer.writerow(["" if value is None else value for value in row])
+            values = list(row)
+            for index, _ in columns:
+                internal = float(row[index])
+                if not station_map.start <= internal <= station_map.end:
+                    values.extend((None, None, None, None))
+                    continue
+                engineering = station_map.station(internal)
+                values.extend((engineering, station_label(engineering, horizontal_unit),
+                               station_map.region(internal) + 1, internal - station_map.start))
+            writer.writerow(["" if value is None else value for value in values])
 
 
 def _fmt(value, digits=2):
@@ -134,7 +147,21 @@ def _page_rule(title):
     )
 
 
-def _document(title, body):
+def stationing_html(station_maps, unit=None):
+    if not station_maps:
+        return ""
+    rows = [(name, f"R{i + 1} → R{i + 2}", e["staInternal"] - mapping.start,
+             e["staInternal"], station_label(e["staBack"], unit), station_label(e["staAhead"], unit))
+            for name, mapping in station_maps.items() for i, e in enumerate(mapping.equations)]
+    return ("<h2>Station equations</h2><p class='note'>Charts, numeric station fields, station ranges, "
+            "speed ranges and quantity intervals use continuous internal station (alignment start plus distance). "
+            "Engineering labels change at the equations below; lengths and volumes do not. "
+            "R1 is before the first equation; R2 follows it. The ahead label owns the equation boundary.</p>"
+            + _table(["Alignment", "Regions", "Distance along", "Internal station", "Back", "Ahead"], rows, 3))
+
+
+def _document(title, body, station_maps=None, horizontal_unit=None):
+    body = stationing_html(station_maps, horizontal_unit) + body
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -317,7 +344,7 @@ def line_svg(points, horizontal_unit=None, label="", width=1000, height=260, col
     return "".join(parts)
 
 
-def profile_report_html(results, horizontal_unit=None, vertical_unit=None, source_file="", volume_unit="auto"):
+def profile_report_html(results, horizontal_unit=None, vertical_unit=None, source_file="", volume_unit="auto", station_maps=None):
     """``results`` is a list of dicts: alignment, design, ground, runs, segments,
     transitions, summary, template (optional), excluded."""
     unit = horizontal_unit or "source units"
@@ -393,10 +420,10 @@ def profile_report_html(results, horizontal_unit=None, vertical_unit=None, sourc
         body.append("</div>")
     if vertical_unit is None:
         body.append("<p class='note'>The LandXML file does not declare a vertical unit.</p>")
-    return _document("Profile cut/fill analysis", "".join(body))
+    return _document("Profile cut/fill analysis", "".join(body), station_maps, horizontal_unit)
 
 
-def corridor_report_html(results, horizontal_unit=None, source_file="", vertical_unit=None, volume_unit="auto"):
+def corridor_report_html(results, horizontal_unit=None, source_file="", vertical_unit=None, volume_unit="auto", station_maps=None):
     """``results``: list of dicts with alignment, ground, design, quantities, settings."""
     units = quantity_units(horizontal_unit, vertical_unit, volume_unit=volume_unit)
     body = [
@@ -470,7 +497,7 @@ def corridor_report_html(results, horizontal_unit=None, source_file="", vertical
                 + "; ".join(f"{count} × {html.escape(reason)}" for reason, count in reasons.items())
                 + "</p>"
             )
-    return _document("Corridor section quantities", "".join(body))
+    return _document("Corridor section quantities", "".join(body), station_maps, horizontal_unit)
 
 
 def surface_report_html(stats, base, compare, resolution, units, civil3d=None, source_file="", vertical_unit=None, volume_unit="auto"):

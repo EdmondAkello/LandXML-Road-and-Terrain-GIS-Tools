@@ -8,11 +8,94 @@ direction of increasing station. All values are in source coordinates.
 
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 import math
 import re
 
 from .quantity_units import LINEAR_UNITS
+from .common import local_name
+
+
+class StationMap:
+    """Increasing roadway station regions; geometry always uses internal station."""
+
+    def __init__(self, start, end, equations=(), name="Alignment"):
+        self.start, self.end = float(start), float(end)
+        if not all(math.isfinite(v) for v in (self.start, self.end)) or self.end < self.start:
+            raise ValueError(f"{name}: invalid internal station range.")
+        self.equations = []
+        previous, shift = None, 0.0
+        for index, attributes in enumerate(equations, 1):
+            label = f"{name}: station equation {index}"
+            try:
+                internal = float(attributes["staInternal"])
+                ahead = float(attributes["staAhead"])
+                back = float(attributes.get("staBack", internal + shift))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"{label}: invalid staInternal, staBack or staAhead.") from exc
+            if not all(math.isfinite(v) for v in (internal, ahead, back)):
+                raise ValueError(f"{label}: stations must be finite.")
+            if not self.start <= internal <= self.end or (previous is not None and internal <= previous):
+                raise ValueError(f"{label}: positions must be within the alignment and strictly increasing.")
+            if attributes.get("staIncrement", "increasing") != "increasing":
+                raise ValueError(f"{label}: only increasing staIncrement is supported; decreasing or unknown progression is unsupported.")
+            if not math.isclose(back, internal + shift, rel_tol=0, abs_tol=1e-6):
+                raise ValueError(f"{label}: staBack disagrees with the preceding station region.")
+            self.equations.append(dict(attributes, staInternal=internal, staBack=back, staAhead=ahead))
+            previous, shift = internal, ahead - internal
+        self.breaks = [e["staInternal"] for e in self.equations]
+
+    @classmethod
+    def from_element(cls, element, end):
+        equations = [dict(node.attrib) for node in element if local_name(node.tag) == "StaEquation"]
+        if not equations:
+            return None
+        try:
+            start = float(element.attrib.get("staStart", element.attrib.get("startStation", "")))
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"{element.attrib.get('name', 'Alignment')}: station equations require a finite declared start station.") from exc
+        return cls(start, end, equations, element.attrib.get("name", "Alignment"))
+
+    def region(self, internal):
+        return bisect_right(self.breaks, internal)
+
+    def station(self, internal, region=None):
+        """Ahead label owns a boundary unless an incoming region is explicit."""
+        if not math.isfinite(internal) or not self.start <= internal <= self.end:
+            raise ValueError("Internal station is outside the alignment.")
+        region = self.region(internal) if region is None else region
+        if not 0 <= region <= len(self.equations):
+            raise ValueError("Unknown station region.")
+        low = self.start if region == 0 else self.breaks[region - 1]
+        high = self.end if region == len(self.equations) else self.breaks[region]
+        if not low <= internal <= high:
+            raise ValueError("Internal station is outside the selected region.")
+        shift = 0 if region == 0 else self.equations[region - 1]["staAhead"] - low
+        return internal + shift
+
+    def candidates(self, station):
+        """Return (internal station, region) candidates, including both boundary labels."""
+        if not math.isfinite(station):
+            raise ValueError("Station must be finite.")
+        result = []
+        bounds = [self.start, *self.breaks, self.end]
+        for region, (low, high) in enumerate(zip(bounds, bounds[1:])):
+            shift = 0 if region == 0 else self.equations[region - 1]["staAhead"] - low
+            internal = station - shift
+            if low <= internal <= high:
+                result.append((internal, region))
+        return result
+
+    def resolve(self, station, region=None):
+        candidates = self.candidates(station)
+        if region is not None:
+            candidates = [c for c in candidates if c[1] == region]
+        positions = {c[0] for c in candidates}
+        if not positions:
+            raise ValueError("Station does not exist in the alignment or selected region.")
+        if len(positions) > 1:
+            raise ValueError("Station is ambiguous; choose a station region.")
+        return candidates[-1]
 
 
 def parse_station(text, horizontal_unit=None):
@@ -37,7 +120,8 @@ def parse_station(text, horizontal_unit=None):
 
 
 class StationedPolyline:
-    def __init__(self, points, distances, station_start):
+    def __init__(self, points, distances, station_start, station_map=None):
+        self.station_map = station_map
         if len(points) != len(distances):
             raise ValueError("Alignment vertices and distances do not match")
         self.points = []
@@ -62,7 +146,7 @@ class StationedPolyline:
             distances = [0.0]
             for a, b in zip(alignment["points"], alignment["points"][1:]):
                 distances.append(distances[-1] + math.dist(a, b))
-        return cls(alignment["points"], distances, float(alignment["sta_start"]))
+        return cls(alignment["points"], distances, float(alignment["sta_start"]), alignment.get("station_map"))
 
     @property
     def station_start(self):

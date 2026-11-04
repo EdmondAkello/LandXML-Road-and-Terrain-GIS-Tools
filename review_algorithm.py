@@ -218,6 +218,10 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
             raise QgsProcessingException(str(exc)) from exc
         doc = load_document(path)
         try:
+            doc.station_maps()
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        try:
             criteria.set_linear_unit(doc.horizontal_unit, doc.vertical_unit)
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
@@ -294,7 +298,7 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
                 for r in results
             )
             with open(report, "w", encoding="utf-8") as stream:
-                stream.write(_document("Geometric design review", f"<p class='meta'>Source: {os.path.basename(path)}</p>" + body))
+                stream.write(_document("Geometric design review", f"<p class='meta'>Source: {os.path.basename(path)}</p>" + body, doc.station_maps(), doc.horizontal_unit))
             outputs["REPORT"] = report
         reviewed = [r for r in results if r["recommended"] is not None]
         text_path = self.parameterAsFileOutput(p, "PROFILE_TXT", c)
