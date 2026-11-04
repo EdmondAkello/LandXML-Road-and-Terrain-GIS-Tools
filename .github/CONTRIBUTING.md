@@ -32,7 +32,7 @@ A LandXML file that reproduces the problem helps most. If the design is confiden
 You need Python with NumPy and GDAL (the Python that ships with QGIS works).
 
 ```bash
-python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py   # as CI runs them
+python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py tests/test_grading.py   # as CI runs them
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -t . -v  # full suite; needs QGIS, as in the QGIS CI jobs
 bandit -q -r . -x ./tests,./dist
 ```

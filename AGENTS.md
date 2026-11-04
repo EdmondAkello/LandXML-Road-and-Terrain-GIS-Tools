@@ -33,7 +33,7 @@ Source: [upstream contribution guide](https://github.com/EdmondAkello/LandXML-Ro
 - Parser, earthworks, criteria-table tests, and Bandit must pass. Run affected QGIS tests in a QGIS environment; report any unavailable runtime checks.
 
 ```sh
-python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py
+python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py tests/test_grading.py
 python3 -m unittest -v tests/test_qgis_processing.py tests/test_prepare.py tests/test_gui.py
 bandit -q -r . -x ./tests,./dist
 ```

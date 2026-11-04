@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic finished-level surface (coordinates stored first-x, second-y).
+     Platform A: 20 x 20 m dead level at 100.0 (no fall).
+     Batter: 4 m wide strip rising 2 m (slope 50 %, 80 m2).
+     Platform B: 20 x 20 m from 102.0 to 101.8, falling 1 % towards +x (bearing 90 degrees). -->
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Metric linearUnit="meter" verticalLinearUnit="meter" areaUnit="squareMeter"/></Units>
+  <Surfaces>
+    <Surface name="Yard FWL">
+      <Definition surfType="TIN">
+        <Pnts><P id="1">0 0 100.0000</P><P id="2">0 10 100.0000</P><P id="3">0 20 100.0000</P><P id="4">10 0 100.0000</P><P id="5">10 10 100.0000</P><P id="6">10 20 100.0000</P><P id="7">20 0 100.0000</P><P id="8">20 10 100.0000</P><P id="9">20 20 100.0000</P><P id="10">24 0 102.0000</P><P id="11">24 10 102.0000</P><P id="12">24 20 102.0000</P><P id="13">34 0 101.9000</P><P id="14">34 10 101.9000</P><P id="15">34 20 101.9000</P><P id="16">44 0 101.8000</P><P id="17">44 10 101.8000</P><P id="18">44 20 101.8000</P></Pnts>
+        <Faces><F>1 4 5</F><F>1 5 2</F><F>2 5 3</F><F>5 6 3</F><F>4 7 5</F><F>7 8 5</F><F>5 8 9</F><F>5 9 6</F><F>7 10 11</F><F>7 11 8</F><F>8 11 9</F><F>11 12 9</F><F>10 13 11</F><F>13 14 11</F><F>11 14 15</F><F>11 15 12</F><F>13 16 17</F><F>13 17 14</F><F>14 17 15</F><F>17 18 15</F></Faces>
+      </Definition>
+    </Surface>
+  </Surfaces>
+</LandXML>

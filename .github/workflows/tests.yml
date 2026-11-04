@@ -21,7 +21,7 @@ jobs:
       - name: No merge-conflict markers
         run: "! git grep -n -E '^(<<<<<<<|=======|>>>>>>>)( |$)' -- '*.py' '*.md' '*.html' '*.json' '*.txt' '*.yml'"
       - name: Run tests
-        run: python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py
+        run: python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py tests/test_grading.py
 
   qgis-tests:
     name: QGIS runtime tests (${{ matrix.image }})
