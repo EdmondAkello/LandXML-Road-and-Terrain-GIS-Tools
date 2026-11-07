@@ -81,7 +81,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 22)
+        self.assertEqual(len(self.algorithms), 23)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
@@ -633,6 +633,45 @@ class QgisProcessingTests(unittest.TestCase):
                 algorithm.processAlgorithm(dict(params, VOLUME_SURFACES=bad, REPORT="", TABLE_CSV=""), self.context, self.feedback)
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, SHRINKAGE="0", REPORT="", TABLE_CSV=""), self.context, self.feedback)
+
+    def test_grading_revision_comparison_zones_and_change_raster(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsVectorLayer
+
+        algorithm = self.algorithms["landxml_grading_revision_comparison"]
+        zones = QgsVectorLayer("Polygon?crs=EPSG:26915&field=name:string", "zones", "memory")
+        feature = QgsFeature(zones.fields())
+        feature.setGeometry(QgsGeometry.fromWkt("POLYGON((-1 -1, 11 -1, 11 21, -1 21, -1 -1))"))
+        feature.setAttributes(["Pad"])
+        zones.dataProvider().addFeatures([feature])
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(BALANCE, "EPSG:26915")
+            params.update(SURFACE_A="Site A Earthworks", SURFACE_B="Site B Earthworks", LABEL_A="Rev 1", LABEL_B="Rev 2",
+                          ZONES=zones, ZONE_FIELD="name", OUTPUT="memory:", RESOLUTION=1.0,
+                          REPORT=str(Path(directory) / "compare.html"), CHANGE_RASTER=str(Path(directory) / "change.tif"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertAlmostEqual(result["CUT_CHANGE"], -100.0, places=6)
+            self.assertAlmostEqual(result["FILL_CHANGE"], 0.0, places=6)
+            self.assertAlmostEqual(result["NET_CHANGE"], 100.0, places=6)
+            rows = {f["zone"]: f for f in self.context.getMapLayer(result["OUTPUT"]).getFeatures()}
+            self.assertEqual(set(rows), {"Pad", "Outside zones", "All"})
+            self.assertAlmostEqual(rows["Pad"]["cut_a"], 100.0, places=6)
+            self.assertAlmostEqual(rows["Outside zones"]["fill_b"], 100.0, places=6)
+            raster = gdal.Open(result["CHANGE_RASTER"])
+            band = raster.GetRasterBand(1)
+            values = band.ReadAsArray()
+            valid = values[values != band.GetNoDataValue()]
+            self.assertAlmostEqual(float(valid.max()), 1.9, places=3)  # cell centre at 0.5 m: 0 − (0.5 − 10) / 5
+            self.assertTrue(np.isclose(valid, 1.0).any())
+            band = raster = None
+            text = Path(directory, "compare.html").read_text(encoding="utf-8")
+            self.assertIn("Rev 1 cut", text)
+            self.assertIn("By zone", text)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, INPUT_B="/nonexistent.xml", REPORT="", CHANGE_RASTER=None, ZONES=None),
+                                       self.context, self.feedback)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, SURFACE_B="", REPORT="", CHANGE_RASTER=None, ZONES=None),
+                                       self.context, self.feedback)
 
     def test_complete_export_only_retains_available_layers(self):
         road_layers = {"alignments", "alignment_elements", "station_points"}

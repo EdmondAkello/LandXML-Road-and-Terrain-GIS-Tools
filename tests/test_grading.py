@@ -29,6 +29,11 @@ from landxml_plugin.landxml.grading import (
     DEFAULT_BANDS,
     balance_report_html,
     basin_report_html,
+    change_grid,
+    comparison_report_html,
+    revision_comparison,
+    scale_comparison,
+    zone_labels,
     earthwork_balance,
     parse_factors,
     spill_level,
@@ -384,6 +389,62 @@ class BalanceTests(unittest.TestCase):
         text = balance_report_html(earthwork_balance(self.SITES, (0.9,), 0.1, 0.15), units, "balance.xml")
         for expected in ("Earthwork balance", "Balance by shrinkage factor", "Factor 0.90: by site", "Topsoil stripping", "Unsuitable cut"):
             self.assertIn(expected, text)
+
+
+class RevisionComparisonTests(unittest.TestCase):
+    def setUp(self):
+        # depth = (y - 10) / 5 on a 10 x 20 m grid of unit cells; the second revision adds 1 m of fill everywhere
+        self.first = _grid(10, 20, z=lambda x, y: (y - 10) / 5)
+        raised = self.first[0].copy()
+        raised[:, 2] += 1.0
+        self.second = (raised, self.first[1])
+        self.zones = [("South", [([(0, 0), (10, 0), (10, 10), (0, 10)], [])]),
+                      ("North", [([(0, 10), (10, 10), (10, 20), (0, 20)], [])])]
+
+    def test_totals_and_zone_changes_match_closed_form(self):
+        result = revision_comparison(self.first, self.second, self.zones)
+        total = result["total"]
+        self.assertAlmostEqual(total["cut_a"], 100.0, places=9)
+        self.assertAlmostEqual(total["fill_a"], 100.0, places=9)
+        self.assertAlmostEqual(total["cut_b"], 25.0, places=9)
+        self.assertAlmostEqual(total["fill_b"], 225.0, places=9)
+        self.assertAlmostEqual(total["net_change"], 200.0, places=9)
+        zones = {row["name"]: row for row in result["zones"]}
+        self.assertEqual(list(zones), ["South", "North"])
+        self.assertAlmostEqual(zones["South"]["cut_a"], 100.0, places=9)
+        self.assertAlmostEqual(zones["South"]["fill_b"], 25.0, places=9)
+        self.assertAlmostEqual(zones["South"]["cut_b"], 25.0, places=9)
+        self.assertAlmostEqual(zones["North"]["fill_a"], 100.0, places=9)
+        self.assertAlmostEqual(zones["North"]["fill_b"], 200.0, places=9)
+        scaled = scale_comparison(result, 2.0)
+        self.assertAlmostEqual(scaled["total"]["fill_b"], 450.0, places=9)
+        self.assertEqual(scaled["total"]["area_b"], total["area_b"])
+
+    def test_without_zones_and_outside_zone(self):
+        result = revision_comparison(self.first, self.second, self.zones[:1])
+        self.assertEqual([row["name"] for row in result["zones"]], ["South", "Outside zones"])
+        self.assertEqual([row["name"] for row in revision_comparison(self.first, self.second)["zones"]], ["Outside zones"])
+
+    def test_zone_labels_respect_holes_and_order(self):
+        ring = [(0, 0), (10, 0), (10, 10), (0, 10)]
+        hole = [(4, 4), (6, 4), (6, 6), (4, 6)]
+        points = np.array([(5, 5), (1, 1), (20, 20)], dtype=float)
+        labels = zone_labels(points, [("Ring", [(ring, [hole])]), ("All", [(ring, [])])])
+        self.assertEqual(labels.tolist(), ["All", "Ring", "Outside zones"])
+
+    def test_change_grid_treats_missing_depth_as_zero(self):
+        nodata = -9999.0
+        first = np.array([[1.0, nodata], [nodata, 2.0]], dtype=np.float32)
+        second = np.array([[3.0, 0.5], [nodata, nodata]], dtype=np.float32)
+        self.assertEqual(change_grid(first, second, nodata).tolist(), [[2.0, 0.5], [nodata, -2.0]])
+
+    def test_comparison_report(self):
+        units = quantity_units("meter", "meter")
+        result = revision_comparison(self.first, self.second, self.zones)
+        text = comparison_report_html(result, ("Rev B", "Rev C"), units, ("b.xml", "c.xml"))
+        for expected in ("Grading revision comparison", "By zone", "Rev B cut", "Rev C fill", "South", "existing-ground"):
+            self.assertIn(expected, text)
+        self.assertNotIn("By zone", comparison_report_html(revision_comparison(self.first, self.second), ("A", "B"), units))
 
 
 if __name__ == "__main__":
