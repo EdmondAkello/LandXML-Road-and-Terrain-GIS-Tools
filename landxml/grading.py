@@ -650,3 +650,122 @@ def balance_report_html(balance, units, source_file="", warnings=()):
     if warnings:
         body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
     return _document("Earthwork balance", "".join(body))
+
+
+# ------------------------------------------------------- revision comparison
+def _inside_many(points, ring):
+    """Vectorised even-odd test of many (n, 2) points against one closed ring."""
+    x, y = points[:, 0], points[:, 1]
+    inside = np.zeros(len(points), dtype=bool)
+    xs, ys = ring[:, 0], ring[:, 1]
+    for (x0, y0), (x1, y1) in zip(zip(xs, ys), zip(np.roll(xs, -1), np.roll(ys, -1))):
+        if y0 == y1:
+            continue
+        crosses = ((y0 > y) != (y1 > y)) & (x < (x1 - x0) * (y - y0) / (y1 - y0) + x0)
+        inside ^= crosses
+    return inside
+
+
+def zone_labels(points, zones, outside="Outside zones"):
+    """Zone name for each point; ``zones`` is [(name, [(outer, [holes]), ...]), ...]. First match wins."""
+    labels = np.full(len(points), outside, dtype=object)
+    free = np.ones(len(points), dtype=bool)
+    for name, polygons in zones:
+        hit = np.zeros(len(points), dtype=bool)
+        for outer, holes in polygons:
+            part = _inside_many(points, np.asarray(outer, dtype=float))
+            for hole in holes:
+                part &= ~_inside_many(points, np.asarray(hole, dtype=float))
+            hit |= part
+        hit &= free
+        labels[hit] = name
+        free &= ~hit
+    return labels
+
+
+def _zone_volumes(xyz, faces, labels):
+    depths, area = triangles(xyz, faces)
+    fill, cut = split_volumes(depths, area)
+    out = {}
+    for name in dict.fromkeys(labels.tolist()):
+        member = labels == name
+        out[name] = {"cut": float(cut[member].sum()), "fill": float(fill[member].sum()), "area": float(area[member].sum())}
+    return out
+
+
+def revision_comparison(first, second, zones=()):
+    """Compare two volume (depth) surfaces, each ``(xyz, faces)`` in the same coordinates.
+
+    Returns totals and per-zone cut, fill and plan area for both revisions and the
+    change (second − first). Triangles are assigned to zones by their centroid.
+    """
+    result = {"zones": []}
+    totals = []
+    for xyz, faces in (first, second):
+        xyz = np.asarray(xyz, dtype=np.float64)
+        faces = np.asarray(faces, dtype=np.int64)
+        summary = volume_summary(xyz, faces, ())
+        labels = zone_labels(xyz[faces].mean(axis=1)[:, :2], zones) if zones else np.full(len(faces), "Outside zones", dtype=object)
+        totals.append((summary, _zone_volumes(xyz, faces, labels)))
+    (a, zones_a), (b, zones_b) = totals
+    names = [name for name, _polygons in zones] + ["Outside zones"]
+    for name in names:
+        za = zones_a.get(name, {"cut": 0.0, "fill": 0.0, "area": 0.0})
+        zb = zones_b.get(name, {"cut": 0.0, "fill": 0.0, "area": 0.0})
+        if not (za["area"] or zb["area"]):
+            continue
+        result["zones"].append(_change_row(name, za["cut"], za["fill"], za["area"], zb["cut"], zb["fill"], zb["area"]))
+    result["total"] = _change_row("All", a["cut_volume"], a["fill_volume"], a["plan_area"],
+                                  b["cut_volume"], b["fill_volume"], b["plan_area"])
+    return result
+
+
+def _change_row(name, cut_a, fill_a, area_a, cut_b, fill_b, area_b):
+    return {"name": name, "cut_a": cut_a, "fill_a": fill_a, "area_a": area_a, "cut_b": cut_b, "fill_b": fill_b,
+            "area_b": area_b, "cut_change": cut_b - cut_a, "fill_change": fill_b - fill_a,
+            "net_change": (fill_b - cut_b) - (fill_a - cut_a)}
+
+
+def scale_comparison(comparison, factor):
+    """Volumes × ``factor`` (unit conversion); areas unchanged."""
+    keys = ("cut_a", "fill_a", "cut_b", "fill_b", "cut_change", "fill_change", "net_change")
+    scale = lambda row: {k: (v * factor if k in keys else v) for k, v in row.items()}  # noqa: E731
+    return {"zones": [scale(row) for row in comparison["zones"]], "total": scale(comparison["total"])}
+
+
+def comparison_report_html(comparison, labels, units, sources=("", ""), warnings=()):
+    """HTML report; ``labels`` names the two revisions, e.g. ("Rev B", "Rev C")."""
+    from .reports import _document, _table
+
+    v, a = units.volume, units.area
+    first, second = labels
+    header = ["Zone", f"{first} cut ({v})", f"{first} fill ({v})", f"{second} cut ({v})", f"{second} fill ({v})",
+              f"Cut change ({v})", f"Fill change ({v})", f"Net change, fill − cut ({v})", f"{first} area ({a})",
+              f"{second} area ({a})"]
+    as_row = lambda r: (r["name"], r["cut_a"], r["fill_a"], r["cut_b"], r["fill_b"], r["cut_change"],  # noqa: E731
+                        r["fill_change"], r["net_change"], r["area_a"], r["area_b"])
+    body = [
+        f"<p class='meta'>{html.escape(first)}: {html.escape(sources[0])} · {html.escape(second)}: {html.escape(sources[1])}</p>",
+        "<p class='note'>Exact in-place cut and fill of each revision's volume surface. Changes are the second revision "
+        "minus the first. Triangles are assigned to zones by their centroid, so zone totals near zone edges are approximate; "
+        "the overall totals are exact. A change can come from the design or from a revised existing-ground surface: "
+        "compare the existing-ground surfaces separately (Surface Cut/Fill) before attributing it to the design.</p>",
+        "<h2>Overall</h2>", _table(header, [as_row(comparison["total"])], 2),
+    ]
+    if comparison["zones"] and not (len(comparison["zones"]) == 1 and comparison["zones"][0]["name"] == "Outside zones"):
+        body += ["<h2>By zone</h2>", _table(header, [as_row(row) for row in comparison["zones"]], 2)]
+    if warnings:
+        body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
+    return _document("Grading revision comparison", "".join(body))
+
+
+def change_grid(first_grid, second_grid, nodata):
+    """Depth change (second − first) on a shared grid; missing depth counts as zero where the other exists."""
+    a_valid = first_grid != np.float32(nodata)
+    b_valid = second_grid != np.float32(nodata)
+    a = np.where(a_valid, first_grid, 0.0).astype(np.float64)
+    b = np.where(b_valid, second_grid, 0.0).astype(np.float64)
+    out = np.full(first_grid.shape, np.float32(nodata), dtype=np.float32)
+    either = a_valid | b_valid
+    out[either] = (b - a)[either].astype(np.float32)
+    return out

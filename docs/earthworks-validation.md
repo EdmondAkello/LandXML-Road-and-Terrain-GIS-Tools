@@ -71,3 +71,5 @@ Platform Levels and Falls was run on the finished-level surfaces of E1 and E2 (1
 Basin Stage–Storage was run on the two pond surfaces of E1 and E2 (13 and 20 triangles; spill level detected at each rim). Storage to the rim matched the original independent calculations as reported (to the nearest cubic metre) in both. With 0.5 m freeboard, one pond meets its required storage and the other meets it only when filled to the rim (PASS TO RIM ONLY), as found in the original design check.
 
 Earthwork Balance was run on E1 (mostly fill) and E2 (mostly cut) together, choosing both volume surfaces by name. Total cut and fill equal the sums of the Grading Quantities results, and the transfers, import and spoil for factors 0.85, 0.90 and 0.95 match a hand calculation.
+
+Grading Revision Comparison was run between two revisions of the same private site-grading project (separate LandXML exports, 155 MB and 136 MB) for both platforms. Each revision's cut and fill equalled its Civil 3D cut/fill summary to 0.01 m³, so the reported changes are those of the drawings. Each run took about two minutes, most of it parsing both files.

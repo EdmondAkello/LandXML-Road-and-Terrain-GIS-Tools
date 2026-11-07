@@ -7,6 +7,8 @@
   design (finished-level) surface.
 * Earthwork Balance: cut/fill balance of one or more volume surfaces under
   shrinkage scenarios, with site-to-site transfer, import and spoil.
+* Grading Revision Comparison: cut/fill of two revisions' volume surfaces,
+  overall and by zone, with an optional depth-change raster.
 * Basin Stage–Storage: exact storage below each level of a basin surface, with a
   capacity check at the rim and with freeboard.
 """
@@ -18,6 +20,7 @@ import os
 
 from qgis.core import (
     Qgis,
+    QgsCoordinateTransform,
     QgsFeature,
     QgsField,
     QgsFields,
@@ -28,14 +31,18 @@ from qgis.core import (
     QgsProcessingOutputNumber,
     QgsProcessingOutputString,
     QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterFeatureSource,
+    QgsProcessingParameterField,
+    QgsProcessingParameterFile,
     QgsProcessingParameterFileDestination,
     QgsProcessingParameterNumber,
+    QgsProcessingParameterRasterDestination,
     QgsProcessingParameterString,
     QgsWkbTypes,
 )
 
 from .compat import FIELD_DOUBLE, FIELD_INT, FIELD_STRING
-from .core import read_tin, transform_vertices
+from .core import bounds, grid_for_bounds, rasterize_tin, read_tin, transform_vertices, write_geotiff
 from .earthworks_algorithm import (
     GROUP,
     GROUP_ID,
@@ -58,9 +65,13 @@ from .landxml.grading import (
     VOLUME_SURFACE_HINTS,
     balance_report_html,
     basin_report_html,
+    change_grid,
+    comparison_report_html,
     platform_report_html,
     platform_summary,
     reconcile,
+    revision_comparison,
+    scale_comparison,
     stage_storage,
     suggest_volume_surface,
     volume_summary,
@@ -633,3 +644,168 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
                 raise QgsProcessingException(f"Could not write '{table}': {exc}") from exc
         return {"TOTAL_CUT": balance["cut"], "TOTAL_FILL": balance["fill"], "NET_VOLUME": balance["fill"] - balance["cut"],
                 "SITE_COUNT": len(sites), "VOLUME_UNIT": units.volume, "REPORT": report or "", "TABLE_CSV": table or ""}
+
+
+def _zone_polygons(source, field, crs, context):
+    """[(name, [(outer, [holes]), ...]), ...] from a polygon source, in ``crs``."""
+    transform = None
+    if source.sourceCrs().isValid() and source.sourceCrs() != crs:
+        transform = QgsCoordinateTransform(source.sourceCrs(), crs, context.transformContext())
+    zones, seen = [], {}
+    for number, feature in enumerate(source.getFeatures(), 1):
+        geometry = QgsGeometry(feature.geometry())
+        if geometry.isEmpty():
+            continue
+        if transform is not None:
+            geometry.transform(transform)
+        parts = geometry.asMultiPolygon() if geometry.isMultipart() else [geometry.asPolygon()]
+        polygons = [([(p.x(), p.y()) for p in rings[0]], [[(p.x(), p.y()) for p in ring] for ring in rings[1:]])
+                    for rings in parts if rings]
+        name = str(feature[field]) if field else f"Zone {number}"
+        if name in seen:
+            zones[seen[name]][1].extend(polygons)
+        else:
+            seen[name] = len(zones)
+            zones.append((name, polygons))
+    return zones
+
+
+COMPARISON_FIELDS = (("zone", FIELD_STRING), ("cut_a", FIELD_DOUBLE), ("fill_a", FIELD_DOUBLE), ("cut_b", FIELD_DOUBLE),
+                     ("fill_b", FIELD_DOUBLE), ("cut_change", FIELD_DOUBLE), ("fill_change", FIELD_DOUBLE),
+                     ("net_change", FIELD_DOUBLE), ("area_a", FIELD_DOUBLE), ("area_b", FIELD_DOUBLE))
+
+
+class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
+    def createInstance(self):
+        return RevisionComparisonAlgorithm()
+
+    def name(self):
+        return "landxml_grading_revision_comparison"
+
+    def displayName(self):
+        return "Grading Revision Comparison (Volume Surfaces)"
+
+    def group(self):
+        return GROUP
+
+    def groupId(self):
+        return GROUP_ID
+
+    def shortHelpString(self):
+        return (
+            "Compares two grading revisions through their volume (depth) surfaces, from one LandXML file or two. "
+            "Cut and fill of each revision are the exact in-place volumes used by Grading Quantities; the table "
+            "gives both revisions and the change (second minus first) overall and, with a zone polygon layer, by "
+            "zone. Triangles are assigned to zones by their centroid, so zone totals near zone edges are "
+            "approximate while the overall totals are exact.\n\n"
+            "The optional change raster maps the depth change (positive = more fill or less cut); where only one "
+            "revision has earthworks, the other counts as zero depth. A change can also come from a revised "
+            "existing-ground surface: compare the existing-ground surfaces with Surface Cut/Fill before "
+            "attributing a change to the design. Use the same coordinate interpretation for both files."
+            + QUANTITY_HELP
+        )
+
+    def initAlgorithm(self, config=None):
+        _input_param(self)
+        self.addParameter(name_param("SURFACE_A", "First revision: volume surface", "surfaces"))
+        self.addParameter(QgsProcessingParameterFile(
+            "INPUT_B", "Second revision LandXML (blank = same file)", extension="xml", optional=True))
+        self.addParameter(QgsProcessingParameterString("SURFACE_B", "Second revision: volume surface"))
+        self.addParameter(QgsProcessingParameterString("LABEL_A", "First revision label", defaultValue="Revision A"))
+        self.addParameter(QgsProcessingParameterString("LABEL_B", "Second revision label", defaultValue="Revision B"))
+        self.addParameter(QgsProcessingParameterFeatureSource(
+            "ZONES", "Zones (optional polygons)", [QgsProcessing.SourceType.TypeVectorPolygon], optional=True))
+        self.addParameter(QgsProcessingParameterField(
+            "ZONE_FIELD", "Zone name field (blank = numbered)", parentLayerParameterName="ZONES", optional=True))
+        self.addParameter(_volume_parameter())
+        _param_coordinates(self)
+        self.addParameter(QgsProcessingParameterFeatureSink("OUTPUT", "Comparison table", type=QgsProcessing.SourceType.TypeVector))
+        self.addParameter(
+            QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True))
+        self.addParameter(QgsProcessingParameterRasterDestination(
+            "CHANGE_RASTER", "Depth change raster (second − first)", optional=True, createByDefault=False))
+        self.addParameter(number_param("RESOLUTION", "Change raster cell size (output units)", 1.0, 0.01, 1000.0, decimals=3))
+        for name, label in (("CUT_CHANGE", "Cut change"), ("FILL_CHANGE", "Fill change"), ("NET_CHANGE", "Net change")):
+            self.addOutput(QgsProcessingOutputNumber(name, label))
+        self.addOutput(QgsProcessingOutputString("VOLUME_UNIT", "Volume unit (CY, CF or m³)"))
+
+    def processAlgorithm(self, p, c, fb):
+        from .landxml.parser import load_document
+
+        path_a = self.parameterAsFile(p, "INPUT", c)
+        if not path_a or not os.path.isfile(path_a):
+            raise QgsProcessingException("First revision LandXML file does not exist.")
+        path_b = self.parameterAsFile(p, "INPUT_B", c) or path_a
+        if not os.path.isfile(path_b):
+            raise QgsProcessingException("Second revision LandXML file does not exist.")
+        method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path_a)
+        if path_b != path_a:
+            other = load_document(path_b)
+            if (other.horizontal_unit, other.vertical_unit) != (doc.horizontal_unit, doc.vertical_unit):
+                raise QgsProcessingException(
+                    f"The two files declare different units ({doc.horizontal_unit}/{doc.vertical_unit} and "
+                    f"{other.horizontal_unit}/{other.vertical_unit}); prepare them with the same units first.")
+        horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
+        if horizontal is None:
+            raise QgsProcessingException("Revision comparison requires an output CRS in metres, feet or US survey feet.")
+        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
+        surfaces = []
+        for path, key in ((path_a, "SURFACE_A"), (path_b, "SURFACE_B")):
+            requested = self.parameterAsString(p, key, c).strip()
+            catalog = read_catalog(path)
+            if not requested:
+                raise QgsProcessingException(f"Choose the volume surface for both revisions. Surfaces in "
+                                             f"{os.path.basename(path)}: {', '.join(catalog.surfaces) or 'none'}.")
+            name = _resolve(catalog.surfaces, requested, "volume surface")
+            try:
+                xyz, faces, _meta = read_tin(path, name, cancel=fb.isCanceled)
+            except ValueError as exc:
+                raise QgsProcessingException(f"{name}: {exc}") from exc
+            surfaces.append((transform_vertices(xyz, method=method, **params), faces))
+            if fb.isCanceled():
+                raise QgsProcessingException("Revision comparison cancelled.")
+        zones = []
+        source = self.parameterAsSource(p, "ZONES", c)
+        if source is not None:
+            zones = _zone_polygons(source, self.parameterAsString(p, "ZONE_FIELD", c), crs, c)
+            fb.pushInfo(f"{len(zones)} zones.")
+        try:
+            comparison = scale_comparison(revision_comparison(surfaces[0], surfaces[1], zones), units.volume_factor)
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        labels = (self.parameterAsString(p, "LABEL_A", c) or "Revision A", self.parameterAsString(p, "LABEL_B", c) or "Revision B")
+        fields = QgsFields()
+        for name, kind in COMPARISON_FIELDS:
+            fields.append(QgsField(name, kind))
+        sink, dest = self.parameterAsSink(p, "OUTPUT", c, fields, QgsWkbTypes.Type.NoGeometry, crs)
+        if sink is None:
+            raise QgsProcessingException("Could not create the comparison table.")
+        for row in comparison["zones"] + [comparison["total"]]:
+            feature = QgsFeature(fields)
+            feature.setAttributes([row["name"], row["cut_a"], row["fill_a"], row["cut_b"], row["fill_b"], row["cut_change"],
+                                   row["fill_change"], row["net_change"], row["area_a"], row["area_b"]])
+            sink.addFeature(feature)
+        total = comparison["total"]
+        fb.pushInfo(f"{labels[0]}: cut {total['cut_a']:,.2f}, fill {total['fill_a']:,.2f}; {labels[1]}: cut {total['cut_b']:,.2f}, "
+                    f"fill {total['fill_b']:,.2f} {units.volume}. Change: cut {total['cut_change']:+,.2f}, fill "
+                    f"{total['fill_change']:+,.2f}, net {total['net_change']:+,.2f} {units.volume}.")
+        raster = self.parameterAsOutputLayer(p, "CHANGE_RASTER", c) if p.get("CHANGE_RASTER") else ""
+        if raster:
+            resolution = self.parameterAsDouble(p, "RESOLUTION", c)
+            (xa, fa), (xb, fbb) = surfaces
+            ea, eb = bounds(xa), bounds(xb)
+            grid = grid_for_bounds((min(ea[0], eb[0]), min(ea[1], eb[1]), max(ea[2], eb[2]), max(ea[3], eb[3])), resolution)
+            nodata = -9999.0
+            try:
+                first, xmin, ymax, _ = rasterize_tin(xa, fa, resolution, nodata, cancel=fb.isCanceled, grid=grid,
+                                                     warning=fb.pushWarning)
+                second, _, _, _ = rasterize_tin(xb, fbb, resolution, nodata, cancel=fb.isCanceled, grid=grid, warn_cells=0)
+            except ValueError as exc:
+                raise QgsProcessingException(str(exc)) from exc
+            write_geotiff(raster, change_grid(first, second, nodata), xmin, ymax, resolution, nodata, wkt=crs.toWkt())
+        report = self.parameterAsFileOutput(p, "REPORT", c)
+        if report:
+            _write_text(report, comparison_report_html(comparison, labels, units,
+                                                       (os.path.basename(path_a), os.path.basename(path_b))))
+        return {"OUTPUT": dest, "REPORT": report or "", "CHANGE_RASTER": raster, "CUT_CHANGE": total["cut_change"],
+                "FILL_CHANGE": total["fill_change"], "NET_CHANGE": total["net_change"], "VOLUME_UNIT": units.volume}
