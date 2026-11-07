@@ -13,7 +13,7 @@ from .road_features import (
     BreaklinesAlgorithm,
 )
 from .complete_export import CompleteRoadDesignAlgorithm
-from .grading_algorithm import GradingQuantitiesAlgorithm, PlatformLevelsAlgorithm
+from .grading_algorithm import BasinStorageAlgorithm, GradingQuantitiesAlgorithm, PlatformLevelsAlgorithm
 from .inspect_algorithm import InspectLandXMLAlgorithm
 from .prepare_algorithm import PrepareLandXMLAlgorithm
 from .sections_algorithm import CrossSectionSheetsAlgorithm
@@ -68,6 +68,7 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
         self.addAlgorithm(SurfaceCutFillAlgorithm())
         self.addAlgorithm(GradingQuantitiesAlgorithm())
         self.addAlgorithm(PlatformLevelsAlgorithm())
+        self.addAlgorithm(BasinStorageAlgorithm())
         self.addAlgorithm(CrossSectionSheetsAlgorithm())
         self.addAlgorithm(DesignReportAlgorithm())
         self.addAlgorithm(DesignReviewAlgorithm())

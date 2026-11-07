@@ -445,3 +445,107 @@ def platform_report_html(summary, surface, units, source_file="", warnings=()):
     if warnings:
         body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
     return _document("Platform levels and falls", "".join(body))
+
+
+# ----------------------------------------------------------------- basins
+def stored_volume(xyz, faces, level):
+    """Exact water volume and wet plan area of a TIN basin filled to ``level``.
+
+    Water depth (level - z) is linear on each triangle, so the stored volume is the
+    positive part of that depth integrated exactly (the same split as cut/fill).
+    """
+    depths, area = triangles(xyz, faces)
+    water = np.sort(level - depths, axis=1)
+    volume, _below = split_volumes(water, area)
+    wet = area * fraction_below(depths, level)
+    return float(volume.sum()), float(wet.sum())
+
+
+def spill_level(xyz, faces):
+    """Lowest elevation on the TIN's outer boundary: water overflows the surface there."""
+    faces = _oriented_faces(xyz, faces)
+    directed = _edge_keys(faces)
+    span = int(faces.max()) + 1
+    forward = directed[:, 0] * span + directed[:, 1]
+    reverse = directed[:, 1] * span + directed[:, 0]
+    boundary = np.unique(directed[~np.isin(forward, reverse)])
+    return float(xyz[boundary, 2].min()) if len(boundary) else float(xyz[:, 2].max())
+
+
+def stage_storage(xyz, faces, rim=None, freeboard=0.5, step=0.1, required=None):
+    """Stage–storage table and capacity check for a basin surface.
+
+    ``rim`` defaults to the spill level. Levels run from the basin floor to the rim in
+    ``step`` increments (vertical units), with the freeboard level and rim included.
+    The check compares the storage at the freeboard level (rim - freeboard) with
+    ``required``: PASS, PASS TO RIM ONLY, FAIL or NOT CHECKED.
+    """
+    xyz = np.asarray(xyz, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    if not len(faces):
+        raise ValueError("The basin surface has no triangles.")
+    if step <= 0 or freeboard < 0:
+        raise ValueError("Stage step must be positive and freeboard zero or positive.")
+    floor = float(xyz[faces].reshape(-1, 3)[:, 2].min())
+    spill = spill_level(xyz, faces)
+    rim = spill if rim is None else float(rim)
+    if rim <= floor:
+        raise ValueError(f"The rim level {rim:.3f} is not above the basin floor {floor:.3f}.")
+    count = int(math.floor((rim - floor) / step + 1e-9))
+    levels = sorted({round(floor + k * step, 9) for k in range(1, count + 1)} | {rim}
+                    | ({rim - freeboard} if freeboard and rim - freeboard > floor else set()))
+    rows = []
+    for level in levels:
+        volume, wet = stored_volume(xyz, faces, level)
+        rows.append({"level": level, "depth": level - floor, "area": wet, "volume": volume})
+    at_rim = next(row for row in rows if abs(row["level"] - rim) < 1e-9)
+    design_level = rim - freeboard
+    at_design = (next(row for row in rows if abs(row["level"] - design_level) < 1e-9)
+                 if design_level > floor else {"level": design_level, "depth": 0.0, "area": 0.0, "volume": 0.0})
+    if required is None:
+        status = "NOT CHECKED"
+    elif at_design["volume"] >= required:
+        status = "PASS"
+    elif at_rim["volume"] >= required:
+        status = "PASS TO RIM ONLY"
+    else:
+        status = "FAIL"
+    return {
+        "floor": floor, "spill": spill, "rim": rim, "freeboard": freeboard, "design_level": design_level,
+        "rim_volume": at_rim["volume"], "rim_area": at_rim["area"],
+        "design_volume": at_design["volume"], "design_area": at_design["area"],
+        "required_volume": required, "status": status, "rows": rows,
+        "plan_area": float(triangles(xyz, faces)[1].sum()),
+    }
+
+
+def basin_report_html(summary, surface, units, source_file="", warnings=()):
+    """HTML report of a basin's stage–storage table; volumes already converted to ``units.volume``."""
+    from .reports import _document, _table
+
+    v, a, d = units.volume, units.area, units.depth
+    required = summary["required_volume"]
+    rows = [
+        (f"Floor level ({d})", summary["floor"]),
+        (f"Spill level, lowest point on the surface edge ({d})", summary["spill"]),
+        (f"Rim level used ({d})", summary["rim"]),
+        (f"Freeboard ({d})", summary["freeboard"]),
+        (f"Storage to the rim ({v})", summary["rim_volume"]),
+        (f"Water area at the rim ({a})", summary["rim_area"]),
+        (f"Storage with freeboard, to {summary['design_level']:.3f} ({v})", summary["design_volume"]),
+        (f"Required storage ({v})", "–" if required is None else required),
+    ]
+    body = [
+        f"<p class='meta'>Source: {html.escape(source_file)} · basin surface: {html.escape(surface)}</p>",
+        "<p class='note'>Storage below each level is integrated exactly over the surface's triangles "
+        "(water depth is linear on each triangle). The check uses the storage with freeboard; "
+        "PASS TO RIM ONLY means the required volume fits only if the basin is filled to the rim.</p>",
+        f"<h2>Capacity: {html.escape(summary['status'])}</h2>",
+        _table(["Quantity", "Value"], rows, 3),
+        "<h2>Stage–storage table</h2>",
+        _table([f"Level ({d})", f"Depth ({d})", f"Water area ({a})", f"Storage ({v})"],
+               [(row["level"], row["depth"], row["area"], row["volume"]) for row in summary["rows"]], 3),
+    ]
+    if warnings:
+        body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
+    return _document("Basin stage–storage", "".join(body))

@@ -14,6 +14,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "generic" / "grading_volume.xml"
 PLATFORMS = ROOT / "tests" / "fixtures" / "generic" / "platforms.xml"
+BASIN = ROOT / "tests" / "fixtures" / "generic" / "basin.xml"
 if "landxml_plugin" not in sys.modules:
     spec = importlib.util.spec_from_file_location(
         "landxml_plugin", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
@@ -26,6 +27,10 @@ from landxml_plugin.core import read_tin
 from landxml_plugin.landxml.catalog import read_catalog
 from landxml_plugin.landxml.grading import (
     DEFAULT_BANDS,
+    basin_report_html,
+    spill_level,
+    stage_storage,
+    stored_volume,
     connected_triangles,
     outline_polygons,
     platform_report_html,
@@ -276,6 +281,59 @@ class PlatformTests(unittest.TestCase):
         units = quantity_units("meter", "meter")
         text = platform_report_html(self.summary, "Yard FWL", units, "platforms.xml")
         for expected in ("Platform levels and falls", "Yard FWL", "Platforms (2; 1 below minimum fall)", "90°", "Batter"):
+            self.assertIn(expected, text)
+
+
+def _basin_volume(h):
+    """Prismoidal volume of the fixture basin below level h (exact for 1:1 sides on a 10 x 6 floor)."""
+    area = lambda z: (10 + 2 * z) * (6 + 2 * z)  # noqa: E731
+    return h / 6 * (area(0) + 4 * area(h / 2) + area(h))
+
+
+class BasinTests(unittest.TestCase):
+    def setUp(self):
+        self.xyz, self.faces, _meta = read_tin(str(BASIN), "Test Pond")
+
+    def test_storage_and_wet_area_match_closed_form(self):
+        for level in (0.4, 1.0, 1.7, 2.5, 3.0):
+            with self.subTest(level=level):
+                volume, wet = stored_volume(self.xyz, self.faces, level)
+                self.assertAlmostEqual(volume, _basin_volume(level), places=9)
+                self.assertAlmostEqual(wet, (10 + 2 * level) * (6 + 2 * level), places=9)
+        self.assertEqual(stored_volume(self.xyz, self.faces, 0.0), (0.0, 0.0))
+        self.assertAlmostEqual(stored_volume(self.xyz, self.faces, 4.0)[0], 360.0 + 192.0, places=9)
+
+    def test_stage_storage_table_rim_and_freeboard(self):
+        summary = stage_storage(self.xyz, self.faces, freeboard=0.5, step=0.5, required=300.0)
+        self.assertEqual((summary["floor"], summary["spill"], summary["rim"]), (0.0, 3.0, 3.0))
+        self.assertAlmostEqual(summary["rim_volume"], 360.0, places=9)
+        self.assertAlmostEqual(summary["design_volume"], 270.0 + 5 / 6, places=9)
+        self.assertAlmostEqual(summary["rim_area"], 192.0, places=9)
+        self.assertEqual([row["level"] for row in summary["rows"]], [0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
+        self.assertEqual(summary["status"], "PASS TO RIM ONLY")
+        self.assertEqual(stage_storage(self.xyz, self.faces, required=250.0)["status"], "PASS")
+        self.assertEqual(stage_storage(self.xyz, self.faces, required=400.0)["status"], "FAIL")
+        self.assertEqual(stage_storage(self.xyz, self.faces)["status"], "NOT CHECKED")
+        lower = stage_storage(self.xyz, self.faces, rim=2.2, freeboard=0.3, step=1.0)
+        self.assertEqual([round(row["level"], 9) for row in lower["rows"]], [1.0, 1.9, 2.0, 2.2])
+        self.assertAlmostEqual(lower["design_volume"], _basin_volume(1.9), places=9)
+
+    def test_spill_level_is_the_lowest_edge_point(self):
+        self.assertEqual(spill_level(self.xyz, self.faces), 3.0)
+        notched = self.xyz.copy()
+        notched[5, 2] = 2.0  # one top corner lowered: water leaves there first
+        self.assertEqual(spill_level(notched, self.faces), 2.0)
+
+    def test_invalid_inputs(self):
+        for kwargs in ({"rim": -1.0}, {"step": 0}, {"freeboard": -0.1}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                stage_storage(self.xyz, self.faces, **kwargs)
+
+    def test_basin_report(self):
+        units = quantity_units("meter", "meter")
+        summary = stage_storage(self.xyz, self.faces, required=300.0)
+        text = basin_report_html(summary, "Test Pond", units, "basin.xml")
+        for expected in ("Basin stage–storage", "Capacity: PASS TO RIM ONLY", "Test Pond", "360.000", "Stage–storage table"):
             self.assertIn(expected, text)
 
 
