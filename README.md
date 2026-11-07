@@ -189,6 +189,8 @@ Choose a **Custom criteria file** to use another standard: copy one of the JSON 
 
 **Feet/mph workflow.** Select **AASHTO Green Book 2018 (US customary: ft, mph)** in Geometric Design Review or the review section of Road Design Report. Enter speeds in mph and speed-range chainages in the file's feet, or leave speed at 0 to use the recorded speeds (the declared LandXML speed unit is respected). The maximum profile level change uses source length units: a value of 1 means 1 ft for a foot-based file. Findings and reports use ft, mph and ft/% for K; recommended profile text and LandXML preserve the source stations, elevations and foot type.
 
+**Outputs.** A findings table and map points, an HTML report (summary, phasing diagram, banded long section with numbered findings, recommended PVIs, barrier schedule, findings), optional A3 **plan and profile sheets** (PDF, one sheet per window of *Sheet and long-section window length*, default 1,000 m), the recommended profile as Civil 3D text and as a comparison LandXML, and a changed-PVI CSV. Finding numbers match across the table (`finding_no`), report and sheets.
+
 **Checks** (each finding has a code, severity, chainage range, the value found, the value required, the source table and a recommendation):
 
 | Code | Check |

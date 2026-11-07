@@ -529,6 +529,45 @@ class InspectTests(unittest.TestCase):
         self.assertEqual(volume["fill_volume"], 100)
 
 
+
+class PlanProfileSheetTests(unittest.TestCase):
+    def test_sheet_windows_round_chainages_and_short_tail(self):
+        from landxml_plugin.landxml.plan_profile import sheet_windows
+
+        self.assertEqual(sheet_windows(0, 900, 1000), [(0, 900)])
+        self.assertEqual(sheet_windows(250, 3100, 1000), [(250, 1000), (1000, 2000), (2000, 3100)])
+        self.assertEqual(sheet_windows(0, 2500, 1000), [(0, 1000), (1000, 2000), (2000, 2500)])
+        self.assertEqual(sheet_windows(5, 5, 1000), [])
+
+    def test_sheet_data_and_long_section_svg(self):
+        from landxml_plugin.landxml.criteria import load_criteria
+        from landxml_plugin.landxml.plan_profile import PlanSource, long_section_svg, plan_strip, sheet_data
+        from landxml_plugin.landxml.review import ProfileModel
+
+        model = ProfileModel([{"station": 0, "elevation": 100, "length": 0}, {"station": 500, "elevation": 110, "length": 80},
+                              {"station": 1000, "elevation": 100, "length": 0}])
+        recommended = model.copy()
+        recommended.pvis[1]["length"] = 160
+        result = {"model": model, "recommended": recommended, "applied": [1], "ground": None, "criteria": load_criteria("aashto_2018"),
+                  "groups": [], "speed_sections": [(0, 1000, 80)],
+                  "findings": [{"start": 460, "end": 540, "severity": "High", "title": "Crest curve short", "recommendation": "Lengthen",
+                                "code": "V1", "side": "", "category": "Vertical"}]}
+        data = sheet_data(result, (0, 1000))
+        self.assertEqual([c["pvi"] for c in data["changed"]], [2])
+        self.assertEqual(data["findings"][0]["number"], 1)
+        self.assertEqual([round(g, 3) for _a, _b, g in data["grades"]], [2.0, -2.0])
+        self.assertAlmostEqual(data["rows"][0][1], 100.0)
+        svg = long_section_svg(data)
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("PVI 2", svg)
+        self.assertIn("Crest K", svg)
+        polyline = StationedPolyline([(1000.0, 2000.0), (1000.0, 3000.0)], [0.0, 1000.0], 0.0)
+        strip = plan_strip(PlanSource(polyline), 0, 1000, data["findings"])
+        # A northbound chord is turned to run left to right, so grid north points along +u.
+        self.assertAlmostEqual(strip["north"], 0.0)
+        self.assertAlmostEqual(strip["line"][0][1], -500.0)
+        self.assertEqual(strip["markers"][0]["number"], 1)
+
 if __name__ == "__main__":
     unittest.main()
 

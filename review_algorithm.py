@@ -23,7 +23,7 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
-from .compat import FIELD_DOUBLE, FIELD_STRING
+from .compat import FIELD_DOUBLE, FIELD_INT, FIELD_STRING
 from .landxml.catalog import match_name, read_catalog
 from .landxml.corridor import guess_surfaces, read_corridor_sections, roadway_surface_refs
 from .landxml.criteria import list_standards, load_criteria
@@ -113,7 +113,7 @@ def collect_reviews(path, doc, alignment_filter, criteria, design_speed, speed_r
             views,
             max_change=max_change,
         )
-        result.update(name=record["name"], record=record, element=element, design=design, sections=len(views))
+        result.update(name=record["name"], record=record, element=element, design=design, ground=ground, sections=len(views))
         results.append(result)
         if feedback is not None:
             counts = {s: sum(1 for f in result["findings"] if f["severity"] == s) for s in ("High", "Medium", "Low")}
@@ -122,6 +122,63 @@ def collect_reviews(path, doc, alignment_filter, criteria, design_speed, speed_r
                 f"{len(result['applied'])} profile changes proposed; {len(views)} cross-sections checked."
             )
     return results
+
+
+def write_review_sheets(sheets_path, path, results, criteria, settings, method, length, unit, vertical_unit, feedback):
+    """Plan & profile sheets for every reviewed alignment in one PDF; returns the path."""
+    from .gui.plan_profile_sheets import write_plan_profile_sheets
+    from .landxml.plan_profile import PlanSource, review_extent, sheet_data, sheet_windows
+    from .landxml.stationing import StationedPolyline
+    from .processing_common import northing_first_warning
+
+    alignments, _unsupported = read_alignments(path, 2.0)
+    polylines = {}
+    for alignment in alignments:
+        if alignment["name"] not in polylines:
+            polylines[alignment["name"]] = StationedPolyline.from_alignment(alignment)
+    if method is None:
+        # Schematic plan only: the drawing is rotated to each window, so only the X/Y order matters.
+        points = [xy for line in polylines.values() if line is not None for xy in line.points]
+        bounds = None
+        if points:
+            xs, ys = [q[0] for q in points], [q[1] for q in points]
+            bounds = (min(xs), min(ys), max(xs), max(ys))
+        swap = northing_first_warning(bounds) is not None
+        if swap:
+            feedback.pushInfo("Plan strips: coordinates look northing-first, so X and Y are swapped for the plan drawing. "
+                              "Choose the coordinate interpretation explicitly to control this.")
+    else:
+        swap = method in ("swap", "swap_offset")
+    sheets = []
+    for result in results:
+        line = polylines.get(result["name"])
+        source = PlanSource(line, swap) if line is not None else None
+        start, end = review_extent(result)
+        for window in sheet_windows(start, end, length):
+            data = sheet_data(result, window, source, step=max((window[1] - window[0]) / 800.0, 0.5))
+            data["alignment"] = result["name"]
+            sheets.append(data)
+    if not sheets:
+        feedback.pushWarning("Plan and profile sheets were not written: no alignment with a reviewable profile.")
+        return ""
+    notes = [
+        f"Review to {criteria.name}. {settings}.",
+        "Numbers match the findings table and the HTML report. Shading shows each finding's chainage range.",
+        "The recommended profile is a computed proposal; apply it in the design software and verify.",
+        "Plan is schematic, rotated to each sheet; north arrow shows grid north of the source coordinates.",
+        f"Chainage in {unit or criteria.length_unit}; grades in %; K in {criteria.length_unit}/%.",
+    ]
+    by_alignment = {}
+    for data in sheets:
+        by_alignment.setdefault(data["alignment"], []).append(data)
+    # One PDF; each sheet's title box names its alignment.
+    pages = write_plan_profile_sheets(
+        sheets_path, sheets, title="Plan and profile — geometric design review",
+        unit=unit, vertical_unit=vertical_unit or "", notes=notes,
+        progress=feedback.setProgress, cancel=feedback.isCanceled,
+    )
+    feedback.pushInfo(f"Plan and profile sheets: {pages} A3 sheet(s) for {len(by_alignment)} alignment(s).")
+    return sheets_path
 
 
 class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
@@ -162,7 +219,9 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
             "file with Profiles → Create Profile from File on that alignment. The comparison LandXML holds the design and the "
             "recommended profiles on a copy of the alignment named '… (review)': Civil 3D's LandXML import always creates a "
             "new alignment, so use it to compare the two profiles, not to update the design. The changed-PVI CSV lists every "
-            "PVI whose station, level or curve length changed."
+            "PVI whose station, level or curve length changed. Plan and profile sheets (A3 PDF) give one sheet per window of the "
+            "chosen length: plan strip, banded long section (profiles; design speed, horizontal and vertical curves with phasing "
+            "findings outlined; grades) and the findings in that window, numbered as in the table and report."
         )
 
     def initAlgorithm(self, config=None):
@@ -211,6 +270,10 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination("PROFILE_CHANGES_CSV", "Changed PVIs (CSV)", fileFilter="CSV (*.csv)", optional=True)
         )
+        self.addParameter(
+            QgsProcessingParameterFileDestination("SHEETS_PDF", "Plan and profile sheets (A3 PDF)", fileFilter="PDF (*.pdf)", optional=True)
+        )
+        self.addParameter(number_param("SHEET_LENGTH", "Sheet and long-section window length (source length units)", 1000, 50, 100000, decimals=0))
 
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
@@ -261,6 +324,7 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
             fields.append(QgsField(name, FIELD_STRING, len=1000))
         for name in ("sta_start", "sta_end", "value", "required"):
             fields.append(QgsField(name, FIELD_DOUBLE))
+        fields.append(QgsField("finding_no", FIELD_INT))
         sink, dest = self.parameterAsSink(p, "OUTPUT", c, fields, QgsWkbTypes.Type.NoGeometry, QgsCoordinateReferenceSystem())
 
         def attributes(name, f):
@@ -268,14 +332,17 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
                     station_label(f["end"], doc.horizontal_unit), f["side"], f["title"], f["detail"], f["recommendation"],
                     f["reference"], f["start"], f["end"],
                     f["value"] if isinstance(f["value"], (int, float)) else None,
-                    f["required"] if isinstance(f["required"], (int, float)) else None]
+                    f["required"] if isinstance(f["required"], (int, float)) else None, f.get("number")]
 
+        for result in results:
+            for number, f in enumerate(result["findings"], 1):
+                f["number"] = number
         for result in results:
             for f in result["findings"]:
                 feature = QgsFeature(fields)
                 feature.setAttributes(attributes(result["name"], f))
                 sink.addFeature(feature)
-        outputs = {"OUTPUT": dest, "MAP_OUTPUT": "", "REPORT": "", "PROFILE_TXT": "", "PROFILE_LANDXML": "", "PROFILE_CHANGES_CSV": ""}
+        outputs = {"OUTPUT": dest, "MAP_OUTPUT": "", "REPORT": "", "PROFILE_TXT": "", "PROFILE_LANDXML": "", "PROFILE_CHANGES_CSV": "", "SHEETS_PDF": ""}
         if p.get("MAP_OUTPUT") and p.get("OUTPUT_CRS") in (None, ""):
             fb.pushWarning("Findings map points were not created: choose an output CRS (and the coordinate "
                            "interpretation used for your other layers) to place them on the alignment.")
@@ -299,6 +366,10 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
                     map_sink.addFeature(feature)
             outputs["MAP_OUTPUT"] = map_dest
             attach_post_processor(c, map_dest, None, path)
+        method = None
+        if p.get("OUTPUT_CRS") not in (None, ""):
+            method = ["stored", "swap", "offset", "swap_offset", "helmert", "reproject"][self.parameterAsInt(p, "METHOD", c)]
+        sheet_length = self.parameterAsDouble(p, "SHEET_LENGTH", c) or 1000.0
         settings = (
             f"Terrain {terrain} · {road_type} · e max {emax:g}% · design speed "
             + (self.parameterAsString(p, "SPEED_RANGES", c) or (f"{design_speed:g} {criteria.speed_unit}" if design_speed else "from file"))
@@ -306,7 +377,7 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
             body = "".join(
-                f"<section class='alignment'><h2>{r['name']}</h2>{review_section_html(r['name'], r, doc.horizontal_unit, settings)}</section>"
+                f"<section class='alignment'><h2>{r['name']}</h2>{review_section_html(r['name'], r, doc.horizontal_unit, settings, section_length=sheet_length)}</section>"
                 for r in results
             )
             with open(report, "w", encoding="utf-8") as stream:
@@ -343,6 +414,10 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
                 for row in profile_changes(target["model"], target["recommended"]):
                     writer.writerow([row[0]] + [f"{value:.3f}" for value in row[1:]])
             outputs["PROFILE_CHANGES_CSV"] = changes_path
+        sheets_path = self.parameterAsFileOutput(p, "SHEETS_PDF", c)
+        if sheets_path:
+            outputs["SHEETS_PDF"] = write_review_sheets(sheets_path, path, results, criteria, settings, method, sheet_length,
+                                                        doc.horizontal_unit, doc.vertical_unit, fb)
         outputs.update(
             HIGH=sum(1 for r in results for f in r["findings"] if f["severity"] == "High"),
             MEDIUM=sum(1 for r in results for f in r["findings"] if f["severity"] == "Medium"),

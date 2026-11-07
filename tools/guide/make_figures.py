@@ -75,7 +75,8 @@ run("landxml_complete_road_design", METHOD=SWAP, OUTPUT_CRS=CRS, RESOLUTION=5, C
 run("landxml_profiles_to_vector", METHOD=SWAP, OUTPUT_CRS=CRS, VERTICAL_EXAGGERATION=5, MAP_OFFSET=150,
     OUTPUT=path("profile_graph.gpkg"), MAP_OUTPUT=path("profile_map.gpkg"), MAP_CONTROL_POINTS=path("profile_map_controls.gpkg"))
 run("landxml_design_review", METHOD=SWAP, OUTPUT_CRS=CRS, TERRAIN=1, OUTPUT=path("review.gpkg"), MAP_OUTPUT=path("review_points.gpkg"),
-    REPORT=path("review.html"), PROFILE_TXT=path("recommended_profile.txt"), PROFILE_LANDXML=path("recommended_profile.xml"))
+    REPORT=path("review.html"), PROFILE_TXT=path("recommended_profile.txt"), PROFILE_LANDXML=path("recommended_profile.xml"),
+    SHEETS_PDF=path("review_sheets.pdf"))
 run("landxml_design_report", STANDARD=1, TERRAIN=1, TITLE="Demo Road — design report", OUTPUT=path("design_report.html"))
 run("landxml_profile_cut_fill", METHOD=SWAP, OUTPUT_CRS=CRS, FORMATION_WIDTH=10, OUTPUT=path("cutfill.gpkg"), REPORT=path("profile_cut_fill.html"))
 run("landxml_corridor_quantities", METHOD=SWAP, OUTPUT_CRS=CRS, OUTPUT=path("quantities.gpkg"), SIDE_SLOPES=path("side_slopes.gpkg"),
@@ -221,4 +222,6 @@ except Exception as error:  # noqa: BLE001 - figure is optional
 
 # ---- cross-section sheet page --------------------------------------------
 subprocess.run(["pdftoppm", "-png", "-r", "110", "-f", "1", "-l", "1", path("sheets.pdf"), path("fig_sheet")], check=False)  # nosec B603 B607
+subprocess.run(["pdftoppm", "-png", "-r", "110", "-f", "1", "-l", "1", "-singlefile", path("review_sheets.pdf"), path("fig_review_sheet")],
+               check=False)  # nosec B603 B607
 print("done", sorted(f for f in os.listdir(OUT) if f.startswith("fig_")))
