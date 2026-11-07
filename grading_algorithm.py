@@ -5,6 +5,8 @@
   with an optional check against the Civil 3D cut/fill summary.
 * Platform Levels and Falls: slope classes, platforms, levels and falls of a
   design (finished-level) surface.
+* Earthwork Balance: cut/fill balance of one or more volume surfaces under
+  shrinkage scenarios, with site-to-site transfer, import and spoil.
 * Basin Stage–Storage: exact storage below each level of a basin surface, with a
   capacity check at the rim and with freeboard.
 """
@@ -49,8 +51,12 @@ from .landxml.catalog import read_catalog
 from .landxml.quantity_units import LINEAR_UNITS
 from .landxml.grading import (
     depth_warning,
+    earthwork_balance,
     grading_report_html,
     parse_bands,
+    parse_factors,
+    VOLUME_SURFACE_HINTS,
+    balance_report_html,
     basin_report_html,
     platform_report_html,
     platform_summary,
@@ -492,3 +498,138 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
             "RIM_LEVEL_USED": summary["rim"], "SPILL_LEVEL": summary["spill"], "FLOOR_LEVEL": summary["floor"],
             "CHECK": summary["status"], "VOLUME_UNIT": units.volume, "REPORT": report or "", "TABLE_CSV": table or "",
         }
+
+
+class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
+    def createInstance(self):
+        return EarthworkBalanceAlgorithm()
+
+    def name(self):
+        return "landxml_earthwork_balance"
+
+    def displayName(self):
+        return "Earthwork Balance (Volume Surfaces)"
+
+    def group(self):
+        return GROUP
+
+    def groupId(self):
+        return GROUP_ID
+
+    def shortHelpString(self):
+        return (
+            "Balances cut and fill across one or more volume (depth) surfaces, each treated as a site, under "
+            "shrinkage scenarios. Cut and fill per site are the exact in-place volumes used by Grading Quantities. "
+            "A shrinkage factor is the compacted volume from one unit of in-place cut (default 0.85, 0.90 and "
+            "0.95). Each site uses its own cut first; surplus from other sites then supplies the shortfalls. The "
+            "report gives, for each factor, the volume moved between sites, the import still needed (compacted, "
+            "and its in-place borrow equivalent) and the spoil (in place).\n\n"
+            "List the surfaces separated by semicolons, or leave blank to use every surface named as a volume "
+            "surface (earthworks, volume, cut/fill, difference). An unsuitable share of cut is removed before "
+            "balancing and goes to spoil. Topsoil stripping (plan area × depth) is reported separately and not "
+            "used as fill."
+            + QUANTITY_HELP
+        )
+
+    def initAlgorithm(self, config=None):
+        _input_param(self)
+        self.addParameter(QgsProcessingParameterString(
+            "VOLUME_SURFACES", "Volume surfaces, one per site (separate with ; — blank = all named as volume surfaces)",
+            defaultValue="", optional=True))
+        self.addParameter(QgsProcessingParameterString(
+            "SHRINKAGE", "Shrinkage factors, compacted per in-place (blank = 0.85, 0.90, 0.95)",
+            defaultValue="0.85, 0.90, 0.95", optional=True))
+        self.addParameter(number_param("UNSUITABLE_PCT", "Unsuitable share of cut (%)", 0.0, 0.0, 99.0, decimals=1))
+        self.addParameter(number_param("TOPSOIL_DEPTH", "Topsoil stripping depth (source vertical units; 0 = none)", 0.0, 0.0, 100.0, decimals=3))
+        self.addParameter(_volume_parameter())
+        _param_coordinates(self)
+        self.addParameter(
+            QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
+        )
+        self.addParameter(
+            QgsProcessingParameterFileDestination("TABLE_CSV", "Balance table (CSV)", fileFilter="CSV (*.csv)", optional=True)
+        )
+        for name, label in (("TOTAL_CUT", "Total cut (in place)"), ("TOTAL_FILL", "Total fill"),
+                            ("NET_VOLUME", "Net (fill − cut, in place)"), ("SITE_COUNT", "Sites")):
+            self.addOutput(QgsProcessingOutputNumber(name, label))
+        self.addOutput(QgsProcessingOutputString("VOLUME_UNIT", "Volume unit (CY, CF or m³)"))
+
+    def processAlgorithm(self, p, c, fb):
+        path = self.parameterAsFile(p, "INPUT", c)
+        if not path or not os.path.isfile(path):
+            raise QgsProcessingException("Input LandXML file does not exist.")
+        method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
+        horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
+        if horizontal is None:
+            raise QgsProcessingException("Earthwork balance requires an output CRS in metres, feet or US survey feet.")
+        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
+        try:
+            factors = parse_factors(self.parameterAsString(p, "SHRINKAGE", c))
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        catalog = read_catalog(path)
+        requested = [name.strip() for name in self.parameterAsString(p, "VOLUME_SURFACES", c).split(";") if name.strip()]
+        if requested:
+            names = [_resolve(catalog.surfaces, name, "volume surface") for name in requested]
+        else:
+            names = [name for name in catalog.surfaces if any(hint in name.lower() for hint in VOLUME_SURFACE_HINTS)]
+            if not names:
+                raise QgsProcessingException(
+                    "No surface is named as a volume surface; list the volume surfaces separated by semicolons. "
+                    f"Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
+                )
+            fb.pushInfo("Volume surfaces chosen by name: " + "; ".join(names) + ".")
+        if len(set(names)) != len(names):
+            raise QgsProcessingException("Each volume surface may be listed only once.")
+        sites = []
+        warnings = []
+        for name in names:
+            if fb.isCanceled():
+                raise QgsProcessingException("Earthwork balance cancelled.")
+            try:
+                xyz, faces, _meta = read_tin(path, name, cancel=fb.isCanceled)
+                summary = volume_summary(transform_vertices(xyz, method=method, **params), faces, ())
+            except ValueError as exc:
+                raise QgsProcessingException(f"{name}: {exc}") from exc
+            text = depth_warning(summary)
+            if text:
+                warnings.append(f"{name}: {text}")
+            sites.append({"name": name, "cut": summary["cut_volume"] * units.volume_factor,
+                          "fill": summary["fill_volume"] * units.volume_factor, "area": summary["plan_area"]})
+        for text in warnings:
+            fb.pushWarning(text)
+        topsoil_depth = self.parameterAsDouble(p, "TOPSOIL_DEPTH", c)
+        try:
+            balance = earthwork_balance(sites, factors, self.parameterAsDouble(p, "UNSUITABLE_PCT", c) / 100.0, topsoil_depth)
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        # topsoil = area (h units²) × depth (v units): express in the reported volume unit
+        balance["topsoil"] = sum(site["area"] for site in sites) * topsoil_depth * units.volume_factor
+        for site in sites:
+            fb.pushInfo(f"{site['name']}: cut {site['cut']:,.3f}, fill {site['fill']:,.3f} {units.volume} (in place).")
+        for item in balance["scenarios"]:
+            fb.pushInfo(f"Factor {item['factor']:.2f}: moved between sites {item['transfer']:,.2f}, import "
+                        f"{item['import_compacted']:,.2f} compacted ({item['import_in_place']:,.2f} in place), spoil "
+                        f"{item['spoil_in_place']:,.2f} {units.volume} in place.")
+        report = self.parameterAsFileOutput(p, "REPORT", c)
+        if report:
+            _write_text(report, balance_report_html(balance, units, os.path.basename(path), warnings))
+        table = self.parameterAsFileOutput(p, "TABLE_CSV", c)
+        if table:
+            try:
+                with open(table, "w", newline="", encoding="utf-8") as stream:
+                    writer = csv.writer(stream)
+                    # TOTAL rows: surplus = spoil and shortfall = import after site-to-site transfer (compacted)
+                    writer.writerow(["factor", "site", f"cut_in_place_{units.volume}", f"usable_compacted_{units.volume}",
+                                     f"fill_{units.volume}", f"surplus_{units.volume}", f"shortfall_{units.volume}"])
+                    for item in balance["scenarios"]:
+                        for site, row in zip(sites, item["sites"]):
+                            writer.writerow([f"{item['factor']:.3f}", row["name"], f"{site['cut']:.3f}", f"{row['usable']:.3f}",
+                                             f"{row['fill']:.3f}", f"{row['surplus']:.3f}", f"{row['shortfall']:.3f}"])
+                        writer.writerow([f"{item['factor']:.3f}", "TOTAL", f"{balance['cut']:.3f}",
+                                         f"{sum(r['usable'] for r in item['sites']):.3f}", f"{balance['fill']:.3f}",
+                                         f"{item['spoil_in_place'] * item['factor']:.3f}", f"{item['import_compacted']:.3f}"])
+            except OSError as exc:
+                raise QgsProcessingException(f"Could not write '{table}': {exc}") from exc
+        return {"TOTAL_CUT": balance["cut"], "TOTAL_FILL": balance["fill"], "NET_VOLUME": balance["fill"] - balance["cut"],
+                "SITE_COUNT": len(sites), "VOLUME_UNIT": units.volume, "REPORT": report or "", "TABLE_CSV": table or ""}

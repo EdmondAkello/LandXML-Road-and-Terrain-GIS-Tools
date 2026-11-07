@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic two-site balance. Site A Earthworks: the pad of grading_volume.xml (cut 100, fill 100 m3,
+     plan 200 m2). Site B Earthworks: 10 x 10 m of uniform 1 m fill (fill 100 m3, plan 100 m2).
+     Yard EG is an elevation surface and must not be picked by name. -->
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Metric linearUnit="meter" verticalLinearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter"/></Units>
+  <Surfaces>
+    <Surface name="Site A Earthworks">
+      <Definition surfType="TIN">
+        <Pnts>
+          <P id="1">0 0 -2</P><P id="2">0 20 2</P><P id="3">10 20 2</P><P id="4">10 0 -2</P>
+          <P id="5">5 7 -0.6</P><P id="6">0 30 4</P>
+        </Pnts>
+        <Faces>
+          <F>1 2 5</F><F>2 3 5</F><F>3 4 5</F><F>4 1 5</F>
+          <F i="1">2 6 3</F>
+        </Faces>
+      </Definition>
+    </Surface>
+    <Surface name="Site B Earthworks">
+      <Definition surfType="TIN">
+        <Pnts><P id="1">100 0 1</P><P id="2">100 10 1</P><P id="3">110 10 1</P><P id="4">110 0 1</P></Pnts>
+        <Faces><F>1 2 3</F><F>1 3 4</F></Faces>
+      </Definition>
+    </Surface>
+    <Surface name="Yard EG">
+      <Definition surfType="TIN">
+        <Pnts><P id="1">0 0 100</P><P id="2">0 20 101</P><P id="3">10 20 102</P></Pnts>
+        <Faces><F>1 2 3</F></Faces>
+      </Definition>
+    </Surface>
+  </Surfaces>
+</LandXML>
