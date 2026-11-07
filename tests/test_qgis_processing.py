@@ -1448,6 +1448,7 @@ class QgisProcessingTests(unittest.TestCase):
             text = Path(output).read_text(encoding="utf-8")
             self.assertIn("Geometric design review", text)
             self.assertIn("Phasing diagram", text)
+            self.assertNotIn("class='longsection'", text)
 
 
 if __name__ == "__main__":

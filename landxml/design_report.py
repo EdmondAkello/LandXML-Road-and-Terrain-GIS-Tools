@@ -485,7 +485,8 @@ def alignment_section(item, unit, normal_crown, strip=0.0):
         from .review_report import review_section_html
 
         result, settings = item["review"]
-        parts.append(review_section_html(item["name"], result, unit, settings, strip or 5000.0))
+        # The design report already has its own long-section; the review's banded one is in Geometric Design Review.
+        parts.append(review_section_html(item["name"], result, unit, settings, strip or 5000.0, long_section=False))
     parts.append("</section>")
     return "".join(parts)
 

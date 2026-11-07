@@ -79,7 +79,7 @@ def phasing_svg(groups, curves, findings, window, unit=None, width=1000, height=
     return "".join(out)
 
 
-def review_section_html(name, result, unit=None, settings="", strip=5000.0, section_length=1000.0):
+def review_section_html(name, result, unit=None, settings="", strip=5000.0, section_length=1000.0, long_section=True):
     criteria = result["criteria"]
     findings = result["findings"]
     groups = result["groups"]
@@ -131,7 +131,7 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0, sect
         parts.append("<h3>Phasing diagram</h3>")
         for low, high in strip_windows(start, end, strip):
             parts.append(phasing_svg(groups, curves, findings, (low, high), unit))
-    if model and end > start:
+    if long_section and model and end > start:
         from .plan_profile import long_section_svg, sheet_data, sheet_windows
 
         parts.append("<h3>Long section</h3><p class='note'>Design profile"
