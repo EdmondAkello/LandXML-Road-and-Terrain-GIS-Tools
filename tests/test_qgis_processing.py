@@ -607,6 +607,27 @@ class QgisProcessingTests(unittest.TestCase):
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, BASIN_SURFACE="", REPORT="", TABLE_CSV=""), self.context, self.feedback)
 
+    def test_grading_tools_accept_design_and_existing_surfaces(self):
+        params = self._params(GRADING, "EPSG:26915")
+        quantities = self.algorithms["landxml_grading_quantities"].processAlgorithm(
+            dict(params, VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG"), self.context, self.feedback)
+        self.assertAlmostEqual(quantities["CUT_VOLUME"], 100.0, places=6)
+        self.assertAlmostEqual(quantities["FILL_VOLUME"], 100.0, places=6)
+        self.assertAlmostEqual(quantities["PLAN_AREA"], 200.0, places=6)
+        with self.assertRaises(QgsProcessingException):
+            self.algorithms["landxml_grading_quantities"].processAlgorithm(
+                dict(params, VOLUME_SURFACE="Pad EG", EXISTING_SURFACE="Pad EG"), self.context, self.feedback)
+        balance = self.algorithms["landxml_earthwork_balance"].processAlgorithm(
+            dict(params, VOLUME_SURFACES="Pad FG | Pad EG; Pad Earthworks", SHRINKAGE="0.9"), self.context, self.feedback)
+        self.assertEqual(balance["SITE_COUNT"], 2)
+        self.assertAlmostEqual(balance["TOTAL_CUT"], 200.0, places=6)
+        self.assertAlmostEqual(balance["TOTAL_FILL"], 200.0, places=6)
+        comparison = self.algorithms["landxml_grading_revision_comparison"].processAlgorithm(
+            dict(params, SURFACE_A="Pad Earthworks", SURFACE_B="Pad FG", EXISTING_B="Pad EG", OUTPUT="memory:"),
+            self.context, self.feedback)
+        for key in ("CUT_CHANGE", "FILL_CHANGE", "NET_CHANGE"):
+            self.assertAlmostEqual(comparison[key], 0.0, places=6)
+
     def test_earthwork_balance_sites_report_and_table(self):
         algorithm = self.algorithms["landxml_earthwork_balance"]
         with tempfile.TemporaryDirectory() as directory:
