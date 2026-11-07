@@ -52,7 +52,7 @@ Sampling interpolates the original visible TIN triangles, retaining triangle-edg
 | 3. Vector extraction | Horizontal alignments |
 | 4. Terrain conversion | TIN to GeoTIFF |
 | 5. Surface extraction | TIN surface boundary; feature lines; breaklines |
-| 6. Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference); Grading Quantities (exact volumes from a volume surface, with a Civil 3D check); Platform Levels and Falls; Basin Stage–Storage |
+| 6. Earthworks and quantities | Profile Cut/Fill Analysis (existing vs design); Corridor Section Quantities (cut/fill, materials, side slopes for grassing, mass haul); Surface Cut/Fill (TIN difference); Grading Quantities (exact volumes from a volume surface, with a Civil 3D check); Platform Levels and Falls; Basin Stage–Storage; Earthwork Balance |
 | 7. Design review | Geometric Design Review: alignment phasing, sight distance, vertical and horizontal curves, grades, superelevation and barrier warrants against Kenya RDM 1.3 (2025) or AASHTO 2018 (metric or US customary), with recommended PVI changes for Civil 3D |
 | 8. Reports and sheets | Cross-Section Sheets and Report; Road Design Report: plan, curvature, gradient, long-section and superelevation diagrams with element tables, and an optional design review |
 
@@ -154,6 +154,8 @@ Section surfaces are identified from source evidence when the names are left bla
 **Platform Levels and Falls** reads a design (finished-level) surface. Each triangle is classed as flat (below the flat threshold, default 2 %), sloping (up to 30 %), batter (30–250 %) or near-vertical, and flat triangles that share an edge form a platform. Each platform polygon carries its area, mean, minimum and maximum level, overall fall and the bearing it falls towards (area-weighted plane fit), mean local grade and the share of its area flatter than the minimum fall. Platforms whose overall fall is below the minimum (default 0.5 %) are flagged, because water can pond on them. The HTML report adds the area in each slope class.
 
 **Basin Stage–Storage** builds the stage–storage table of a pond or basin surface: storage and water area at each level from the floor to the rim, integrated exactly over the triangles. Leave the rim blank to use the spill level (the lowest point on the surface edge). With a required volume, capacity is checked with freeboard (default 0.5) and reported as PASS, PASS TO RIM ONLY, FAIL or NOT CHECKED.
+
+**Earthwork Balance (Volume Surfaces)** balances cut and fill across one or more volume surfaces, one per site, for each shrinkage factor (default 0.85, 0.90 and 0.95, compacted per in-place). Each site uses its own cut first; surplus then supplies the other sites, and what remains is import or spoil. An unsuitable share of cut and topsoil stripping can be entered; both are reported separately. The balance assumes surplus can be hauled between the listed sites.
 
 ## Road Design Report
 

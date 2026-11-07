@@ -55,6 +55,7 @@ COMPLETE_ROAD = str(ROOT / "tests" / "fixtures" / "generic" / "complete_road.xml
 GRADING = str(ROOT / "tests" / "fixtures" / "generic" / "grading_volume.xml")
 PLATFORMS = str(ROOT / "tests" / "fixtures" / "generic" / "platforms.xml")
 BASIN = str(ROOT / "tests" / "fixtures" / "generic" / "basin.xml")
+BALANCE = str(ROOT / "tests" / "fixtures" / "generic" / "balance.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
@@ -80,7 +81,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 21)
+        self.assertEqual(len(self.algorithms), 22)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
@@ -605,6 +606,33 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertTrue(any("above the spill level" in text for text in warnings))
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, BASIN_SURFACE="", REPORT="", TABLE_CSV=""), self.context, self.feedback)
+
+    def test_earthwork_balance_sites_report_and_table(self):
+        algorithm = self.algorithms["landxml_earthwork_balance"]
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(BALANCE, "EPSG:26915")
+            params.update(VOLUME_SURFACES="", SHRINKAGE="0.9", TOPSOIL_DEPTH=0.15,
+                          REPORT=str(Path(directory) / "balance.html"), TABLE_CSV=str(Path(directory) / "balance.csv"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertEqual(result["SITE_COUNT"], 2)
+            self.assertAlmostEqual(result["TOTAL_CUT"], 100.0, places=6)
+            self.assertAlmostEqual(result["TOTAL_FILL"], 200.0, places=6)
+            self.assertAlmostEqual(result["NET_VOLUME"], 100.0, places=6)
+            rows = Path(directory, "balance.csv").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(rows[0], "factor,site,cut_in_place_m³,usable_compacted_m³,fill_m³,surplus_m³,shortfall_m³")
+            self.assertEqual(rows[-1], "0.900,TOTAL,100.000,90.000,200.000,0.000,110.000")
+            report = Path(directory, "balance.html").read_text(encoding="utf-8")
+            for expected in ("Site A Earthworks", "Site B Earthworks", "Topsoil stripping"):
+                self.assertIn(expected, report)
+            self.assertNotIn("Yard EG", report)
+        one = algorithm.processAlgorithm(dict(params, VOLUME_SURFACES="Site B Earthworks", REPORT="", TABLE_CSV=""),
+                                         self.context, self.feedback)
+        self.assertEqual(one["SITE_COUNT"], 1)
+        for bad in ("Site B Earthworks; Site B Earthworks", "Nope"):
+            with self.subTest(bad=bad), self.assertRaises(QgsProcessingException):
+                algorithm.processAlgorithm(dict(params, VOLUME_SURFACES=bad, REPORT="", TABLE_CSV=""), self.context, self.feedback)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, SHRINKAGE="0", REPORT="", TABLE_CSV=""), self.context, self.feedback)
 
     def test_complete_export_only_retains_available_layers(self):
         road_layers = {"alignments", "alignment_elements", "station_points"}

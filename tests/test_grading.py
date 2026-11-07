@@ -27,7 +27,10 @@ from landxml_plugin.core import read_tin
 from landxml_plugin.landxml.catalog import read_catalog
 from landxml_plugin.landxml.grading import (
     DEFAULT_BANDS,
+    balance_report_html,
     basin_report_html,
+    earthwork_balance,
+    parse_factors,
     spill_level,
     stage_storage,
     stored_volume,
@@ -334,6 +337,52 @@ class BasinTests(unittest.TestCase):
         summary = stage_storage(self.xyz, self.faces, required=300.0)
         text = basin_report_html(summary, "Test Pond", units, "basin.xml")
         for expected in ("Basin stage–storage", "Capacity: PASS TO RIM ONLY", "Test Pond", "360.000", "Stage–storage table"):
+            self.assertIn(expected, text)
+
+
+class BalanceTests(unittest.TestCase):
+    SITES = [{"name": "A", "cut": 1000.0, "fill": 200.0, "area": 300.0},
+             {"name": "B", "cut": 100.0, "fill": 900.0, "area": 200.0}]
+
+    def test_site_to_site_transfer_then_import(self):
+        balance = earthwork_balance(self.SITES, (0.9,))
+        item = balance["scenarios"][0]
+        self.assertEqual((balance["cut"], balance["fill"], balance["area"]), (1100.0, 1100.0, 500.0))
+        self.assertAlmostEqual(item["sites"][0]["surplus"], 700.0)
+        self.assertAlmostEqual(item["sites"][1]["shortfall"], 810.0)
+        self.assertAlmostEqual(item["transfer"], 700.0)
+        self.assertAlmostEqual(item["import_compacted"], 110.0)
+        self.assertAlmostEqual(item["import_in_place"], 110.0 / 0.9)
+        self.assertEqual(item["spoil_in_place"], 0.0)
+
+    def test_spoil_unsuitable_topsoil_and_single_site(self):
+        spoil = earthwork_balance([{"name": "A", "cut": 1000.0, "fill": 200.0, "area": 300.0}], (0.9,), 0.1, 0.15)
+        item = spoil["scenarios"][0]
+        self.assertEqual(item["transfer"], 0.0)
+        self.assertAlmostEqual(item["sites"][0]["usable"], 810.0)
+        self.assertAlmostEqual(item["spoil_in_place"], 610.0 / 0.9)
+        self.assertAlmostEqual(item["unsuitable_in_place"], 100.0)
+        self.assertAlmostEqual(spoil["topsoil"], 45.0)
+        unsuitable = earthwork_balance(self.SITES, (0.9,), 0.1)["scenarios"][0]
+        self.assertAlmostEqual(unsuitable["import_compacted"], 819.0 - 610.0)
+
+    def test_factors_and_validation(self):
+        self.assertEqual(parse_factors(""), (0.85, 0.90, 0.95))
+        self.assertEqual(parse_factors("0.9; 1.1"), (0.9, 1.1))
+        for text in ("0", "x", "3"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_factors(text)
+        for kwargs in ({"unsuitable": 1.0}, {"topsoil_depth": -1}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                earthwork_balance(self.SITES, **kwargs)
+        with self.assertRaises(ValueError):
+            earthwork_balance([])
+        self.assertEqual([item["factor"] for item in earthwork_balance(self.SITES)["scenarios"]], [0.85, 0.90, 0.95])
+
+    def test_balance_report(self):
+        units = quantity_units("meter", "meter")
+        text = balance_report_html(earthwork_balance(self.SITES, (0.9,), 0.1, 0.15), units, "balance.xml")
+        for expected in ("Earthwork balance", "Balance by shrinkage factor", "Factor 0.90: by site", "Topsoil stripping", "Unsuitable cut"):
             self.assertIn(expected, text)
 
 

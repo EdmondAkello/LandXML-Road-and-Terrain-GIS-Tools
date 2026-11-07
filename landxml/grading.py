@@ -549,3 +549,104 @@ def basin_report_html(summary, surface, units, source_file="", warnings=()):
     if warnings:
         body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
     return _document("Basin stage–storage", "".join(body))
+
+
+# ---------------------------------------------------------------- balance
+DEFAULT_SHRINKAGE = (0.85, 0.90, 0.95)
+
+
+def parse_factors(text, default=DEFAULT_SHRINKAGE):
+    """Shrinkage factors (compacted volume per in-place volume) from a comma list."""
+    text = (text or "").strip()
+    if not text:
+        return tuple(default)
+    try:
+        values = tuple(float(item) for item in text.replace(";", ",").replace(",", " ").split())
+    except ValueError as exc:
+        raise ValueError("Shrinkage factors must be numbers separated by commas, e.g. 0.85, 0.90, 0.95.") from exc
+    if not values or not all(math.isfinite(v) and 0 < v <= 2 for v in values):
+        raise ValueError("Each shrinkage factor must be above 0 and at most 2 (compacted per in-place volume).")
+    return values
+
+
+def earthwork_balance(sites, factors=DEFAULT_SHRINKAGE, unsuitable=0.0, topsoil_depth=0.0):
+    """Earthwork balance for one or more sites under shrinkage scenarios.
+
+    ``sites`` is a list of dicts with ``name``, ``cut``, ``fill`` (in-place volumes) and
+    ``area`` (plan area). For each factor f, the usable cut of a site is
+    cut × (1 − unsuitable) × f (compacted). Each site uses its own cut first; surplus
+    from other sites then supplies the shortfalls; what remains is import (compacted
+    fill from borrow, and its in-place equivalent ÷ f) or spoil (in place). Topsoil
+    stripping (plan area × depth) is reported separately and not used as fill.
+    """
+    if not sites:
+        raise ValueError("No sites to balance.")
+    if not 0 <= unsuitable < 1:
+        raise ValueError("The unsuitable share of cut must be at least 0 and below 1.")
+    if topsoil_depth < 0:
+        raise ValueError("Topsoil stripping depth must be zero or positive.")
+    scenarios = []
+    for factor in factors:
+        rows = []
+        for site in sites:
+            usable = site["cut"] * (1.0 - unsuitable) * factor
+            rows.append({"name": site["name"], "usable": usable, "fill": site["fill"],
+                         "surplus": max(usable - site["fill"], 0.0), "shortfall": max(site["fill"] - usable, 0.0)})
+        surplus = sum(row["surplus"] for row in rows)
+        shortfall = sum(row["shortfall"] for row in rows)
+        transfer = min(surplus, shortfall) if len(rows) > 1 else 0.0
+        import_compacted = max(shortfall - surplus, 0.0)
+        spoil_compacted = max(surplus - shortfall, 0.0)
+        scenarios.append({
+            "factor": factor, "sites": rows, "transfer": transfer,
+            "import_compacted": import_compacted, "import_in_place": import_compacted / factor,
+            "spoil_in_place": spoil_compacted / factor,
+            "unsuitable_in_place": sum(site["cut"] for site in sites) * unsuitable,
+        })
+    return {
+        "cut": sum(site["cut"] for site in sites), "fill": sum(site["fill"] for site in sites),
+        "area": sum(site["area"] for site in sites), "sites": list(sites),
+        "topsoil": sum(site["area"] for site in sites) * topsoil_depth, "topsoil_depth": topsoil_depth,
+        "unsuitable": unsuitable, "scenarios": scenarios,
+    }
+
+
+def balance_report_html(balance, units, source_file="", warnings=()):
+    """HTML report; volumes already in ``units.volume``, areas in ``units.area``."""
+    from .reports import _document, _table
+
+    v, a = units.volume, units.area
+    site_rows = [(site["name"], site["area"], site["cut"], site["fill"], site["fill"] - site["cut"])
+                 for site in balance["sites"]]
+    site_rows.append(("Total", balance["area"], balance["cut"], balance["fill"], balance["fill"] - balance["cut"]))
+    scenario_rows = [
+        (f"{item['factor']:.2f}", item["transfer"], item["import_compacted"], item["import_in_place"], item["spoil_in_place"])
+        for item in balance["scenarios"]
+    ]
+    body = [
+        f"<p class='meta'>Source: {html.escape(source_file)}</p>",
+        "<p class='note'>Cut and fill are exact in-place volumes from each volume surface. A shrinkage factor is the "
+        "compacted volume obtained from one unit of in-place cut. Each site uses its own cut first; surplus from other "
+        "sites then supplies the shortfalls. Import is the compacted fill still needed (and its in-place borrow "
+        "equivalent at the same factor); spoil is surplus cut in place."
+        + (f" {100 * balance['unsuitable']:g} % of cut is treated as unsuitable." if balance["unsuitable"] else "")
+        + "</p>",
+        "<h2>Sites (in place)</h2>",
+        _table(["Site", f"Plan area ({a})", f"Cut ({v})", f"Fill ({v})", f"Net, fill − cut ({v})"], site_rows, 2),
+        "<h2>Balance by shrinkage factor</h2>",
+        _table(["Shrinkage factor", f"Moved between sites ({v}, compacted)", f"Import ({v}, compacted)",
+                f"Import ({v}, in place)", f"Spoil ({v}, in place)"], scenario_rows, 2),
+    ]
+    for item in balance["scenarios"]:
+        body += [f"<h3>Factor {item['factor']:.2f}: by site</h3>",
+                 _table(["Site", f"Usable cut ({v}, compacted)", f"Fill ({v})", f"Surplus ({v})", f"Shortfall ({v})"],
+                        [(row["name"], row["usable"], row["fill"], row["surplus"], row["shortfall"]) for row in item["sites"]], 2)]
+    if balance["topsoil_depth"]:
+        body.append(f"<p class='note'>Topsoil stripping at {balance['topsoil_depth']:g} {units.depth} over the plan area: "
+                    f"{balance['topsoil']:,.2f} {v} in place, reported separately and not used as fill.</p>")
+    if balance["unsuitable"]:
+        body.append(f"<p class='note'>Unsuitable cut (in place), to spoil in addition to any surplus: "
+                    f"{balance['scenarios'][0]['unsuitable_in_place']:,.2f} {v}.</p>")
+    if warnings:
+        body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
+    return _document("Earthwork balance", "".join(body))
