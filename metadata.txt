@@ -2,7 +2,7 @@
 name=LandXML Road & Terrain GIS Tools
 qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
-description=Civil 3D, OpenRoads and generic LandXML in QGIS: terrain, road geometry, profile and cross-section viewers, earthworks quantities, design reports and a geometric design review (alignment phasing, sight distance, barriers) against Kenya RDM 1.3 or AASHTO.
+description=Civil 3D, OpenRoads and generic LandXML in QGIS: terrain, road geometry, profile and cross-section viewers, earthworks quantities, site-grading quantities, design reports and a geometric design review (alignment phasing, sight distance, barriers) against Kenya RDM 1.3 or AASHTO.
 version=1.10.0
 author=Edmond Akello
 email=francenicklaus@gmail.com
@@ -12,7 +12,9 @@ about=Brings LandXML road and terrain data into QGIS and turns it into review-re
 
     Review and report: a Station & Offset Locator dock (map clicks or manual engineering station input, signed offsets and map markers); a Profile Viewer dock (click an alignment to see existing ground against design, with cut/fill shading, transitions and a cross-section tab); cut/fill, corridor and TIN-to-TIN quantities with mass haul and side-slope areas for grassing; cross-section sheets as PDF, HTML or PNG; a Road Design Report with plan, curvature, gradient, long-section and superelevation diagrams.
 
-    Geometric Design Review: checks alignment phasing, stopping sight distance, crest and sag K, grades, radii, transitions, superelevation, design speed changes and embankment barrier warrants against Kenya RDM 1.3 (2025) or AASHTO 2018 criteria files, follows the design speeds set in Civil 3D, and writes recommended PVIs and curve lengths as a Civil 3D profile text file and LandXML.
+    Site grading: exact cut and fill from a volume surface or from design and existing-ground surfaces (no grid), platform levels and falls, basin stage–storage with freeboard checks, multi-site earthwork balance under shrinkage factors, and revision comparison by zone.
+
+    Geometric Design Review: checks alignment phasing, stopping sight distance, crest and sag K, grades, radii, transitions, superelevation, design speed changes and embankment barrier warrants against Kenya RDM 1.3 (2025) or AASHTO 2018 criteria files, follows the design speeds set in Civil 3D, and writes recommended PVIs and curve lengths as a Civil 3D profile text file, a comparison LandXML and a changed-PVI CSV, with A3 plan and profile sheets.
 
     Coordinate handling is explicit: stored coordinates, axis swap, offset, 2-D Helmert or reprojection are chosen by the user; a LandXML-declared CRS is shown for reference only. US survey feet, international feet and metres remain distinct. No extra Python dependencies.
 
@@ -21,6 +23,10 @@ repository=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 tracker=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/issues
 homepage=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 changelog=1.10.0
+    - Site grading group: exact Grading Quantities from a Civil 3D volume surface or from design and existing-ground surfaces, Platform Levels and Falls, Basin Stage–Storage, Earthwork Balance and Grading Revision Comparison, with visual reports and an explicit vertical-unit choice.
+    - Geometric Design Review: A3 plan and profile sheets, a banded long section with numbered findings and phasing bands, finding numbers in every output, findings map points by default, and a comparison LandXML plus changed-PVI CSV for Civil 3D.
+    - Roadway station equations across stationing, exports, reports and the Profile Viewer.
+    - Profile Viewer clicks centre the map again; the viewer and locator docks no longer squeeze other panels; northing-first coordinate warnings.
     - Interactive Station & Offset Locator: map clicks, manual station/offset lookup, engineering notation and three-decimal displays, with explicit coordinate settings and source units.
     - Coordinate interpretation includes the shared OpenRoads axis-order reminder.
     - Complete Road Design can load exported layers, names terrain outputs by source evidence, and preserves original surface names from prepared LandXML.
@@ -51,6 +57,6 @@ changelog=1.10.0
     Full history: CHANGELOG.md
 experimental=False
 deprecated=False
-tags=LandXML,design review,alignment phasing,sight distance,guardrail,RDM,AASHTO,TIN,earthworks,cross-section sheets,superelevation,design report,cut and fill,quantities,mass haul,long section,DTM,DEM,GeoTIFF,Civil 3D,OpenRoads Designer,road design,alignment,profile,cross-section,feature line,breakline,GeoPackage,QGIS,Processing
+tags=LandXML,design review,site grading,volume surface,stage storage,plan and profile,alignment phasing,sight distance,guardrail,RDM,AASHTO,TIN,earthworks,cross-section sheets,superelevation,design report,cut and fill,quantities,mass haul,long section,DTM,DEM,GeoTIFF,Civil 3D,OpenRoads Designer,road design,alignment,profile,cross-section,feature line,breakline,GeoPackage,QGIS,Processing
 category=Vector
 icon=icon.png

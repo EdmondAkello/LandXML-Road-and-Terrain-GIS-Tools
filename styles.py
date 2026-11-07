@@ -145,7 +145,21 @@ class StyledAlgorithm(QgsProcessingAlgorithm):
             if os.path.splitext(uri.get("path", ""))[1].lower() == ".gpkg":
                 categories = (QgsMapLayer.StyleCategory.Symbology | QgsMapLayer.StyleCategory.Labeling
                               | QgsMapLayer.StyleCategory.Rendering)
-                error = layer.saveStyleToDatabase("LandXML " + kind, "LandXML road-review preset", True, "", categories)
+                error = save_default_style(layer, "LandXML " + kind, "LandXML road-review preset", categories)
                 if error:
                     feedback.pushWarning(f"Could not save default style for {layer.name()}: {error}")
         return {}
+
+
+def save_default_style(layer, name, description, categories):
+    """Save ``layer``'s style as its default in its GeoPackage; returns an error message or ''.
+
+    Uses ``saveStyleToDatabaseV2`` (QGIS 3.44 and 4), which replaces the deprecated
+    ``saveStyleToDatabase``; the old call is kept only for builds without it.
+    """
+    save = getattr(layer, "saveStyleToDatabaseV2", None)
+    if save is None:  # pragma: no cover - older builds
+        return layer.saveStyleToDatabase(name, description, True, "", categories) or ""
+    _result, error = save(name, description, True, "", categories)
+    return error or ""
+
