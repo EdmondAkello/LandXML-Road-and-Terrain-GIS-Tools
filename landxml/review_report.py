@@ -216,11 +216,31 @@ def _serialize(element, indent="  ", level=0):
     return f"{pad}<{tag}{attributes}>{escape(text)}\n{inner}\n{pad}</{tag}>"
 
 
-def recommended_landxml(alignment_element, model, profile_name, unit="meter"):
-    """LandXML 1.2 with the alignment geometry and the recommended ProfAlign."""
+def _prof_align(model, name):
+    lines = [f"        <ProfAlign name={quoteattr(name)}>"]
+    for index, p in enumerate(model.pvis):
+        if 0 < index < len(model.pvis) - 1 and p["length"] > 0:
+            lines.append(f'          <ParaCurve length="{p["length"]:.4f}">{p["station"]:.6f} {p["elevation"]:.6f}</ParaCurve>')
+        else:
+            lines.append(f"          <PVI>{p['station']:.6f} {p['elevation']:.6f}</PVI>")
+    lines.append("        </ProfAlign>")
+    return lines
+
+
+def recommended_landxml(alignment_element, model, profile_name, unit="meter", original=None, original_name=None,
+                        alignment_suffix=" (review)"):
+    """LandXML 1.2 comparison file: the alignment geometry with the recommended ProfAlign.
+
+    With ``original`` the file also carries the design profile, so a Civil 3D import
+    (which always creates a new alignment) shows both profiles on the same imported
+    alignment. The alignment is renamed with ``alignment_suffix`` so it is not
+    mistaken for the design alignment.
+    """
     now = datetime.now()
     geometry = next((child for child in alignment_element if local_name(child.tag) == "CoordGeom"), None)
     attributes = {k: v for k, v in alignment_element.attrib.items() if local_name(k) in ("name", "length", "staStart", "desc")}
+    design_name = attributes.get("name", "Alignment")
+    attributes["name"] = f"{design_name}{alignment_suffix}"
     imperial = (unit or "meter").lower() in ("foot", "internationalfoot", "ussurveyfoot")
     units = (f'<Imperial linearUnit={quoteattr(unit)} areaUnit="squareFoot" volumeUnit="cubicFoot" speedUnit="milesPerHour"'
              if imperial else f'<Metric linearUnit={quoteattr(unit or "meter")} areaUnit="squareMeter" volumeUnit="cubicMeter" speedUnit="kilometersPerHour"')
@@ -235,12 +255,9 @@ def recommended_landxml(alignment_element, model, profile_name, unit="meter"):
     if geometry is not None:
         lines.append(_serialize(geometry, level=3))
     lines.extend(_serialize(e, level=3) for e in alignment_element if local_name(e.tag) == "StaEquation")
-    lines.append(f"      <Profile name={quoteattr(attributes.get('name', 'Profile'))}>")
-    lines.append(f"        <ProfAlign name={quoteattr(profile_name)}>")
-    for index, p in enumerate(model.pvis):
-        if 0 < index < len(model.pvis) - 1 and p["length"] > 0:
-            lines.append(f'          <ParaCurve length="{p["length"]:.4f}">{p["station"]:.6f} {p["elevation"]:.6f}</ParaCurve>')
-        else:
-            lines.append(f"          <PVI>{p['station']:.6f} {p['elevation']:.6f}</PVI>")
-    lines += ["        </ProfAlign>", "      </Profile>", "    </Alignment>", "  </Alignments>", "</LandXML>"]
+    lines.append(f"      <Profile name={quoteattr(design_name)}>")
+    if original is not None:
+        lines += _prof_align(original, original_name or "Design profile")
+    lines += _prof_align(model, profile_name)
+    lines += ["      </Profile>", "    </Alignment>", "  </Alignments>", "</LandXML>"]
     return "\n".join(lines) + "\n"

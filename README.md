@@ -207,8 +207,9 @@ Choose a **Custom criteria file** to use another standard: copy one of the JSON 
 
 **Back to Civil 3D.** For each phasing, K and length finding the tool searches PVI moves and curve lengths (one end coincident, both ends coincident, or a clear separation) that satisfy K, overlap and grade limits, and picks the one that changes levels least. Fixes that change any level by more than **Apply profile fixes … at most (source length units)** (default 1 m or 1 ft) are reported but not applied. The recommended profile is written as:
 
-- a text file for **Profiles → Create Profile from File** (station, elevation, curve length), and
-- a LandXML file with the original alignment and the recommended profile, for **Insert → LandXML**.
+- a text file for **Profiles → Create Profile from File** on the design alignment (station, elevation, curve length): use this to apply the fixes;
+- a comparison LandXML with a copy of the alignment named `… (review)` carrying both the design and the recommended profiles. Civil 3D's LandXML import always creates a new alignment, so use this file to compare; apply fixes to the design alignment with the text file;
+- a CSV of the PVIs whose station, level or curve length changed.
 
 The HTML report has summary cards, findings by category, a two-lane phasing diagram (horizontal over vertical curves), the change in elevation along the route, a table of recommended PVIs, a barrier schedule and the findings table. The findings are also written as a table and as points on the alignment.
 
