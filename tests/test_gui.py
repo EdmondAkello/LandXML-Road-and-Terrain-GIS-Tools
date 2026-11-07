@@ -164,6 +164,42 @@ class ProfileViewerTests(unittest.TestCase):
         self.dock.cleanup()
         self.dock.canvas = None
 
+    def test_profile_click_finds_alignment_line_without_a_pick(self):
+        from qgis.core import QgsProject
+
+        canvas = QgsMapCanvas()
+        canvas.resize(400, 400)
+        canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:32637"))
+        canvas.setExtent(QgsRectangle(4800, 900, 5200, 1100))
+        whole = QgsVectorLayer("LineString?crs=EPSG:32637&field=alignment_name:string&field=station_start:double&field=station_end:double",
+                               "alignments", "memory")
+        element = QgsVectorLayer("LineString?crs=EPSG:32637&field=alignment_name:string&field=sta_start:double&field=sta_end:double",
+                                 "alignment_elements", "memory")
+        for layer, geometry, start, end in ((whole, [(5000, 1000), (5000, 1200)], 0.0, 200.0),
+                                            (element, [(5000, 1000), (5000, 1050)], 0.0, 50.0)):
+            feature = QgsFeature(layer.fields())
+            feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(*xy) for xy in geometry]))
+            feature.setAttributes(["Synthetic Road", start, end])
+            layer.dataProvider().addFeatures([feature])
+            layer.setCustomProperty("landxml/source_path", CORRIDOR)
+        QgsProject.instance().addMapLayers([whole, element])
+        try:
+            self.dock.canvas = canvas
+            self.dock.link = None
+            point = self.dock._map_point(150)
+            self.assertAlmostEqual(point.y(), 1150)
+            # A pick on one element does not stop clicks beyond it from reaching the map.
+            picked = next(element.getFeatures())
+            self.dock.picked(element, picked, QgsPointXY(5000, 1020))
+            self.assertAlmostEqual(self.dock._map_point(30).y(), 1030)
+            self.assertAlmostEqual(self.dock._map_point(180).y(), 1180)
+            self.dock.center_map(180)
+            self.assertAlmostEqual(canvas.center().y(), 1180, places=3)
+        finally:
+            QgsProject.instance().removeMapLayers([whole.id(), element.id()])
+            self.dock.cleanup()
+            self.dock.canvas = None
+
     def test_cross_section_tab_and_exports(self):
         self.assertTrue(self.dock.tabs.isTabEnabled(1))
         self.dock.tabs.setCurrentIndex(1)

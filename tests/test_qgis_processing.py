@@ -163,12 +163,17 @@ class QgisProcessingTests(unittest.TestCase):
             "1. Inspect and prepare", "2. Road design extraction",
             "3. Vector extraction", "4. Terrain conversion", "5. Surface extraction",
             "6. Earthworks and quantities", "7. Design review", "8. Reports and sheets",
+            "9. Site grading (land development)",
         ])
         for name in ("inspect_landxml", "prepare_landxml"):
             self.assertEqual(self.algorithms[name].group(), groups[0])
         for name in ("landxml_design_report", "landxml_cross_section_sheets"):
-            self.assertEqual(self.algorithms[name].group(), groups[-1])
+            self.assertEqual(self.algorithms[name].group(), groups[-2])
             self.assertEqual(self.algorithms[name].groupId(), "reports")
+        for name in ("landxml_grading_quantities", "landxml_platform_levels", "landxml_basin_storage",
+                     "landxml_earthwork_balance", "landxml_grading_revision_comparison"):
+            self.assertEqual(self.algorithms[name].group(), groups[-1])
+            self.assertEqual(self.algorithms[name].groupId(), "site_grading")
 
     def test_coordinate_selectors_explain_landxml_axis_order(self):
         checked = []
@@ -606,6 +611,23 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertTrue(any("above the spill level" in text for text in warnings))
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, BASIN_SURFACE="", REPORT="", TABLE_CSV=""), self.context, self.feedback)
+
+    def test_grading_vertical_unit_choice(self):
+        algorithm = self.algorithms["landxml_grading_quantities"]
+        with tempfile.TemporaryDirectory() as directory:
+            undeclared = Path(directory) / "undeclared.xml"
+            undeclared.write_text(Path(GRADING).read_text(encoding="utf-8").replace(' verticalLinearUnit="meter"', ""),
+                                  encoding="utf-8")
+            params = self._params(str(undeclared), "EPSG:26915")
+            with self.assertRaisesRegex(QgsProcessingException, "Vertical unit"):
+                algorithm.processAlgorithm(params, self.context, self.feedback)
+            result = algorithm.processAlgorithm(dict(params, VERTICAL_UNIT=1), self.context, self.feedback)
+            self.assertAlmostEqual(result["CUT_VOLUME"], 100.0, places=6)
+        declared = self._params(GRADING, "EPSG:26915")
+        self.assertAlmostEqual(algorithm.processAlgorithm(dict(declared, VERTICAL_UNIT=1), self.context,
+                                                          self.feedback)["CUT_VOLUME"], 100.0, places=6)
+        with self.assertRaisesRegex(QgsProcessingException, "declares the vertical unit"):
+            algorithm.processAlgorithm(dict(declared, VERTICAL_UNIT=2), self.context, self.feedback)
 
     def test_grading_tools_accept_design_and_existing_surfaces(self):
         params = self._params(GRADING, "EPSG:26915")

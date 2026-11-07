@@ -216,9 +216,10 @@ a { color: var(--accent); }
     <tr><td>3. Vector extraction</td><td>Extract LandXML Alignments to Lines</td></tr>
     <tr><td>4. Terrain conversion</td><td>LandXML TIN to GeoTIFF</td></tr>
     <tr><td>5. Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
-    <tr><td>6. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference) · Grading Quantities (Volume Surface)</td></tr>
+    <tr><td>6. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference)</td></tr>
     <tr><td>7. Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
     <tr><td>8. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report</td></tr>
+    <tr><td>9. Site grading (land development)</td><td>Grading Quantities (Volume Surface) · Platform Levels and Falls · Basin Stage–Storage · Earthwork Balance (Volume Surfaces) · Grading Revision Comparison (Volume Surfaces)</td></tr>
     <tr><td>Outside the Toolbox</td><td>LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
   </tbody>
 </table>
@@ -436,6 +437,7 @@ a { color: var(--accent); }
 <h3>Surface Cut/Fill (TIN difference)</h3>
 <p>Grids two TINs on a shared raster and writes compare − base as a GeoTIFF styled orange (cut) to green (fill), with cut, fill and net volumes. Leave both names blank to use a recorded Civil 3D volume-surface pair, or existing ground against the corridor datum surface. When the file contains a <code>SurfVolume</code> for the same pair, the Civil 3D volumes are printed beside the grid result for comparison.</p>
 <h3 id="grading">Grading Quantities (volume surface)</h3>
+<p>The site-grading tools are in their own toolbox group, <b>9. Site grading (land development)</b>, apart from the road-corridor earthworks. If the file does not declare its vertical unit (Civil 3D metric exports usually omit it), choose <b>Vertical unit</b> in the tool; it is never inferred, and a choice that contradicts a declared unit stops the run.</p>
 <p>For site grading, export the Civil 3D <b>TIN volume surface</b> (design minus existing ground) with the other surfaces, and run <b>Grading Quantities (Volume Surface)</b> on it. Each triangle is integrated exactly as a linear prism and split at zero depth, so the result does not depend on a grid. The tool reports cut, fill and net volumes; plan, cut, fill and at-grade areas; maximum depths; and the exact plan area in each depth band (default limits −5, −3, −2, −1, −0.5, 0, 0.5, 1, 2, 3 and 5; a band includes its lower limit). Volumes are in place, with no shrinkage or bulking factors. Outputs are an HTML report and an optional depth-band CSV.</p>
 <p><b>Without a volume surface.</b> OpenRoads, and Civil 3D files exported without a volume surface, carry only the design and existing-ground surfaces. Enter the design surface and an <b>Existing-ground surface</b>: the tool builds the depth surface (design − existing) itself by clipping every design triangle against each existing triangle it overlaps. Both surfaces are linear on every piece, so the depth is linear too and the prism integration stays exact; the result is the TIN volume surface Civil 3D would build from the same two surfaces. Only the area both surfaces cover is counted, and any design area outside the existing ground is reported in the log. Earthwork Balance takes each site as <code>Design | Existing</code>, and Grading Revision Comparison takes an existing-ground surface for each revision.</p>
 <p><b>Reconciliation.</b> Enter the cut, fill and plan area from the Civil 3D cut/fill summary (unadjusted, factor 1.0) in the reported units. Each value is compared with the computed one and the run reports <b>PASS</b> when every difference is within the tolerance (default 0.01), otherwise <b>FAIL</b>. Civil 3D tables are rounded to two decimals, so differences up to 0.005 are rounding.</p>
@@ -634,30 +636,26 @@ a { color: var(--accent); }
 </ol>
 <p>Each candidate must meet minimum K, avoid overlapping neighbouring curves and stay within grade limits. Fixes that change any level by more than the cap are reported with the change they need (redesign that section) and are not applied.</p>
 <figure>
-  <img src="figures/fig_review_delta.png" alt="Elevation change">
-  <figcaption><b>Figure 26.</b> Change in elevation of the recommended profile against the design.</figcaption>
-</figure>
-<figure>
   <img src="figures/fig_review_pvis.png" alt="Recommended PVIs">
-  <figcaption><b>Figure 27.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
+  <figcaption><b>Figure 26.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
 </figure>
 
 <h3>Long section and plan &amp; profile sheets</h3>
 <p>The report draws a banded long section for each window of <b>Sheet and long-section window length</b> (default 1,000 m): the design profile, the recommended profile dashed where fixes apply, the existing ground, changed PVIs, and every finding as a numbered marker over its shaded chainage range. Below the profile, the bands show the design speed, the horizontal curves (left above the line, right below), the vertical curves (crest above, sag below) and the tangent grades. Horizontal and vertical curves sit in adjacent bands on one chainage, so their phasing reads directly; phasing findings (P1–P7) are outlined across both bands. Finding numbers are the same in the findings table, the <code>finding_no</code> field of the findings layer, the report and the sheets.</p>
 <figure>
   <img src="figures/fig_review_longsection.png" alt="Long section">
-  <figcaption><b>Figure 28.</b> Banded long section in the review report: profiles and numbered findings, then design speed, horizontal and vertical curves (phasing findings dashed) and grades.</figcaption>
+  <figcaption><b>Figure 27.</b> Banded long section in the review report: profiles and numbered findings, then design speed, horizontal and vertical curves (phasing findings dashed) and grades.</figcaption>
 </figure>
 <p><b>Plan and profile sheets (A3 PDF)</b> puts one window on each A3 landscape sheet: a plan strip of the alignment with chainage ticks and the numbered findings beside it, the same banded long section with a findings lane that stacks overlapping ranges, and a table of the findings in that window (highest severity first; any beyond the table are counted and listed in the report). The plan is schematic and rotated so each window runs left to right; the north arrow shows grid north of the source coordinates. With an output CRS the chosen coordinate interpretation decides the X/Y order; without one, northing-first files are detected for the drawing only. Each sheet has a single border, a floating legend, notes, and a title box at the bottom right with the alignment, chainage range and sheet number.</p>
 <figure>
   <img src="figures/fig_review_sheet.png" alt="Plan and profile sheet">
-  <figcaption><b>Figure 29.</b> A plan and profile sheet of the demonstration road (first 1,000 m).</figcaption>
+  <figcaption><b>Figure 28.</b> A plan and profile sheet of the demonstration road (first 1,000 m).</figcaption>
 </figure>
 <h2 id="barriers"><span class="sec">23</span>Safety barriers and sight on curves</h2>
 <p><b>Barriers (R1).</b> From each corridor section the tool measures the embankment height from the shoulder edge to the toe and the side-slope ratio on each side. Under RDM 1.3 a barrier is warranted where the fill is at least 6 m high and steeper than 1:3 (the example stated with Figure 12.4); fills of 3–6 m steeper than 1:3, and fills of 6 m or more with slopes between 1:3 and 1:4, are reported for assessment against the chart. Adjacent sections are grouped into runs, and the recommendation gives the barrier extent per side with the run-out length of Table 12.6 added at each end.</p>
 <figure>
   <img src="figures/fig_review_barriers.png" alt="Barrier schedule">
-  <figcaption><b>Figure 30.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
+  <figcaption><b>Figure 29.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
 </figure>
 <p><b>Sight on curves (S2).</b> On horizontal curves the review computes the sight-line offset needed for stopping sight distance and checks whether existing ground beyond the cut daylight line rises above the sight line (at the height set by the standard) on the inside of the curve. Only ground beyond daylight counts, so excavated material does not create false obstructions.</p>
 <div class="note"><b>Figure 12.4</b>The barrier warrant chart in RDM 1.3 is an image; only its stated example is encoded. Treat findings near the thresholds as prompts for engineering judgement.</div>

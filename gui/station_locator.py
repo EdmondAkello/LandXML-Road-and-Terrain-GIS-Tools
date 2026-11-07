@@ -23,6 +23,7 @@ from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
+    QScrollArea,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -136,7 +137,11 @@ class StationOffsetDock(QgsDockWidget):
         self.result_label.setWordWrap(True)
         self.result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.result_label)
-        self.setWidget(body)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(body)
+        self.setWidget(scroll)
         self.alignment_combo.currentIndexChanged.connect(self.invalidate)
         self.method_combo.currentIndexChanged.connect(self.invalidate)
 

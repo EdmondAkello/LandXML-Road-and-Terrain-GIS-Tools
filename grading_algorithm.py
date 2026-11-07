@@ -30,6 +30,7 @@ from qgis.core import (
     QgsProcessingException,
     QgsProcessingOutputNumber,
     QgsProcessingOutputString,
+    QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterField,
@@ -44,11 +45,8 @@ from qgis.core import (
 from .compat import FIELD_DOUBLE, FIELD_INT, FIELD_STRING
 from .core import bounds, grid_for_bounds, rasterize_tin, read_tin, transform_vertices, write_geotiff
 from .earthworks_algorithm import (
-    GROUP,
-    GROUP_ID,
     QUANTITY_HELP,
     _input_param,
-    _quantity_units,
     _resolve,
     _volume_parameter,
     _volume_unit,
@@ -56,7 +54,7 @@ from .earthworks_algorithm import (
 )
 from .landxml.catalog import read_catalog
 from .landxml.tin_overlay import depth_tin
-from .landxml.quantity_units import LINEAR_UNITS
+from .landxml.quantity_units import LINEAR_UNITS, quantity_units
 from .landxml.grading import (
     depth_warning,
     earthwork_balance,
@@ -98,6 +96,50 @@ def _optional_number(parameters, name):
         return float(value)
     except (TypeError, ValueError) as exc:
         raise QgsProcessingException(f"{name.replace('_', ' ').title()} must be a number.") from exc
+
+
+# Site grading has its own group, apart from road corridors.
+GROUP = "9. Site grading (land development)"
+GROUP_ID = "site_grading"
+VERTICAL_UNITS = [("As declared in the file", None), ("Metre", "meter"), ("International foot", "foot"),
+                  ("US survey foot", "USSurveyFoot")]
+
+
+def _vertical_unit_param(algorithm):
+    algorithm.addParameter(QgsProcessingParameterEnum(
+        "VERTICAL_UNIT", "Vertical (elevation) unit — choose when the file does not declare it",
+        options=[name for name, _unit in VERTICAL_UNITS], defaultValue=0))
+
+
+def _grading_units(algorithm, p, c, documents, feedback, horizontal, volume_unit="auto"):
+    """(QuantityUnits, vertical unit) from the declared or explicitly chosen vertical unit.
+
+    Civil 3D metric exports often omit ``verticalLinearUnit``. The unit is never
+    inferred: it comes from the file or from the user's explicit choice, and a
+    choice that contradicts a declared unit is an error.
+    """
+    chosen = VERTICAL_UNITS[algorithm.parameterAsEnum(p, "VERTICAL_UNIT", c)][1] if "VERTICAL_UNIT" in p else None
+    declared = {doc.vertical_unit for doc in documents if doc.vertical_unit}
+    if len(declared) > 1:
+        raise QgsProcessingException(f"The files declare different vertical units ({', '.join(sorted(declared))}); "
+                                     "prepare them with the same units first.")
+    vertical = next(iter(declared), None)
+    if vertical and chosen and LINEAR_UNITS[vertical.lower()] != LINEAR_UNITS[chosen.lower()]:
+        raise QgsProcessingException(f"The file declares the vertical unit '{vertical}', but '{chosen}' was chosen. "
+                                     "Leave Vertical unit as declared, or fix the file with Prepare LandXML.")
+    if not vertical:
+        if not chosen:
+            raise QgsProcessingException(
+                "The file does not declare its vertical (elevation) unit, and it is not inferred. Choose the Vertical unit "
+                "(Civil 3D metric exports usually omit it; metre for a metric drawing), or declare it with Prepare LandXML.")
+        vertical = chosen
+        feedback.pushInfo(f"Vertical unit: {chosen} (chosen; the file does not declare it).")
+    try:
+        units = quantity_units(horizontal, vertical, True, volume_unit)
+    except ValueError as exc:
+        raise QgsProcessingException(str(exc)) from exc
+    feedback.pushInfo(f"Earthwork units: volumes {units.volume}; lengths {units.length}; areas {units.area}; depths {units.depth}.")
+    return units, vertical
 
 
 EXISTING_HELP = (
@@ -205,6 +247,7 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             )
         self.addParameter(number_param("TOLERANCE", "Reconciliation tolerance (reported units)", 0.01, 0, 1e12, decimals=3))
         _param_coordinates(self)
+        _vertical_unit_param(self)
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
@@ -227,7 +270,7 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Grading quantities require an output CRS in metres, feet or US survey feet.")
-        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
+        units, _vertical = _grading_units(self, p, c, [doc], fb, horizontal, _volume_unit(self, p, c))
         try:
             bands = parse_bands(self.parameterAsString(p, "DEPTH_BANDS", c))
         except ValueError as exc:
@@ -352,6 +395,7 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(number_param("MIN_FALL_PCT", "Minimum platform fall (%)", 0.5, 0.0, 30.0, decimals=2))
         self.addParameter(number_param("MIN_AREA", "Smallest platform to list (output area units)", 50.0, 0.0, 1e12, decimals=1))
         _param_coordinates(self)
+        _vertical_unit_param(self)
         self.addParameter(
             QgsProcessingParameterFeatureSink("OUTPUT", "Platforms", type=QgsProcessing.SourceType.TypeVectorPolygon)
         )
@@ -369,8 +413,8 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Platform falls require an output CRS in metres, feet or US survey feet.")
-        units = _quantity_units(doc, fb, horizontal, allow_mixed=True)
-        vertical_factor = LINEAR_UNITS[doc.vertical_unit.lower()][0] / LINEAR_UNITS[horizontal.lower()][0]
+        units, vertical = _grading_units(self, p, c, [doc], fb, horizontal)
+        vertical_factor = LINEAR_UNITS[vertical.lower()][0] / LINEAR_UNITS[horizontal.lower()][0]
 
         catalog = read_catalog(path)
         requested = self.parameterAsString(p, "DESIGN_SURFACE", c).strip()
@@ -478,6 +522,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(number_param("STAGE_STEP", "Stage step (source vertical units)", 0.25, 0.001, 1000.0, decimals=3))
         self.addParameter(_volume_parameter())
         _param_coordinates(self)
+        _vertical_unit_param(self)
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
@@ -499,7 +544,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Basin storage requires an output CRS in metres, feet or US survey feet.")
-        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
+        units, _vertical = _grading_units(self, p, c, [doc], fb, horizontal, _volume_unit(self, p, c))
         catalog = read_catalog(path)
         requested = self.parameterAsString(p, "BASIN_SURFACE", c).strip()
         if not requested:
@@ -605,6 +650,7 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(number_param("TOPSOIL_DEPTH", "Topsoil stripping depth (source vertical units; 0 = none)", 0.0, 0.0, 100.0, decimals=3))
         self.addParameter(_volume_parameter())
         _param_coordinates(self)
+        _vertical_unit_param(self)
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
@@ -624,7 +670,7 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Earthwork balance requires an output CRS in metres, feet or US survey feet.")
-        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
+        units, _vertical = _grading_units(self, p, c, [doc], fb, horizontal, _volume_unit(self, p, c))
         try:
             factors = parse_factors(self.parameterAsString(p, "SHRINKAGE", c))
         except ValueError as exc:
@@ -780,6 +826,7 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
             "ZONE_FIELD", "Zone name field (blank = numbered)", parentLayerParameterName="ZONES", optional=True))
         self.addParameter(_volume_parameter())
         _param_coordinates(self)
+        _vertical_unit_param(self)
         self.addParameter(QgsProcessingParameterFeatureSink("OUTPUT", "Comparison table", type=QgsProcessing.SourceType.TypeVector))
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True))
@@ -800,16 +847,18 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
         if not os.path.isfile(path_b):
             raise QgsProcessingException("Second revision LandXML file does not exist.")
         method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path_a)
+        documents = [doc]
         if path_b != path_a:
             other = load_document(path_b)
-            if (other.horizontal_unit, other.vertical_unit) != (doc.horizontal_unit, doc.vertical_unit):
+            if other.horizontal_unit != doc.horizontal_unit:
                 raise QgsProcessingException(
-                    f"The two files declare different units ({doc.horizontal_unit}/{doc.vertical_unit} and "
-                    f"{other.horizontal_unit}/{other.vertical_unit}); prepare them with the same units first.")
+                    f"The two files declare different horizontal units ({doc.horizontal_unit} and {other.horizontal_unit}); "
+                    "prepare them with the same units first.")
+            documents.append(other)
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Revision comparison requires an output CRS in metres, feet or US survey feet.")
-        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
+        units, _vertical = _grading_units(self, p, c, documents, fb, horizontal, _volume_unit(self, p, c))
         surfaces = []
         for path, key, existing_key in ((path_a, "SURFACE_A", "EXISTING_A"), (path_b, "SURFACE_B", "EXISTING_B")):
             requested = self.parameterAsString(p, key, c).strip()
