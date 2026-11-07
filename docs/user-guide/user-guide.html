@@ -439,43 +439,75 @@ a { color: var(--accent); }
 <p>For site grading, export the Civil 3D <b>TIN volume surface</b> (design minus existing ground) with the other surfaces, and run <b>Grading Quantities (Volume Surface)</b> on it. Each triangle is integrated exactly as a linear prism and split at zero depth, so the result does not depend on a grid. The tool reports cut, fill and net volumes; plan, cut, fill and at-grade areas; maximum depths; and the exact plan area in each depth band (default limits −5, −3, −2, −1, −0.5, 0, 0.5, 1, 2, 3 and 5; a band includes its lower limit). Volumes are in place, with no shrinkage or bulking factors. Outputs are an HTML report and an optional depth-band CSV.</p>
 <p><b>Reconciliation.</b> Enter the cut, fill and plan area from the Civil 3D cut/fill summary (unadjusted, factor 1.0) in the reported units. Each value is compared with the computed one and the run reports <b>PASS</b> when every difference is within the tolerance (default 0.01), otherwise <b>FAIL</b>. Civil 3D tables are rounded to two decimals, so differences up to 0.005 are rounding.</p>
 <p>Leave the surface blank only when the file identifies exactly one volume surface (a Civil 3D volume record, or one surface named as earthworks, volume, cut/fill or difference); otherwise choose it. If the chosen surface has depths beyond 100 vertical units the log warns that it looks like an elevation surface. Civil 3D metric exports often omit the vertical unit; use <b>Prepare LandXML</b> to declare it.</p>
+<figure>
+  <img src="figures/fig_grading_map.png" alt="Depth map of the demo site">
+  <figcaption><b>Figure 7.</b> Synthetic grading demo: depth of the volume surface (cut orange, fill green, up to ±4 m) with the platforms found by Platform Levels and Falls, labelled with level and fall.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_grading_report.png" alt="Grading quantities report">
+  <figcaption><b>Figure 8.</b> Grading Quantities (Volume Surface) report: headline cut, fill, net and plan area, then the quantities table.</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_grading_bands.png" alt="Depth band chart">
+  <figcaption><b>Figure 9.</b> Exact plan area in each depth band, cut bands in orange and fill bands in green.</figcaption>
+</figure>
 <h3 id="platforms">Platform Levels and Falls</h3>
 <p>Run <b>Platform Levels and Falls</b> on the design (finished-level) surface. Each triangle is classed by slope: <i>flat</i> below the flat threshold (default 2 %), <i>sloping</i> up to 30 % (ramps and graded areas), <i>batter</i> from 30 % to 250 % (1V:3.3H to 1V:0.4H) and <i>near-vertical</i> above that (retained edges). Flat triangles that share an edge form a platform; platforms smaller than the listing limit (default 50 m²) are left out. Each platform is written as a polygon with its area, mean, minimum and maximum level, overall fall and the bearing it falls towards, mean local grade and the share of its area flatter than the minimum fall. The overall fall comes from an area-weighted plane fitted to the platform, so a platform built as two level terraces joined by a gentle transition reports its average fall; check the minimum and maximum levels. Platforms whose overall fall is below the minimum (default 0.5 %) are flagged, because water can pond on them; common targets are at least 1 % on gravel and 0.5 % on paved areas. The HTML report also gives the area in each slope class.</p>
+<figure>
+  <img src="figures/fig_grading_platforms.png" alt="Platform plan">
+  <figcaption><b>Figure 10.</b> Platform Levels and Falls: plan of the platforms with level, overall fall and a downhill arrow; level platforms are flagged in red. Holes such as the pond inside P2 are kept.</figcaption>
+</figure>
 <h3 id="balance">Earthwork Balance (volume surfaces)</h3>
 <p>Run <b>Earthwork Balance (Volume Surfaces)</b> with the volume surfaces of the sites to balance, separated by semicolons, or leave the list blank to use every surface named as a volume surface. Cut and fill per site are the exact in-place volumes of Grading Quantities. For each shrinkage factor (compacted volume from one unit of in-place cut; default 0.85, 0.90 and 0.95) each site first uses its own cut; surplus from the other sites then supplies the shortfalls, assuming it can be hauled between them. The report gives, per factor, the volume moved between sites, the import still needed (compacted, and its in-place borrow equivalent at the same factor) and the spoil in place, with a table per site. An unsuitable share of cut is removed before balancing and goes to spoil; topsoil stripping (plan area × depth) is reported separately and not used as fill.</p>
+<figure>
+  <img src="figures/fig_grading_balance.png" alt="Balance report">
+  <figcaption><b>Figure 11.</b> Earthwork Balance: cut and fill per site, then the volume moved between sites, import and spoil for each shrinkage factor.</figcaption>
+</figure>
 <h3 id="revisions">Grading Revision Comparison</h3>
 <p>When a grading revision arrives, run <b>Grading Revision Comparison (Volume Surfaces)</b> with the volume surface of each revision; the second can come from another LandXML file (use the same coordinate interpretation and units). The table lists cut and fill of both revisions and the change (second minus first), overall and, with a zone polygon layer and its name field, by zone. Triangles are assigned to zones by their centroid, so zone totals near zone edges are approximate; the overall totals are exact. Labels such as "Rev B" and "Rev C" are used in the report. The optional change raster maps the depth change (positive = more fill or less cut); where only one revision has earthworks, the other counts as zero depth, so changed footprints show clearly. A change can also come from a revised existing-ground survey: compare the existing-ground surfaces with Surface Cut/Fill before attributing it to the design.</p>
+<figure>
+  <img src="figures/fig_grading_comparison.png" alt="Revision comparison">
+  <figcaption><b>Figure 12.</b> Grading Revision Comparison: overall change and cut and fill of both revisions by zone (here the platform polygons as zones).</figcaption>
+</figure>
+<figure>
+  <img src="figures/fig_grading_change.png" alt="Depth change map">
+  <figcaption><b>Figure 13.</b> Depth-change raster (second revision minus first): platform B was lowered by 0.5 m, so it shows less fill (orange) while platform A is unchanged.</figcaption>
+</figure>
 <h3 id="basins">Basin Stage–Storage</h3>
 <p>Export the pond or basin grading as its own TIN surface and run <b>Basin Stage–Storage</b> on it. The storage below each level is integrated exactly over the triangles, because water depth is linear on each one; the table lists level, depth, water area and storage from the floor to the rim in the chosen step (default 0.25), with the freeboard level and the rim always included. Leave the rim blank to use the <b>spill level</b>, the lowest point on the surface's outer edge, where water would overflow; a rim above the spill level is flagged, because storage above it exists only if the basin is closed beyond this surface. Enter the required volume in the reported units to check capacity with freeboard (rim minus freeboard, default 0.5): <b>PASS</b> when it fits with freeboard, <b>PASS TO RIM ONLY</b> when it fits only if filled to the rim, otherwise <b>FAIL</b>. Outputs are an HTML report and a CSV table.</p>
+<figure>
+  <img src="figures/fig_grading_basin.png" alt="Stage–storage chart">
+  <figcaption><b>Figure 14.</b> Basin Stage–Storage: storage against level with the freeboard level, rim and required storage. Here 400 m³ fits only when the pond is filled to the rim (PASS TO RIM ONLY).</figcaption>
+</figure>
 
 <h2 id="sheets"><span class="sec">16</span>Cross-Section Sheets and Report</h2>
 <p>Plots corridor sections as multi-page PDF sheets (A4, A3 or A1; 1–12 sections per sheet) with a title block and legend, an HTML report with a section table and drawings, and one PNG per section. A station range and interval select what to plot, for example every 50 m between 10000 and 12000.</p>
 <figure>
   <img src="figures/fig_sheet.png" alt="Section sheet">
-  <figcaption><b>Figure 7.</b> An A3 sheet with 12 sections across a fill-to-cut transition: ground and design, shaded cut and fill, pavement layers, Datum, slope ratios (red when steeper than the stabilisation limit), daylight offsets, FRL/EG levels and areas.</figcaption>
+  <figcaption><b>Figure 15.</b> An A3 sheet with 12 sections across a fill-to-cut transition: ground and design, shaded cut and fill, pavement layers, Datum, slope ratios (red when steeper than the stabilisation limit), daylight offsets, FRL/EG levels and areas.</figcaption>
 </figure>
 
 <h2 id="report"><span class="sec">17</span>Road Design Report</h2>
 <p><b>Road Design Report</b> writes one HTML page per file with a section per alignment. Print it to PDF from a browser for a paginated report; each alignment starts on a new page.</p>
 <figure>
   <img src="figures/fig_report_top.png" alt="Report summary">
-  <figcaption><b>Figure 8.</b> The report opens with a table of its alignments (chainage, length, design speeds and review findings), followed for each alignment by summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed and maximum superelevation.</figcaption>
+  <figcaption><b>Figure 16.</b> The report opens with a table of its alignments (chainage, length, design speeds and review findings), followed for each alignment by summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed and maximum superelevation.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_plan.png" alt="Plan">
-  <figcaption><b>Figure 9.</b> Schematic plan: lines, curves and spirals in different colours with chainage ticks, north arrow and scale bar. Choose whether the file stores northing first.</figcaption>
+  <figcaption><b>Figure 17.</b> Schematic plan: lines, curves and spirals in different colours with chainage ticks, north arrow and scale bar. Choose whether the file stores northing first.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_curvature.png" alt="Curvature">
-  <figcaption><b>Figure 10.</b> Curvature diagram (1000/R, right positive) with radius labels and spiral transitions.</figcaption>
+  <figcaption><b>Figure 18.</b> Curvature diagram (1000/R, right positive) with radius labels and spiral transitions.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_gradient.png" alt="Gradient">
-  <figcaption><b>Figure 11.</b> Gradient diagram with grade labels and crest/sag curve bands.</figcaption>
+  <figcaption><b>Figure 19.</b> Gradient diagram with grade labels and crest/sag curve bands.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_superelevation.png" alt="Superelevation">
-  <figcaption><b>Figure 12.</b> Superelevation diagram of both lanes from the transition stations and rates in the file. The normal crown is an input because LandXML does not store it.</figcaption>
+  <figcaption><b>Figure 20.</b> Superelevation diagram of both lanes from the transition stations and rates in the file. The normal crown is an input because LandXML does not store it.</figcaption>
 </figure>
 <p>The report also tabulates horizontal elements, vertical controls and superelevation transitions. Long alignments are split into strips (default 5,000 m per row). Select a <b>Design standard</b> to add the geometric design review (Part D) to each alignment.</p>
 
@@ -491,7 +523,7 @@ a { color: var(--accent); }
 <h2 id="review-run"><span class="sec">19</span>Running a review</h2>
 <figure class="half">
   <img src="figures/fig_dialog_review.png" alt="Review dialog">
-  <figcaption><b>Figure 13.</b> The Geometric Design Review dialog with the help panel.</figcaption>
+  <figcaption><b>Figure 21.</b> The Geometric Design Review dialog with the help panel.</figcaption>
 </figure>
 <table>
   <thead><tr><th style="width:32%">Parameter</th><th>Meaning</th></tr></thead>
@@ -511,7 +543,7 @@ a { color: var(--accent); }
 </table>
 <figure>
   <img src="figures/fig_review_summary.png" alt="Review summary">
-  <figcaption><b>Figure 14.</b> Review summary: findings by severity and category, and the number of profile changes applied to the recommended profile.</figcaption>
+  <figcaption><b>Figure 22.</b> Review summary: findings by severity and category, and the number of profile changes applied to the recommended profile.</figcaption>
 </figure>
 <table>
   <thead><tr><th style="width:16%">Severity</th><th>Meaning</th></tr></thead>
@@ -531,7 +563,7 @@ a { color: var(--accent); }
 </ul>
 <figure>
   <img src="figures/fig_review_speed.png" alt="Speed sections">
-  <figcaption><b>Figure 15.</b> Design speed sections of the demo road: 80 km/h then 60 km/h from CH 1+900.</figcaption>
+  <figcaption><b>Figure 23.</b> Design speed sections of the demo road: 80 km/h then 60 km/h from CH 1+900.</figcaption>
 </figure>
 <p>The speed plan itself is checked (Kenya RDM 1.3 §3.10.3, §5.5, §5.14):</p>
 <table>
@@ -571,7 +603,7 @@ a { color: var(--accent); }
 </table>
 <figure>
   <img src="figures/fig_review_findings.png" alt="Findings table">
-  <figcaption><b>Figure 16.</b> Findings table (first rows), grouped by category: severity and code, chainage range, issue and detail, recommendation and the criteria reference.</figcaption>
+  <figcaption><b>Figure 24.</b> Findings table (first rows), grouped by category: severity and code, chainage range, issue and detail, recommendation and the criteria reference.</figcaption>
 </figure>
 
 <h2 id="phasing"><span class="sec">22</span>Alignment phasing and recommended PVIs</h2>
@@ -590,7 +622,7 @@ a { color: var(--accent); }
 </table>
 <figure>
   <img src="figures/fig_review_phasing.png" alt="Phasing diagram">
-  <figcaption><b>Figure 17.</b> Phasing diagram: horizontal curves (left purple, right teal, light ends = spirals) above vertical curves (crest orange, sag green) on a common chainage; dashed boxes mark phasing findings.</figcaption>
+  <figcaption><b>Figure 25.</b> Phasing diagram: horizontal curves (left purple, right teal, light ends = spirals) above vertical curves (crest orange, sag green) on a common chainage; dashed boxes mark phasing findings.</figcaption>
 </figure>
 <h3>How fixes are computed</h3>
 <p>For each phasing, K or curve-length finding the tool tries these profile changes and keeps the feasible one that changes levels least:</p>
@@ -602,18 +634,18 @@ a { color: var(--accent); }
 <p>Each candidate must meet minimum K, avoid overlapping neighbouring curves and stay within grade limits. Fixes that change any level by more than the cap are reported with the change they need (redesign that section) and are not applied.</p>
 <figure>
   <img src="figures/fig_review_delta.png" alt="Elevation change">
-  <figcaption><b>Figure 18.</b> Change in elevation of the recommended profile against the design.</figcaption>
+  <figcaption><b>Figure 26.</b> Change in elevation of the recommended profile against the design.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_review_pvis.png" alt="Recommended PVIs">
-  <figcaption><b>Figure 19.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
+  <figcaption><b>Figure 27.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
 </figure>
 
 <h2 id="barriers"><span class="sec">23</span>Safety barriers and sight on curves</h2>
 <p><b>Barriers (R1).</b> From each corridor section the tool measures the embankment height from the shoulder edge to the toe and the side-slope ratio on each side. Under RDM 1.3 a barrier is warranted where the fill is at least 6 m high and steeper than 1:3 (the example stated with Figure 12.4); fills of 3–6 m steeper than 1:3, and fills of 6 m or more with slopes between 1:3 and 1:4, are reported for assessment against the chart. Adjacent sections are grouped into runs, and the recommendation gives the barrier extent per side with the run-out length of Table 12.6 added at each end.</p>
 <figure>
   <img src="figures/fig_review_barriers.png" alt="Barrier schedule">
-  <figcaption><b>Figure 20.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
+  <figcaption><b>Figure 28.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
 </figure>
 <p><b>Sight on curves (S2).</b> On horizontal curves the review computes the sight-line offset needed for stopping sight distance and checks whether existing ground beyond the cut daylight line rises above the sight line (at the height set by the standard) on the inside of the curve. Only ground beyond daylight counts, so excavated material does not create false obstructions.</p>
 <div class="note"><b>Figure 12.4</b>The barrier warrant chart in RDM 1.3 is an image; only its stated example is encoded. Treat findings near the thresholds as prompts for engineering judgement.</div>

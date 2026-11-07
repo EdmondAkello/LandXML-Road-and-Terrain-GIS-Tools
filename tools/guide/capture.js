@@ -20,6 +20,13 @@ const SHOTS = [
   ['profile_cut_fill.html', 'Demo Road', 'fig_cutfill_report', 1000, 'Preliminary level-section estimate'],
   ['corridor_quantities.html', 'Demo Road', 'fig_quantities_top', 900, 'Mass haul ordinate'],
   ['corridor_quantities.html', 'Mass haul ordinate', 'fig_masshaul', 600],
+  // grading figures (tools/guide/make_grading_figures.py)
+  ['grading_quantities.html', 'Grading quantities', 'fig_grading_report', 760, 'Plan area by depth'],
+  ['grading_quantities.html', 'Plan area by depth', 'fig_grading_bands', 560],
+  ['platforms.html', 'Platforms (', 'fig_grading_platforms', 900],
+  ['basin.html', 'Capacity:', 'fig_grading_basin', 760, 'Stage–storage table'],
+  ['balance.html', 'Sites (in place)', 'fig_grading_balance', 1000, 'Factor 0.85: by site'],
+  ['comparison.html', 'Overall', 'fig_grading_comparison', 760, 'By zone'],
 ];
 
 (async () => {
@@ -27,6 +34,7 @@ const SHOTS = [
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' }).catch(() => chromium.launch());
   const page = await browser.newPage({ viewport: { width: 1100, height: 1400 }, deviceScaleFactor: 2 });
   for (const [file, heading, name, maxHeight, until] of SHOTS) {
+    if (!require('fs').existsSync(path.join(folder, file))) continue;  // road and grading figures are made separately
     await page.goto('file://' + path.join(folder, file));
     const box = await page.evaluate(([text, limit, end]) => {
       const heads = [...document.querySelectorAll('h1,h2,h3')];
