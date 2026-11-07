@@ -9,10 +9,13 @@ from qgis.core import (
     Qgis,
     QgsCoordinateTransform,
     QgsCsException,
+    QgsExpression,
+    QgsFeatureRequest,
     QgsGeometry,
     QgsPointXY,
     QgsProject,
     QgsSettings,
+    QgsVectorLayer,
 )
 from qgis.gui import QgsDockWidget, QgsVertexMarker
 from qgis.PyQt.QtCore import QRectF, QSize, Qt
@@ -33,6 +36,7 @@ from qgis.PyQt.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTabWidget,
     QTableWidget,
@@ -104,7 +108,11 @@ class ProfileViewerDock(QgsDockWidget):
         self.marker = None
         self.tool = None
         self._previous_tool = None
+        self._link_cache = {}
         self._build()
+        project = QgsProject.instance()
+        project.layersAdded.connect(self._clear_link_cache)
+        project.layersRemoved.connect(self._clear_link_cache)
 
     # ---------------------------------------------------------- layout
     def _build(self):
@@ -223,7 +231,13 @@ class ProfileViewerDock(QgsDockWidget):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
-        self.setWidget(body)
+        # A scroll area keeps the dock's minimum size small, so docking it never
+        # squeezes the other panels (Processing Toolbox, Layers) out of view.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(body)
+        self.setWidget(scroll)
 
         self.alignment_combo.currentIndexChanged.connect(self.alignment_changed)
         self.design_combo.currentIndexChanged.connect(self.refresh)
@@ -285,6 +299,7 @@ class ProfileViewerDock(QgsDockWidget):
             self.alignment_combo.addItems(list(self.alignments))
             self.alignment_combo.blockSignals(False)
             self.link = None
+            self._clear_link_cache()
         if alignment and alignment in self.alignments:
             self.alignment_combo.setCurrentText(alignment)
         self.alignment_changed()
@@ -512,7 +527,17 @@ class ProfileViewerDock(QgsDockWidget):
         if direct is not None or layer.geometryType() != Qgis.GeometryType.Line:
             self.link = None
             return direct
-        element = self.alignments.get(self.alignment_combo.currentText())
+        start, end = self._span(feature, self.alignments.get(self.alignment_combo.currentText()))
+        if start is None or end is None or geometry.length() <= 0:
+            self.link = None
+            return None
+        self.link = dict(layer=layer, geometry=QgsGeometry(geometry), start=start, end=end,
+                         alignment=self.alignment_combo.currentText())
+        along = geometry.lineLocatePoint(QgsGeometry.fromPointXY(QgsPointXY(layer_point)))
+        return start + (end - start) * along / geometry.length()
+
+    def _span(self, feature, element):
+        """(start, end) stations of a line feature from its fields or the LandXML alignment."""
         start = _number(feature, START_FIELDS)
         end = _number(feature, END_FIELDS)
         if start is None and element is not None:
@@ -528,20 +553,63 @@ class ProfileViewerDock(QgsDockWidget):
                 except (TypeError, ValueError):
                     length = None
             end = start + length if length is not None else None
-        if start is None or end is None or geometry.length() <= 0:
-            self.link = None
-            return None
-        self.link = dict(layer=layer, geometry=QgsGeometry(geometry), start=start, end=end)
-        along = geometry.lineLocatePoint(QgsGeometry.fromPointXY(QgsPointXY(layer_point)))
-        return start + (end - start) * along / geometry.length()
+        return start, end
+
+    def _alignment_link(self, alignment):
+        """The project's longest line feature for ``alignment`` from this LandXML file, as a map link.
+
+        Used when the profile was opened from the file, or picked on a point or a
+        single alignment element, so clicking anywhere on the profile still finds
+        the location on the map. Cached per alignment until layers change.
+        """
+        cache = self._link_cache
+        if alignment in cache:
+            return cache[alignment]
+        best = None
+        element = self.alignments.get(alignment)
+        own = os.path.normcase(os.path.abspath(self.path)) if self.path else None
+        for layer in QgsProject.instance().mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer) or layer.geometryType() != Qgis.GeometryType.Line:
+                continue
+            field = alignment_field(layer)
+            if field is None:
+                continue
+            source = layer.customProperty(SOURCE_PROPERTY)
+            if source and own and os.path.normcase(os.path.abspath(source)) != own:
+                continue
+            expression = f"{QgsExpression.quotedColumnRef(field)} = {QgsExpression.quotedValue(alignment)}"
+            for feature in layer.getFeatures(QgsFeatureRequest().setFilterExpression(expression)):
+                geometry = feature.geometry()
+                if geometry is None or geometry.isEmpty() or geometry.length() <= 0:
+                    continue
+                start, end = self._span(feature, element)
+                if start is None or end is None or end <= start:
+                    continue
+                if best is None or end - start > best["end"] - best["start"]:
+                    best = dict(layer=layer, geometry=QgsGeometry(geometry), start=start, end=end, alignment=alignment)
+        cache[alignment] = best
+        return best
+
+    def _clear_link_cache(self, *_args):
+        self._link_cache = {}
 
     def _map_point(self, station):
+        if self.canvas is None:
+            return None
+        alignment = self.alignment_combo.currentText()
         link = self.link
-        if link is None or self.canvas is None or link["end"] == link["start"]:
-            return None
+        if link is not None and link.get("alignment") not in (None, alignment):
+            link = self.link = None
+
+        def covers(item):
+            return item is not None and item["end"] > item["start"] and item["start"] - 1e-6 <= station <= item["end"] + 1e-6
+
+        if not covers(link):
+            fallback = self._alignment_link(alignment)
+            if not covers(fallback):
+                return None
+            link = fallback
         fraction = (station - link["start"]) / (link["end"] - link["start"])
-        if not -1e-6 <= fraction <= 1 + 1e-6:
-            return None
         geometry = link["geometry"]
         point = geometry.interpolate(min(max(fraction, 0.0), 1.0) * geometry.length())
         if point is None or point.isEmpty():
@@ -754,6 +822,12 @@ class ProfileViewerDock(QgsDockWidget):
             QMessageBox.warning(self, "LandXML Profile Viewer", text)
 
     def cleanup(self):
+        project = QgsProject.instance()
+        for signal in (project.layersAdded, project.layersRemoved):
+            try:
+                signal.disconnect(self._clear_link_cache)
+            except (TypeError, RuntimeError):
+                pass
         if self.canvas is not None:
             if self.tool is not None and self.canvas.mapTool() is self.tool:
                 self.canvas.unsetMapTool(self.tool)

@@ -6,7 +6,7 @@ from datetime import datetime
 import html
 
 from .common import local_name
-from .design_report import chart_svg, clip_series, strip_windows
+from .design_report import strip_windows
 from .reports import _anchor, _axis_ticks, _cards, _table, station_label
 
 
@@ -143,12 +143,6 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0, sect
         for window in sheet_windows(start, end, section_length):
             parts.append(long_section_svg(sheet_data(result, window, step=max((window[1] - window[0]) / 500.0, 1.0)), unit))
     if model and recommended and result.get("applied"):
-        delta = [(s, recommended.elevation(s) - model.elevation(s)) for s, _z in model.samples(5.0)]
-        parts.append("<h3>Recommended profile — change in elevation</h3>")
-        for low, high in strip_windows(start, end, strip):
-            clipped = clip_series(delta, low, high)
-            if clipped and max(abs(v) for _s, v in clipped) > 1e-3:
-                parts.append(chart_svg([("Recommended − design", "#1f5fbf", clipped, True)], unit, f"Δ elevation ({criteria.length_unit})", fmt="{:+.2f}"))
         rows = []
         original = {round(p["station"], 3): p for p in model.pvis}
         for index, p in enumerate(recommended.pvis):
