@@ -54,6 +54,7 @@ ALIGNMENTS_ONLY = str(ROOT / "tests" / "fixtures" / "generic" / "alignments_only
 COMPLETE_ROAD = str(ROOT / "tests" / "fixtures" / "generic" / "complete_road.xml")
 GRADING = str(ROOT / "tests" / "fixtures" / "generic" / "grading_volume.xml")
 PLATFORMS = str(ROOT / "tests" / "fixtures" / "generic" / "platforms.xml")
+BASIN = str(ROOT / "tests" / "fixtures" / "generic" / "basin.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
@@ -79,7 +80,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 20)
+        self.assertEqual(len(self.algorithms), 21)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
@@ -574,6 +575,36 @@ class QgisProcessingTests(unittest.TestCase):
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(self._params(GRADING, "EPSG:26915"), DESIGN_SURFACE="", OUTPUT="memory:"),
                                        self.context, self.feedback)
+
+    def test_basin_storage_check_table_and_units(self):
+        algorithm = self.algorithms["landxml_basin_storage"]
+        with tempfile.TemporaryDirectory() as directory:
+            params = self._params(BASIN, "EPSG:26915")
+            params.update(BASIN_SURFACE="Test Pond", REQUIRED_VOLUME=300.0, FREEBOARD=0.5, STAGE_STEP=0.5,
+                          REPORT=str(Path(directory) / "basin.html"), TABLE_CSV=str(Path(directory) / "basin.csv"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertAlmostEqual(result["RIM_VOLUME"], 360.0, places=6)
+            self.assertAlmostEqual(result["FREEBOARD_VOLUME"], 270.0 + 5 / 6, places=6)
+            self.assertEqual((result["RIM_LEVEL_USED"], result["SPILL_LEVEL"], result["FLOOR_LEVEL"]), (3.0, 3.0, 0.0))
+            self.assertEqual(result["CHECK"], "PASS TO RIM ONLY")
+            rows = Path(directory, "basin.csv").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(rows[0], "level_m,depth_m,water_area_m²,storage_m³")
+            self.assertEqual(rows[-1], "3.0000,3.0000,192.0000,360.0000")
+            self.assertIn("Capacity: PASS TO RIM ONLY", Path(directory, "basin.html").read_text(encoding="utf-8"))
+
+        yards = dict(params, VOLUME_UNITS=1, REQUIRED_VOLUME=300.0, REPORT="", TABLE_CSV="")
+        result = algorithm.processAlgorithm(yards, self.context, self.feedback)
+        self.assertEqual(result["VOLUME_UNIT"], "CY")
+        self.assertAlmostEqual(result["RIM_VOLUME"], 360.0 / 0.9144 ** 3, places=6)
+        self.assertEqual(result["CHECK"], "PASS")  # 300 CY is about 229 m³
+
+        warnings = []
+        feedback = QgsProcessingFeedback()
+        feedback.pushWarning = warnings.append
+        algorithm.processAlgorithm(dict(params, RIM_LEVEL=3.5, REQUIRED_VOLUME=None, REPORT="", TABLE_CSV=""), self.context, feedback)
+        self.assertTrue(any("above the spill level" in text for text in warnings))
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, BASIN_SURFACE="", REPORT="", TABLE_CSV=""), self.context, self.feedback)
 
     def test_complete_export_only_retains_available_layers(self):
         road_layers = {"alignments", "alignment_elements", "station_points"}

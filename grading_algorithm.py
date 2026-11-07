@@ -5,6 +5,8 @@
   with an optional check against the Civil 3D cut/fill summary.
 * Platform Levels and Falls: slope classes, platforms, levels and falls of a
   design (finished-level) surface.
+* Basin Stage–Storage: exact storage below each level of a basin surface, with a
+  capacity check at the rim and with freeboard.
 """
 
 from __future__ import annotations
@@ -49,9 +51,11 @@ from .landxml.grading import (
     depth_warning,
     grading_report_html,
     parse_bands,
+    basin_report_html,
     platform_report_html,
     platform_summary,
     reconcile,
+    stage_storage,
     suggest_volume_surface,
     volume_summary,
 )
@@ -362,3 +366,129 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
             _write_text(report, platform_report_html(summary, surface, units, os.path.basename(path), warnings))
         return {"OUTPUT": dest, "REPORT": report or "", "PLATFORM_COUNT": len(summary["platforms"]),
                 "FLAGGED_COUNT": flagged}
+
+
+class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
+    def createInstance(self):
+        return BasinStorageAlgorithm()
+
+    def name(self):
+        return "landxml_basin_storage"
+
+    def displayName(self):
+        return "Basin Stage–Storage"
+
+    def group(self):
+        return GROUP
+
+    def groupId(self):
+        return GROUP_ID
+
+    def shortHelpString(self):
+        return (
+            "Builds the stage–storage table of a pond or basin from its TIN surface, such as a Civil 3D surface "
+            "of the pond grading. The storage below each level is integrated exactly over the triangles (water "
+            "depth is linear on each triangle), so no grid is used. The table runs from the basin floor to the "
+            "rim in the chosen step, and also lists the water area at each level.\n\n"
+            "Leave the rim blank to use the spill level: the lowest point on the surface's outer edge, where "
+            "water would overflow. A rim above the spill level is flagged. With a required volume the tool checks "
+            "the storage with freeboard (rim minus freeboard) and reports PASS, PASS TO RIM ONLY (enough only "
+            "when filled to the rim), FAIL or NOT CHECKED. Enter the required volume in the reported units."
+            + QUANTITY_HELP
+        )
+
+    def initAlgorithm(self, config=None):
+        _input_param(self)
+        self.addParameter(name_param("BASIN_SURFACE", "Basin (pond) surface", "surfaces"))
+        self.addParameter(
+            QgsProcessingParameterNumber("RIM_LEVEL", "Rim level (source vertical units; blank = spill level)",
+                                         type=QgsProcessingParameterNumber.Type.Double, optional=True)
+        )
+        self.addParameter(number_param("FREEBOARD", "Freeboard (source vertical units)", 0.5, 0.0, 1000.0, decimals=3))
+        self.addParameter(
+            QgsProcessingParameterNumber("REQUIRED_VOLUME", "Required storage (reported units; optional)",
+                                         type=QgsProcessingParameterNumber.Type.Double, optional=True, minValue=0.0)
+        )
+        self.addParameter(number_param("STAGE_STEP", "Stage step (source vertical units)", 0.25, 0.001, 1000.0, decimals=3))
+        self.addParameter(_volume_parameter())
+        _param_coordinates(self)
+        self.addParameter(
+            QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
+        )
+        self.addParameter(
+            QgsProcessingParameterFileDestination("TABLE_CSV", "Stage–storage table (CSV)", fileFilter="CSV (*.csv)", optional=True)
+        )
+        for name, label in (("RIM_VOLUME", "Storage to the rim"), ("FREEBOARD_VOLUME", "Storage with freeboard"),
+                            ("RIM_LEVEL_USED", "Rim level used"), ("SPILL_LEVEL", "Spill level"),
+                            ("FLOOR_LEVEL", "Floor level")):
+            self.addOutput(QgsProcessingOutputNumber(name, label))
+        self.addOutput(QgsProcessingOutputString("CHECK", "Capacity (PASS, PASS TO RIM ONLY, FAIL or NOT CHECKED)"))
+        self.addOutput(QgsProcessingOutputString("VOLUME_UNIT", "Volume unit (CY, CF or m³)"))
+
+    def processAlgorithm(self, p, c, fb):
+        path = self.parameterAsFile(p, "INPUT", c)
+        if not path or not os.path.isfile(path):
+            raise QgsProcessingException("Input LandXML file does not exist.")
+        method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
+        horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
+        if horizontal is None:
+            raise QgsProcessingException("Basin storage requires an output CRS in metres, feet or US survey feet.")
+        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
+        catalog = read_catalog(path)
+        requested = self.parameterAsString(p, "BASIN_SURFACE", c).strip()
+        if not requested:
+            raise QgsProcessingException(
+                f"Choose the basin (pond) surface. Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
+            )
+        surface = _resolve(catalog.surfaces, requested, "basin surface")
+        try:
+            xyz, faces, meta = read_tin(path, surface, cancel=fb.isCanceled)
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        if meta["invisible_face_count"]:
+            fb.pushInfo(f"{surface}: skipped {meta['invisible_face_count']:,} hidden triangles.")
+        required = _optional_number(p, "REQUIRED_VOLUME")
+        try:
+            summary = stage_storage(
+                transform_vertices(xyz, method=method, **params), faces, _optional_number(p, "RIM_LEVEL"),
+                self.parameterAsDouble(p, "FREEBOARD", c), self.parameterAsDouble(p, "STAGE_STEP", c),
+                None if required is None else required / units.volume_factor,
+            )
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        warnings = []
+        if summary["rim"] > summary["spill"] + 1e-9:
+            warnings.append(f"The rim ({summary['rim']:.3f}) is above the spill level ({summary['spill']:.3f}): water "
+                            "overflows the surface edge first, so storage above the spill level is not available "
+                            "unless the basin is closed beyond this surface.")
+        for text in warnings:
+            fb.pushWarning(text)
+        factor = units.volume_factor
+        reported = dict(summary, rim_volume=summary["rim_volume"] * factor,
+                        design_volume=summary["design_volume"] * factor, required_volume=required,
+                        rows=[dict(row, volume=row["volume"] * factor) for row in summary["rows"]])
+        fb.pushInfo(f"{surface}: floor {summary['floor']:.3f}, spill {summary['spill']:.3f}, rim {summary['rim']:.3f} {units.depth}.")
+        fb.pushInfo(f"Storage to the rim {reported['rim_volume']:,.3f} {units.volume}; with {summary['freeboard']:g} "
+                    f"{units.depth} freeboard {reported['design_volume']:,.3f} {units.volume}.")
+        if required is not None:
+            (fb.pushInfo if summary["status"] == "PASS" else fb.pushWarning)(
+                f"Capacity {summary['status']}: required {required:,.3f} {units.volume}.")
+        report = self.parameterAsFileOutput(p, "REPORT", c)
+        if report:
+            _write_text(report, basin_report_html(reported, surface, units, os.path.basename(path), warnings))
+        table = self.parameterAsFileOutput(p, "TABLE_CSV", c)
+        if table:
+            try:
+                with open(table, "w", newline="", encoding="utf-8") as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow([f"level_{units.depth}", f"depth_{units.depth}", f"water_area_{units.area}",
+                                     f"storage_{units.volume}"])
+                    for row in reported["rows"]:
+                        writer.writerow([f"{row['level']:.4f}", f"{row['depth']:.4f}", f"{row['area']:.4f}", f"{row['volume']:.4f}"])
+            except OSError as exc:
+                raise QgsProcessingException(f"Could not write '{table}': {exc}") from exc
+        return {
+            "RIM_VOLUME": reported["rim_volume"], "FREEBOARD_VOLUME": reported["design_volume"],
+            "RIM_LEVEL_USED": summary["rim"], "SPILL_LEVEL": summary["spill"], "FLOOR_LEVEL": summary["floor"],
+            "CHECK": summary["status"], "VOLUME_UNIT": units.volume, "REPORT": report or "", "TABLE_CSV": table or "",
+        }
