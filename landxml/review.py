@@ -969,6 +969,19 @@ def recommended_profile(model, findings, max_change=1.0, length_unit="m"):
     return result, applied
 
 
+def profile_changes(original, recommended, tolerance=1e-6):
+    """PVIs whose station, elevation or curve length differ between two profile models.
+
+    Rows: (number, old station, new station, old elevation, new elevation, old length, new length).
+    Numbers count PVIs from 1 along the profile, as in Civil 3D's PVI table.
+    """
+    rows = []
+    for number, (a, b) in enumerate(zip(original.pvis, recommended.pvis), 1):
+        if any(abs(a[key] - b[key]) > tolerance for key in ("station", "elevation", "length")):
+            rows.append((number, a["station"], b["station"], a["elevation"], b["elevation"], a["length"], b["length"]))
+    return rows
+
+
 def civil3d_profile_text(model, name=""):
     """Civil 3D 'Create Profile from File' text: station, elevation[, curve length]."""
     lines = []

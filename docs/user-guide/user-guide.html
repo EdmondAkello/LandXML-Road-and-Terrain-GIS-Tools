@@ -538,7 +538,7 @@ a { color: var(--accent); }
     <tr><td>Apply profile fixes … at most (m)</td><td>Fixes changing any level by more than this are reported but not applied to the recommended profile (default 1 m).</td></tr>
     <tr><td>Use corridor cross-sections</td><td>Enables barrier warrants and sight distance on curves.</td></tr>
     <tr><td>Section surfaces</td><td>Ground and design section surfaces (blank = detect).</td></tr>
-    <tr><td>Outputs</td><td>Findings table, findings as map points (created by default; needs an output CRS and the same coordinate interpretation as your other layers), HTML report, recommended profile as Civil 3D text and as LandXML.</td></tr>
+    <tr><td>Outputs</td><td>Findings table, findings as map points (created by default; needs an output CRS and the same coordinate interpretation as your other layers), HTML report, recommended profile as Civil 3D text (to apply) and as a comparison LandXML, and a changed-PVI CSV.</td></tr>
   </tbody>
 </table>
 <figure>
@@ -651,7 +651,12 @@ a { color: var(--accent); }
 <div class="note"><b>Figure 12.4</b>The barrier warrant chart in RDM 1.3 is an image; only its stated example is encoded. Treat findings near the thresholds as prompts for engineering judgement.</div>
 
 <h2 id="roundtrip"><span class="sec">24</span>Taking recommendations back to Civil 3D</h2>
-<p>The recommended profile is written in two forms. Both are complete profiles: the original PVIs with the applied changes.</p>
+<p>The recommended profile is written in three forms, each for a different job. The profile files are complete profiles: the original PVIs with the applied changes, so the PVI count does not change.</p>
+<table><thead><tr><th>To</th><th>Use</th></tr></thead><tbody>
+<tr><td><b>Apply the fixes to the design alignment</b></td><td>The text file, with <i>Create Profile from File</i> on that alignment (below).</td></tr>
+<tr><td>Compare the design and recommended profiles</td><td>The comparison LandXML. Civil 3D imports it as a <b>new</b> alignment, named <code>… (review)</code>, carrying both profiles.</td></tr>
+<tr><td>See which PVIs changed</td><td>The changed-PVI CSV: PVI number, old and new station, level and curve length.</td></tr>
+</tbody></table>
 <h3>Text file for Create Profile from File</h3>
 <pre>0.000 1514.500
 615.000 1513.275 210.000
@@ -664,8 +669,10 @@ a { color: var(--accent); }
   <li>Select the alignment and the <code>.txt</code> file. Each line is station, elevation and, for intermediate PVIs, the parabolic curve length.</li>
   <li>Compare the new profile with the original in the profile view; adjust and re-export to review again.</li>
 </ol>
-<h3>LandXML file</h3>
-<p>The LandXML output contains the original alignment geometry with the recommended profile as a new <code>ProfAlign</code>. Import it with <span class="kbd">Insert → LandXML</span> into a drawing to inspect it, or load it into the Profile Viewer next to the original.</p>
+<h3>Comparison LandXML</h3>
+<p>The comparison LandXML holds a copy of the alignment geometry, renamed <code>… (review)</code>, with two profiles: the design profile under its own name and the recommended profile named <code>… recommended (standard)</code>. Civil 3D's <span class="kbd">Insert → LandXML</span> import always creates new alignments, so importing this file into the design drawing gives a separate review alignment rather than changing the design one. Draw both of its profiles in one profile view to compare them, or load the file into the Profile Viewer. Do not superimpose the review alignment's profile onto the design alignment to apply the fixes: use the text file for that.</p>
+<h3>Changed-PVI CSV</h3>
+<p>One row per PVI whose station, level or curve length changed, numbered from 1 along the profile as in Civil 3D's PVI table, with old and new values. Check it against the recommended PVIs table in the report before applying the text file.</p>
 <div class="tip"><b>Iterate</b>Run the review, apply the changes you accept in Civil 3D, export again and re-run. Findings that need more than the level-change cap are a sign that the section needs redesign rather than adjustment.</div>
 
 <h2 id="criteria"><span class="sec">25</span>Design standards and custom criteria</h2>

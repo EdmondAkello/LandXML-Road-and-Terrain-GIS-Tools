@@ -7,6 +7,7 @@
 - The user guide illustrates every grading tool with figures from a synthetic grading site (`tools/guide/make_grading_demo.py`, `tools/guide/make_grading_figures.py`): a depth map with the platforms, each report, and the depth-change map.
 
 ### Fixed
+- Recommended profile back into Civil 3D: the LandXML output is now a comparison file. It carries both the design and the recommended profiles on a copy of the alignment renamed `… (review)`, because Civil 3D's LandXML import always creates a new alignment. A new changed-PVI CSV lists each PVI whose station, level or curve length changed. The help, README and user guide say to apply fixes to the design alignment with the text file and Create Profile from File.
 - Geometric Design Review creates its findings map points by default, so findings appear on the alignment without enabling an extra output. Without an output CRS the review still runs and warns that the points were skipped.
 - Every tool warns when stored coordinate order is kept but the first plan coordinate looks like a northing (Civil 3D and OpenRoads write Northing, Easting), so layers are not placed millions of metres apart by mistake. The interpretation is never changed automatically.
 

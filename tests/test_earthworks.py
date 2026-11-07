@@ -108,7 +108,7 @@ class StationEquationTests(unittest.TestCase):
             output = Path(directory) / "review.xml"
             output.write_text(recommended_landxml(element, model, "Reviewed", "meter"))
             result = load_document(str(output))
-            self.assertEqual(result.station_maps()["Equation road"].equations, doc.station_maps()["Equation road"].equations)
+            self.assertEqual(result.station_maps()["Equation road (review)"].equations, doc.station_maps()["Equation road"].equations)
             reviewed, _ = default_pair(read_alignment_profiles(result.alignments()[0]))
             self.assertAlmostEqual(reviewed.elevation_at(2050), 112.5)
 
@@ -944,10 +944,29 @@ class ReviewTests(unittest.TestCase):
             path.write_text(xml, encoding="utf-8")
             reread = load_document(str(path))
             name, prof = next(reread.profiles())
-            self.assertEqual(name, "Synthetic Road")
+            self.assertEqual(name, "Synthetic Road (review)")
             self.assertEqual(prof.attrib["name"], "FRL (review)")
             self.assertEqual(len(read_profile_controls(prof)), 2)
             self.assertEqual(read_alignments(str(path))[0][0]["vertex_distances"][-1], 200)
+
+        # comparison file: design and recommended profiles on the same review alignment
+        moved = result["recommended"].copy()
+        moved.pvis[0]["elevation"] += 0.25
+        both = recommended_landxml(alignment, moved, "FRL recommended", original=result["model"], original_name="FRL")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "comparison.xml"
+            path.write_text(both, encoding="utf-8")
+            profiles = list(load_document(str(path)).profiles())
+            self.assertEqual([p.attrib["name"] for _n, p in profiles], ["FRL", "FRL recommended"])
+            self.assertEqual({n for n, _p in profiles}, {"Synthetic Road (review)"})
+            self.assertEqual(len(read_profile_controls(profiles[0][1])), len(read_profile_controls(profiles[1][1])))
+        from landxml_plugin.landxml.review import profile_changes
+
+        changes = profile_changes(result["model"], moved)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0][0], 1)
+        self.assertAlmostEqual(changes[0][4] - changes[0][3], 0.25)
+        self.assertEqual(profile_changes(result["model"], result["model"]), [])
         result["criteria"] = self.kenya
         html_text = review_section_html("Synthetic Road", result, "meter", "test")
         self.assertIn("Geometric design review", html_text)

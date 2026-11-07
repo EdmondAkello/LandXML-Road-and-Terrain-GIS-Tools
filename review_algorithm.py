@@ -33,7 +33,7 @@ from .landxml.longsection import default_pair, read_alignment_profiles
 from .landxml.parser import load_document
 from .landxml.profile import profile_control_points, read_profile_controls
 from .landxml.reports import _document, station_label
-from .landxml.review import civil3d_profile_text, parse_speed_ranges, review_alignment
+from .landxml.review import civil3d_profile_text, parse_speed_ranges, profile_changes, review_alignment
 from .landxml.review_report import recommended_landxml, review_section_html
 from .landxml.section_view import build_section_view
 from .landxml.superelevation import read_superelevation
@@ -157,8 +157,12 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
             "Design speed varies along the road as recorded in the file: define the design speeds in Civil 3D "
             "(Alignment Properties → Design Criteria, speed stations) before exporting the LandXML. Each element is "
             "checked at the highest speed over its length. Leave the design speed at 0 to use the file; a single speed "
-            "or ranges such as '0-5000:60; 5000-:80' override it. Outputs: findings table, optional map points, HTML report, and "
-            "the recommended profile as a Civil 3D 'Create Profile from File' text file and as LandXML."
+            "or ranges such as '0-5000:60; 5000-:80' override it. Outputs: findings table, map points (by default), HTML report, and "
+            "the recommended profile in three forms. To apply the fixes to the design alignment in Civil 3D, use the text "
+            "file with Profiles → Create Profile from File on that alignment. The comparison LandXML holds the design and the "
+            "recommended profiles on a copy of the alignment named '… (review)': Civil 3D's LandXML import always creates a "
+            "new alignment, so use it to compare the two profiles, not to update the design. The changed-PVI CSV lists every "
+            "PVI whose station, level or curve length changed."
         )
 
     def initAlgorithm(self, config=None):
@@ -198,10 +202,14 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
         )
         self.addParameter(QgsProcessingParameterFileDestination("REPORT", "HTML review report", fileFilter="HTML (*.html)", optional=True))
         self.addParameter(
-            QgsProcessingParameterFileDestination("PROFILE_TXT", "Recommended profile for Civil 3D (station elevation length)", fileFilter="Text (*.txt)", optional=True)
+            QgsProcessingParameterFileDestination("PROFILE_TXT", "Recommended profile for Civil 3D Create Profile from File (applies to the design alignment)", fileFilter="Text (*.txt)", optional=True)
         )
         self.addParameter(
-            QgsProcessingParameterFileDestination("PROFILE_LANDXML", "Recommended profile as LandXML", fileFilter="LandXML (*.xml)", optional=True)
+            QgsProcessingParameterFileDestination("PROFILE_LANDXML", "Comparison LandXML: design and recommended profiles (imports as a new alignment)",
+                                                  fileFilter="LandXML (*.xml)", optional=True)
+        )
+        self.addParameter(
+            QgsProcessingParameterFileDestination("PROFILE_CHANGES_CSV", "Changed PVIs (CSV)", fileFilter="CSV (*.csv)", optional=True)
         )
 
     def processAlgorithm(self, p, c, fb):
@@ -267,7 +275,7 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
                 feature = QgsFeature(fields)
                 feature.setAttributes(attributes(result["name"], f))
                 sink.addFeature(feature)
-        outputs = {"OUTPUT": dest, "MAP_OUTPUT": "", "REPORT": "", "PROFILE_TXT": "", "PROFILE_LANDXML": ""}
+        outputs = {"OUTPUT": dest, "MAP_OUTPUT": "", "REPORT": "", "PROFILE_TXT": "", "PROFILE_LANDXML": "", "PROFILE_CHANGES_CSV": ""}
         if p.get("MAP_OUTPUT") and p.get("OUTPUT_CRS") in (None, ""):
             fb.pushWarning("Findings map points were not created: choose an output CRS (and the coordinate "
                            "interpretation used for your other layers) to place them on the alignment.")
@@ -316,10 +324,25 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
         xml_path = self.parameterAsFileOutput(p, "PROFILE_LANDXML", c)
         if xml_path and reviewed:
             target = reviewed[0]
-            name = f"{target['design'].name if target['design'] else 'Profile'} (review {criteria.id})"
+            design_name = target["design"].name if target["design"] else "Profile"
             with open(xml_path, "w", encoding="utf-8") as stream:
-                stream.write(recommended_landxml(target["element"], target["recommended"], name, doc.horizontal_unit))
+                stream.write(recommended_landxml(target["element"], target["recommended"], f"{design_name} recommended ({criteria.id})",
+                                                 doc.horizontal_unit, original=target["model"], original_name=design_name))
             outputs["PROFILE_LANDXML"] = xml_path
+            fb.pushInfo(f"Comparison LandXML: Civil 3D imports it as a new alignment '{target['name']} (review)' carrying the design "
+                        "and the recommended profiles. To apply the fixes to the design alignment itself, use the profile text with "
+                        "Create Profile from File.")
+        changes_path = self.parameterAsFileOutput(p, "PROFILE_CHANGES_CSV", c)
+        if changes_path and reviewed:
+            target = reviewed[0]
+            import csv
+
+            with open(changes_path, "w", newline="", encoding="utf-8") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["pvi", "station_old", "station_new", "elevation_old", "elevation_new", "curve_length_old", "curve_length_new"])
+                for row in profile_changes(target["model"], target["recommended"]):
+                    writer.writerow([row[0]] + [f"{value:.3f}" for value in row[1:]])
+            outputs["PROFILE_CHANGES_CSV"] = changes_path
         outputs.update(
             HIGH=sum(1 for r in results for f in r["findings"] if f["severity"] == "High"),
             MEDIUM=sum(1 for r in results for f in r["findings"] if f["severity"] == "Medium"),

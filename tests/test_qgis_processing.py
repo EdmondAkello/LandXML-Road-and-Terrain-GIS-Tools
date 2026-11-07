@@ -1332,6 +1332,7 @@ class QgisProcessingTests(unittest.TestCase):
                 REPORT=str(Path(directory) / "review.html"),
                 PROFILE_TXT=str(Path(directory) / "profile.txt"),
                 PROFILE_LANDXML=str(Path(directory) / "profile.xml"),
+                PROFILE_CHANGES_CSV=str(Path(directory) / "changes.csv"),
             )
             result = self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
             table = self.context.getMapLayer(result["OUTPUT"])
@@ -1339,7 +1340,12 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertEqual(self.context.getMapLayer(result["MAP_OUTPUT"]).featureCount(), table.featureCount())
             self.assertIn("Geometric design review", Path(params["REPORT"]).read_text(encoding="utf-8"))
             self.assertEqual(Path(params["PROFILE_TXT"]).read_text(encoding="utf-8").splitlines()[0], "0.000 101.000")
-            self.assertIn("<ProfAlign", Path(params["PROFILE_LANDXML"]).read_text(encoding="utf-8"))
+            comparison = Path(params["PROFILE_LANDXML"]).read_text(encoding="utf-8")
+            self.assertEqual(comparison.count("<ProfAlign"), 2)
+            self.assertIn("(review)", comparison)
+            changes = Path(params["PROFILE_CHANGES_CSV"]).read_text(encoding="utf-8").splitlines()
+            self.assertEqual(changes[0], "pvi,station_old,station_new,elevation_old,elevation_new,curve_length_old,curve_length_new")
+            self.assertEqual(len(changes) > 1, result["PROFILE_CHANGES"] > 0)
             params.pop("DESIGN_SPEED")
             with self.assertRaisesRegex(QgsProcessingException, "design speed"):
                 self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
