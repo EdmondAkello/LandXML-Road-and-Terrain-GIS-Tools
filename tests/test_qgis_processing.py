@@ -1333,8 +1333,18 @@ class QgisProcessingTests(unittest.TestCase):
                 PROFILE_TXT=str(Path(directory) / "profile.txt"),
                 PROFILE_LANDXML=str(Path(directory) / "profile.xml"),
                 PROFILE_CHANGES_CSV=str(Path(directory) / "changes.csv"),
+                SHEETS_PDF=str(Path(directory) / "sheets.pdf"),
+                SHEET_LENGTH=500,
             )
             result = self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+            pdf = Path(params["SHEETS_PDF"]).read_bytes()
+            self.assertTrue(pdf.startswith(b"%PDF"))
+            self.assertEqual(result["SHEETS_PDF"], params["SHEETS_PDF"])
+            self.assertGreaterEqual(pdf.count(b"/Type /Page\n") + pdf.count(b"/Type /Page\r") + pdf.count(b"/Type /Page "), 1)
+            html_report = Path(params["REPORT"]).read_text(encoding="utf-8")
+            self.assertIn("class='longsection'", html_report)
+            numbers = [f["finding_no"] for f in self.context.getMapLayer(result["OUTPUT"]).getFeatures()]
+            self.assertEqual(numbers, list(range(1, len(numbers) + 1)))
             table = self.context.getMapLayer(result["OUTPUT"])
             self.assertEqual(table.featureCount(), result["HIGH"] + result["MEDIUM"] + result["LOW"])
             self.assertEqual(self.context.getMapLayer(result["MAP_OUTPUT"]).featureCount(), table.featureCount())

@@ -13,6 +13,7 @@ const SHOTS = [
   ['review.html', 'Geometric design review —', 'fig_review_summary', 700, 'Design speed sections'],
   ['review.html', 'Design speed sections', 'fig_review_speed', 400],
   ['review.html', 'Phasing diagram', 'fig_review_phasing', 500],
+  ['review.html', 'Long section', 'fig_review_longsection', 560],
   ['review.html', 'Recommended profile', 'fig_review_delta', 500],
   ['review.html', 'Recommended PVIs', 'fig_review_pvis', 700],
   ['review.html', 'Safety barrier schedule', 'fig_review_barriers', 600],

@@ -79,7 +79,7 @@ def phasing_svg(groups, curves, findings, window, unit=None, width=1000, height=
     return "".join(out)
 
 
-def review_section_html(name, result, unit=None, settings="", strip=5000.0):
+def review_section_html(name, result, unit=None, settings="", strip=5000.0, section_length=1000.0):
     criteria = result["criteria"]
     findings = result["findings"]
     groups = result["groups"]
@@ -131,6 +131,17 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0):
         parts.append("<h3>Phasing diagram</h3>")
         for low, high in strip_windows(start, end, strip):
             parts.append(phasing_svg(groups, curves, findings, (low, high), unit))
+    if model and end > start:
+        from .plan_profile import long_section_svg, sheet_data, sheet_windows
+
+        parts.append("<h3>Long section</h3><p class='note'>Design profile"
+                     + (", recommended profile (dashed)" if result.get("applied") else "")
+                     + (" and existing ground" if result.get("ground") is not None else "")
+                     + "; numbered markers and shading show findings (numbers as in the findings table). "
+                       "Bands: design speed; horizontal curves (left above, right below the line) and vertical curves (crest above, "
+                       "sag below) on the same chainage, with dashed boxes around phasing findings; tangent grade.</p>")
+        for window in sheet_windows(start, end, section_length):
+            parts.append(long_section_svg(sheet_data(result, window, step=max((window[1] - window[0]) / 500.0, 1.0)), unit))
     if model and recommended and result.get("applied"):
         delta = [(s, recommended.elevation(s) - model.elevation(s)) for s, _z in model.samples(5.0)]
         parts.append("<h3>Recommended profile — change in elevation</h3>")
@@ -172,6 +183,7 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0):
     parts.append("<h3>Findings and recommendations</h3><div class='scroll'>")
     order = {"High": 0, "Medium": 1, "Low": 2}
     body = []
+    numbers = {id(f): i for i, f in enumerate(findings, 1)}
     for category in categories:
         group = sorted((f for f in findings if f["category"] == category), key=lambda f: (order.get(f["severity"], 3), f["start"]))
         tally = ", ".join(f"{n} {s.lower()}" for s in ("High", "Medium", "Low") for n in [sum(1 for f in group if f["severity"] == s)] if n)
@@ -184,7 +196,7 @@ def review_section_html(name, result, unit=None, settings="", strip=5000.0):
             code = f" <b>{html.escape(f['code'])}</b>" if f.get("code") else ""
             body.append(
                 "<tr>"
-                f"<td><span class='sev' style='background:{color}'>{f['severity']}</span>{code}</td>"
+                f"<td><b>{numbers[id(f)]}.</b> <span class='sev' style='background:{color}'>{f['severity']}</span>{code}</td>"
                 f"<td class='num'>{span}</td>"
                 f"<td class='txt'>{html.escape(f['title'])}<span class='detail'>{html.escape(f['detail'])}</span></td>"
                 f"<td class='txt'>{html.escape(f['recommendation'])}</td>"

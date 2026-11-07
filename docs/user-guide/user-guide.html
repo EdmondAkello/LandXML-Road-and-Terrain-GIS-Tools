@@ -538,7 +538,7 @@ a { color: var(--accent); }
     <tr><td>Apply profile fixes … at most (m)</td><td>Fixes changing any level by more than this are reported but not applied to the recommended profile (default 1 m).</td></tr>
     <tr><td>Use corridor cross-sections</td><td>Enables barrier warrants and sight distance on curves.</td></tr>
     <tr><td>Section surfaces</td><td>Ground and design section surfaces (blank = detect).</td></tr>
-    <tr><td>Outputs</td><td>Findings table, findings as map points (created by default; needs an output CRS and the same coordinate interpretation as your other layers), HTML report, recommended profile as Civil 3D text (to apply) and as a comparison LandXML, and a changed-PVI CSV.</td></tr>
+    <tr><td>Outputs</td><td>Findings table, findings as map points (created by default; needs an output CRS and the same coordinate interpretation as your other layers), HTML report with a banded long section, plan and profile sheets (A3 PDF), recommended profile as Civil 3D text (to apply) and as a comparison LandXML, and a changed-PVI CSV.</td></tr>
   </tbody>
 </table>
 <figure>
@@ -641,11 +641,22 @@ a { color: var(--accent); }
   <figcaption><b>Figure 27.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
 </figure>
 
+<h3>Long section and plan &amp; profile sheets</h3>
+<p>The report draws a banded long section for each window of <b>Sheet and long-section window length</b> (default 1,000 m): the design profile, the recommended profile dashed where fixes apply, the existing ground, changed PVIs, and every finding as a numbered marker over its shaded chainage range. Below the profile, the bands show the design speed, the horizontal curves (left above the line, right below), the vertical curves (crest above, sag below) and the tangent grades. Horizontal and vertical curves sit in adjacent bands on one chainage, so their phasing reads directly; phasing findings (P1–P7) are outlined across both bands. Finding numbers are the same in the findings table, the <code>finding_no</code> field of the findings layer, the report and the sheets.</p>
+<figure>
+  <img src="figures/fig_review_longsection.png" alt="Long section">
+  <figcaption><b>Figure 28.</b> Banded long section in the review report: profiles and numbered findings, then design speed, horizontal and vertical curves (phasing findings dashed) and grades.</figcaption>
+</figure>
+<p><b>Plan and profile sheets (A3 PDF)</b> puts one window on each A3 landscape sheet: a plan strip of the alignment with chainage ticks and the numbered findings beside it, the same banded long section with a findings lane that stacks overlapping ranges, and a table of the findings in that window (highest severity first; any beyond the table are counted and listed in the report). The plan is schematic and rotated so each window runs left to right; the north arrow shows grid north of the source coordinates. With an output CRS the chosen coordinate interpretation decides the X/Y order; without one, northing-first files are detected for the drawing only. Each sheet has a single border, a floating legend, notes, and a title box at the bottom right with the alignment, chainage range and sheet number.</p>
+<figure>
+  <img src="figures/fig_review_sheet.png" alt="Plan and profile sheet">
+  <figcaption><b>Figure 29.</b> A plan and profile sheet of the demonstration road (first 1,000 m).</figcaption>
+</figure>
 <h2 id="barriers"><span class="sec">23</span>Safety barriers and sight on curves</h2>
 <p><b>Barriers (R1).</b> From each corridor section the tool measures the embankment height from the shoulder edge to the toe and the side-slope ratio on each side. Under RDM 1.3 a barrier is warranted where the fill is at least 6 m high and steeper than 1:3 (the example stated with Figure 12.4); fills of 3–6 m steeper than 1:3, and fills of 6 m or more with slopes between 1:3 and 1:4, are reported for assessment against the chart. Adjacent sections are grouped into runs, and the recommendation gives the barrier extent per side with the run-out length of Table 12.6 added at each end.</p>
 <figure>
   <img src="figures/fig_review_barriers.png" alt="Barrier schedule">
-  <figcaption><b>Figure 28.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
+  <figcaption><b>Figure 30.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
 </figure>
 <p><b>Sight on curves (S2).</b> On horizontal curves the review computes the sight-line offset needed for stopping sight distance and checks whether existing ground beyond the cut daylight line rises above the sight line (at the height set by the standard) on the inside of the curve. Only ground beyond daylight counts, so excavated material does not create false obstructions.</p>
 <div class="note"><b>Figure 12.4</b>The barrier warrant chart in RDM 1.3 is an image; only its stated example is encoded. Treat findings near the thresholds as prompts for engineering judgement.</div>
