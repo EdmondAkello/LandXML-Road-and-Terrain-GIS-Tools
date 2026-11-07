@@ -55,6 +55,7 @@ from landxml_plugin.landxml.grading import (
     volume_summary,
 )
 from landxml_plugin.landxml.quantity_units import quantity_units
+from landxml_plugin.landxml.tin_overlay import candidate_pairs, depth_tin
 
 
 def _one(points):
@@ -470,6 +471,82 @@ class ReportChartTests(unittest.TestCase):
         self.assertEqual(stage_storage_svg({"rows": []}, units), "")
         self.assertIn("<rect", bars_svg(["x"], [("a", "#000000", [-1.0])], "m³"))
 
+
+
+def grid_tin(n, height, size=100.0, jitter=0.0, seed=0, diagonal=0):
+    """Square grid TIN with optional interior jitter (kept small enough not to fold triangles)."""
+    rng = np.random.default_rng(seed)
+    xs = np.linspace(0.0, size, n + 1)
+    x, y = (a.ravel() for a in np.meshgrid(xs, xs))
+    inner = (x > 0) & (x < size) & (y > 0) & (y < size)
+    x = x + inner * rng.uniform(-jitter, jitter, x.size)
+    y = y + inner * rng.uniform(-jitter, jitter, y.size)
+    faces = []
+    for r in range(n):
+        for c in range(n):
+            a = r * (n + 1) + c
+            b, d = a + 1, a + n + 1
+            faces += [[a, b, d + 1], [a, d + 1, d]] if diagonal == 0 else [[a, b, d], [b, d + 1, d]]
+    return np.c_[x, y, height(x, y)], np.asarray(faces)
+
+
+class DepthFromTwoSurfacesTests(unittest.TestCase):
+    def test_planar_surfaces_with_different_triangulations_are_exact(self):
+        # depth = 0.02 x − 0.01 y on a 100 m square: fill 17500/3, cut 2500/3 (closed form)
+        design = grid_tin(17, lambda x, y: 10 + 0.02 * x)
+        existing = grid_tin(23, lambda x, y: 10 + 0.01 * y, jitter=1.0, diagonal=1)
+        xyz, faces, stats = depth_tin(design, existing)
+        summary = volume_summary(xyz, faces, ())
+        self.assertAlmostEqual(summary["fill_volume"], 17500.0 / 3.0, places=6)
+        self.assertAlmostEqual(summary["cut_volume"], 2500.0 / 3.0, places=6)
+        self.assertAlmostEqual(summary["plan_area"], 10000.0, places=6)
+        self.assertAlmostEqual(stats["overlay_area"], stats["design_area"], places=6)
+
+    def test_net_volume_and_swap_on_curved_surfaces(self):
+        design = grid_tin(30, lambda x, y: 5 + np.sin(x / 9) + 0.03 * y, jitter=0.6, seed=1)
+        existing = grid_tin(41, lambda x, y: 5 + 0.8 * np.cos(y / 7), jitter=0.5, seed=2, diagonal=1)
+        xyz, faces, _stats = depth_tin(design, existing)
+        summary = volume_summary(xyz, faces, ())
+
+        def prism_volume(surface):
+            corners = surface[0][surface[1]]
+            u, v = corners[:, 1, :2] - corners[:, 0, :2], corners[:, 2, :2] - corners[:, 0, :2]
+            return float((0.5 * np.abs(u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]) * corners[:, :, 2].mean(axis=1)).sum())
+
+        # Over the same square, net = ∫design − ∫existing exactly.
+        self.assertAlmostEqual(summary["net_volume"], prism_volume(design) - prism_volume(existing), places=6)
+        swapped = volume_summary(*depth_tin(existing, design)[:2], ())
+        self.assertAlmostEqual(swapped["cut_volume"], summary["fill_volume"], places=6)
+        self.assertAlmostEqual(swapped["fill_volume"], summary["cut_volume"], places=6)
+
+    def test_partial_overlap_and_no_overlap(self):
+        design = grid_tin(4, lambda x, y: 0 * x + 1.0)
+        existing = (grid_tin(4, lambda x, y: 0 * x)[0] + [50.0, 0.0, 0.0], grid_tin(4, lambda x, y: 0 * x)[1])
+        xyz, faces, stats = depth_tin(design, existing)
+        self.assertAlmostEqual(stats["overlay_area"], 5000.0, places=6)
+        self.assertAlmostEqual(volume_summary(xyz, faces, ())["fill_volume"], 5000.0, places=6)
+        far = (existing[0] + [500.0, 0.0, 0.0], existing[1])
+        with self.assertRaisesRegex(ValueError, "do not overlap"):
+            depth_tin(design, far)
+
+    def test_candidate_pairs_match_brute_force(self):
+        rng = np.random.default_rng(3)
+        low = rng.uniform(0, 100, (60, 2))
+        a = np.c_[low, low + rng.uniform(0.5, 8, (60, 2))]
+        low = rng.uniform(0, 100, (80, 2))
+        b = np.c_[low, low + rng.uniform(0.5, 30, (80, 2))]
+        first, second = candidate_pairs(a, b)
+        brute = {(i, j) for i in range(60) for j in range(80)
+                 if a[i, 0] <= b[j, 2] and b[j, 0] <= a[i, 2] and a[i, 1] <= b[j, 3] and b[j, 1] <= a[i, 3]}
+        self.assertEqual(set(zip(first.tolist(), second.tolist())), brute)
+
+    def test_fixture_design_minus_existing_matches_volume_surface(self):
+        design = read_tin(str(FIXTURE), "Pad FG")
+        existing = read_tin(str(FIXTURE), "Pad EG")
+        summary = volume_summary(*depth_tin(design[:2], existing[:2])[:2], ())
+        self.assertAlmostEqual(summary["cut_volume"], 100.0, places=6)
+        self.assertAlmostEqual(summary["fill_volume"], 100.0, places=6)
+        self.assertAlmostEqual(summary["plan_area"], 200.0, places=6)
 
 if __name__ == "__main__":
     unittest.main()

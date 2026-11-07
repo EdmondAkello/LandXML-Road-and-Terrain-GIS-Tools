@@ -55,6 +55,7 @@ from .earthworks_algorithm import (
     _write_text,
 )
 from .landxml.catalog import read_catalog
+from .landxml.tin_overlay import depth_tin
 from .landxml.quantity_units import LINEAR_UNITS
 from .landxml.grading import (
     depth_warning,
@@ -99,6 +100,56 @@ def _optional_number(parameters, name):
         raise QgsProcessingException(f"{name.replace('_', ' ').title()} must be a number.") from exc
 
 
+EXISTING_HELP = (
+    "\n\nWithout a volume surface (OpenRoads, or a Civil 3D file exported without one), enter the design surface "
+    "and the existing-ground surface: the tool builds the exact depth surface (design minus existing) on the area "
+    "both cover, by intersecting their triangles, so the volumes are those of a Civil 3D TIN volume surface built "
+    "from the same two surfaces."
+)
+
+
+def _depth_surface(path, surface, existing, method, params, feedback):
+    """(xyz, faces, meta) of a depth surface in output coordinates.
+
+    With ``existing`` blank, ``surface`` is read as a volume (depth) surface.
+    Otherwise ``surface`` is the design and the depth surface is built from both TINs
+    in source coordinates, then transformed.
+    """
+    try:
+        xyz, faces, meta = read_tin(path, surface, cancel=feedback.isCanceled)
+    except ValueError as exc:
+        raise QgsProcessingException(f"{surface}: {exc}") from exc
+    if meta["invisible_face_count"]:
+        feedback.pushInfo(f"{surface}: skipped {meta['invisible_face_count']:,} hidden triangles.")
+    if existing:
+        if existing == surface:
+            raise QgsProcessingException(f"'{surface}' is both the design and the existing-ground surface.")
+        try:
+            exyz, efaces, emeta = read_tin(path, existing, cancel=feedback.isCanceled)
+            xyz, faces, stats = depth_tin((xyz, faces), (exyz, efaces))
+        except ValueError as exc:
+            raise QgsProcessingException(f"{surface} − {existing}: {exc}") from exc
+        if emeta["invisible_face_count"]:
+            feedback.pushInfo(f"{existing}: skipped {emeta['invisible_face_count']:,} hidden triangles.")
+        uncovered = stats["design_area"] - stats["overlay_area"]
+        feedback.pushInfo(f"Depth surface '{surface}' − '{existing}': {stats['triangles']:,} triangles over "
+                          f"{stats['overlay_area']:,.2f} source units².")
+        if uncovered > 1e-6 * max(stats["design_area"], 1.0):
+            feedback.pushWarning(f"{uncovered:,.2f} source units² of '{surface}' lie outside '{existing}' and are not counted.")
+        meta = dict(meta, depth_from=(surface, existing))
+    if feedback.isCanceled():
+        raise QgsProcessingException("Cancelled.")
+    return transform_vertices(xyz, method=method, **params), faces, meta
+
+
+def _split_pair(text):
+    """'Design | Existing' → ('Design', 'Existing'); a single name → (name, '')."""
+    if "|" in text:
+        design, existing = (part.strip() for part in text.split("|", 1))
+        return design, existing
+    return text.strip(), ""
+
+
 class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
     def createInstance(self):
         return GradingQuantitiesAlgorithm()
@@ -128,12 +179,13 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             "To reconcile with the Civil 3D cut/fill summary, enter its unadjusted (factor 1.0) cut, fill and area "
             "in the reported units; each is checked against the tolerance and the result is PASS or FAIL. "
             "The Helmert option's scale changes plan areas and volumes; depths stay in source vertical units."
-            + QUANTITY_HELP
+            + EXISTING_HELP + QUANTITY_HELP
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
-        self.addParameter(name_param("VOLUME_SURFACE", "Volume (depth) surface (blank = detect)", "surfaces"))
+        self.addParameter(name_param("VOLUME_SURFACE", "Volume (depth) surface, or the design surface when an existing ground is given (blank = detect)", "surfaces"))
+        self.addParameter(name_param("EXISTING_SURFACE", "Existing-ground surface (blank = the surface above is a volume surface)", "surfaces"))
         self.addParameter(_volume_parameter())
         self.addParameter(
             QgsProcessingParameterString(
@@ -182,7 +234,10 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             raise QgsProcessingException(str(exc)) from exc
 
         catalog = read_catalog(path)
+        existing = _resolve(catalog.surfaces, self.parameterAsString(p, "EXISTING_SURFACE", c).strip(), "existing-ground surface") if self.parameterAsString(p, "EXISTING_SURFACE", c).strip() else ""
         surface = _resolve(catalog.surfaces, self.parameterAsString(p, "VOLUME_SURFACE", c), "volume surface")
+        if not surface and existing:
+            raise QgsProcessingException("Choose the design surface to compare with the existing ground.")
         if not surface:
             surface, reason = suggest_volume_surface(catalog.surfaces, catalog.surface_volumes)
             if not surface:
@@ -190,16 +245,9 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
                     f"Choose the volume surface: {reason}. Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
                 )
             fb.pushInfo(f"Volume surface chosen automatically: '{surface}' ({reason}).")
+        xyz, faces, meta = _depth_surface(path, surface, existing, method, params, fb)
         try:
-            xyz, faces, meta = read_tin(path, surface, cancel=fb.isCanceled)
-        except ValueError as exc:
-            raise QgsProcessingException(str(exc)) from exc
-        if meta["invisible_face_count"]:
-            fb.pushInfo(f"{surface}: skipped {meta['invisible_face_count']:,} hidden triangles.")
-        if fb.isCanceled():
-            raise QgsProcessingException("Grading quantities cancelled.")
-        try:
-            summary = volume_summary(transform_vertices(xyz, method=method, **params), faces, bands)
+            summary = volume_summary(xyz, faces, bands)
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
         warnings = [text for text in (depth_warning(summary),) if text]
@@ -231,7 +279,8 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
             _write_text(report, grading_report_html(
-                reported, surface, units, os.path.basename(path), checks, status, tolerance, warnings))
+                reported, f"{surface} − {existing}" if existing else surface, units, os.path.basename(path), checks, status,
+                tolerance, warnings))
         bands_csv = self.parameterAsFileOutput(p, "BANDS_CSV", c)
         if bands_csv:
             try:
@@ -538,14 +587,16 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
             "List the surfaces separated by semicolons, or leave blank to use every surface named as a volume "
             "surface (earthworks, volume, cut/fill, difference). An unsuitable share of cut is removed before "
             "balancing and goes to spoil. Topsoil stripping (plan area × depth) is reported separately and not "
-            "used as fill."
+            "used as fill.\n\nWithout volume surfaces (OpenRoads), give each site as 'Design | Existing', e.g. "
+            "'Site 1 FG | Site 1 EG; Site 2 FG | EG': the exact depth surface is built from the two TINs on the area "
+            "both cover."
             + QUANTITY_HELP
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
         self.addParameter(QgsProcessingParameterString(
-            "VOLUME_SURFACES", "Volume surfaces, one per site (separate with ; — blank = all named as volume surfaces)",
+            "VOLUME_SURFACES", "Volume surfaces, one per site, or 'Design | Existing' pairs (separate with ; — blank = all named as volume surfaces)",
             defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString(
             "SHRINKAGE", "Shrinkage factors, compacted per in-place (blank = 0.85, 0.90, 0.95)",
@@ -580,8 +631,13 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
             raise QgsProcessingException(str(exc)) from exc
         catalog = read_catalog(path)
         requested = [name.strip() for name in self.parameterAsString(p, "VOLUME_SURFACES", c).split(";") if name.strip()]
+        pairs = []
         if requested:
-            names = [_resolve(catalog.surfaces, name, "volume surface") for name in requested]
+            for entry in requested:
+                design, existing = _split_pair(entry)
+                pairs.append((_resolve(catalog.surfaces, design, "volume or design surface"),
+                              _resolve(catalog.surfaces, existing, "existing-ground surface") if existing else ""))
+            names = [f"{d} − {e}" if e else d for d, e in pairs]
         else:
             names = [name for name in catalog.surfaces if any(hint in name.lower() for hint in VOLUME_SURFACE_HINTS)]
             if not names:
@@ -590,16 +646,17 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
                     f"Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
                 )
             fb.pushInfo("Volume surfaces chosen by name: " + "; ".join(names) + ".")
+            pairs = [(name, "") for name in names]
         if len(set(names)) != len(names):
             raise QgsProcessingException("Each volume surface may be listed only once.")
         sites = []
         warnings = []
-        for name in names:
+        for name, (design, existing) in zip(names, pairs):
             if fb.isCanceled():
                 raise QgsProcessingException("Earthwork balance cancelled.")
+            xyz, faces, _meta = _depth_surface(path, design, existing, method, params, fb)
             try:
-                xyz, faces, _meta = read_tin(path, name, cancel=fb.isCanceled)
-                summary = volume_summary(transform_vertices(xyz, method=method, **params), faces, ())
+                summary = volume_summary(xyz, faces, ())
             except ValueError as exc:
                 raise QgsProcessingException(f"{name}: {exc}") from exc
             text = depth_warning(summary)
@@ -702,15 +759,19 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
             "revision has earthworks, the other counts as zero depth. A change can also come from a revised "
             "existing-ground surface: compare the existing-ground surfaces with Surface Cut/Fill before "
             "attributing a change to the design. Use the same coordinate interpretation for both files."
+            + EXISTING_HELP.replace("enter the design surface and the existing-ground surface", "enter each revision's design surface and its existing-ground surface")
             + QUANTITY_HELP
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
-        self.addParameter(name_param("SURFACE_A", "First revision: volume surface", "surfaces"))
+        self.addParameter(name_param("SURFACE_A", "First revision: volume surface (or design surface)", "surfaces"))
+        self.addParameter(name_param("EXISTING_A", "First revision: existing-ground surface (blank = volume surface above)", "surfaces"))
         self.addParameter(QgsProcessingParameterFile(
             "INPUT_B", "Second revision LandXML (blank = same file)", extension="xml", optional=True))
-        self.addParameter(QgsProcessingParameterString("SURFACE_B", "Second revision: volume surface"))
+        self.addParameter(QgsProcessingParameterString("SURFACE_B", "Second revision: volume surface (or design surface)"))
+        self.addParameter(QgsProcessingParameterString("EXISTING_B", "Second revision: existing-ground surface (blank = volume surface above)",
+                                                       defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("LABEL_A", "First revision label", defaultValue="Revision A"))
         self.addParameter(QgsProcessingParameterString("LABEL_B", "Second revision label", defaultValue="Revision B"))
         self.addParameter(QgsProcessingParameterFeatureSource(
@@ -750,18 +811,17 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
             raise QgsProcessingException("Revision comparison requires an output CRS in metres, feet or US survey feet.")
         units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=_volume_unit(self, p, c))
         surfaces = []
-        for path, key in ((path_a, "SURFACE_A"), (path_b, "SURFACE_B")):
+        for path, key, existing_key in ((path_a, "SURFACE_A", "EXISTING_A"), (path_b, "SURFACE_B", "EXISTING_B")):
             requested = self.parameterAsString(p, key, c).strip()
             catalog = read_catalog(path)
             if not requested:
                 raise QgsProcessingException(f"Choose the volume surface for both revisions. Surfaces in "
                                              f"{os.path.basename(path)}: {', '.join(catalog.surfaces) or 'none'}.")
             name = _resolve(catalog.surfaces, requested, "volume surface")
-            try:
-                xyz, faces, _meta = read_tin(path, name, cancel=fb.isCanceled)
-            except ValueError as exc:
-                raise QgsProcessingException(f"{name}: {exc}") from exc
-            surfaces.append((transform_vertices(xyz, method=method, **params), faces))
+            existing_name = self.parameterAsString(p, existing_key, c).strip()
+            existing_name = _resolve(catalog.surfaces, existing_name, "existing-ground surface") if existing_name else ""
+            xyz, faces, _meta = _depth_surface(path, name, existing_name, method, params, fb)
+            surfaces.append((xyz, faces))
             if fb.isCanceled():
                 raise QgsProcessingException("Revision comparison cancelled.")
         zones = []
