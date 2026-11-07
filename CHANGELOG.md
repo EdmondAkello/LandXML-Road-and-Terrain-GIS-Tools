@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- The grading reports are visual: summary figures at the top, plus a depth-band chart (Grading Quantities), a platform plan with fall arrows (Platform Levels and Falls), a stage–storage curve with the freeboard level, rim and required storage (Basin Stage–Storage), cut/fill and balance bars (Earthwork Balance) and cut/fill bars by zone (Grading Revision Comparison). Charts are inline SVG and print with their colours.
+- The user guide illustrates every grading tool with figures from a synthetic grading site (`tools/guide/make_grading_demo.py`, `tools/guide/make_grading_figures.py`): a depth map with the platforms, each report, and the depth-change map.
+
 ### Fixed
 - Geometric Design Review creates its findings map points by default, so findings appear on the alignment without enabling an extra output. Without an output CRS the review still runs and warns that the points were skipped.
 - Every tool warns when stored coordinate order is kept but the first plan coordinate looks like a northing (Civil 3D and OpenRoads write Northing, Easting), so layers are not placed millions of metres apart by mistake. The interpretation is never changed automatically.

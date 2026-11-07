@@ -174,9 +174,13 @@ LABELS = {"cut_volume": "Cut volume", "fill_volume": "Fill volume", "net_volume"
 def grading_report_html(summary, surface, units, source_file="", checks=(), status="NOT CHECKED",
                         tolerance=None, warnings=()):
     """HTML report; ``summary`` volumes already converted to ``units.volume``."""
-    from .reports import _document, _table
+    from .grading_charts import depth_bands_svg
+    from .reports import _cards, _document, _table
 
     v, a, d = units.volume, units.area, units.depth
+    cards = _cards([(f"Cut ({v})", f"{summary['cut_volume']:,.2f}"), (f"Fill ({v})", f"{summary['fill_volume']:,.2f}"),
+                    (f"Net, fill − cut ({v})", f"{summary['net_volume']:+,.2f}"), (f"Plan area ({a})", f"{summary['plan_area']:,.2f}")]
+                   + ([("Reconciliation", status)] if checks else []))
     rows = [
         (f"Cut volume ({v})", summary["cut_volume"]),
         (f"Fill volume ({v})", summary["fill_volume"]),
@@ -193,6 +197,7 @@ def grading_report_html(summary, surface, units, source_file="", checks=(), stat
         f"<p class='meta'>Source: {html.escape(source_file)} · volume surface: {html.escape(surface)}</p>",
         "<p class='note'>Exact prism volumes of the volume surface's triangles, split at zero depth. "
         "Positive depth is fill and negative is cut. Volumes are in place, with no shrinkage or bulking factors.</p>",
+        cards,
         "<h2>Quantities</h2>",
         _table(["Quantity", "Value"], rows, 3),
     ]
@@ -212,6 +217,7 @@ def grading_report_html(summary, surface, units, source_file="", checks=(), stat
         f"<h2>Plan area by depth ({d})</h2>",
         "<p class='note'>Exact areas of the linear triangles between the depth limits; a band includes "
         "its lower limit.</p>",
+        depth_bands_svg(summary["bands"], units),
         _table([f"Depth band ({d})", f"Area ({a})", "Share (%)"], band_rows, 2),
     ]
     if warnings:
@@ -415,7 +421,8 @@ def platform_summary(xyz, faces, vertical_factor=1.0, flat=0.02, min_fall=0.005,
 
 def platform_report_html(summary, surface, units, source_file="", warnings=()):
     """HTML report of slope classes and platforms; areas in ``units.area``, levels in ``units.depth``."""
-    from .reports import _document, _table
+    from .grading_charts import platforms_svg
+    from .reports import _cards, _document, _table
 
     a, d = units.area, units.depth
     total = summary["plan_area"] or 1.0
@@ -436,9 +443,13 @@ def platform_report_html(summary, surface, units, source_file="", warnings=()):
         "downhill direction (bearing in the output coordinates) come from an area-weighted plane fit; mean "
         f"local grade averages the triangle slopes. Platforms whose overall fall is below {100 * summary['min_fall']:g} % "
         "are flagged, because water can pond on them.</p>",
+        _cards([("Platforms", str(len(rows))), ("Below minimum fall", str(flagged)),
+                (f"Flat area ({a})", f"{summary['class_areas']['flat']:,.0f}"),
+                (f"Batter area ({a})", f"{summary['class_areas']['batter']:,.0f}")]),
         "<h2>Slope classes</h2>",
         _table(["Class", f"Area ({a})", "Share (%)"], class_rows, 2),
         f"<h2>Platforms ({len(rows)}; {flagged} below minimum fall)</h2>",
+        platforms_svg(summary["platforms"]),
         _table(["Platform", f"Area ({a})", f"Mean level ({d})", f"Min ({d})", f"Max ({d})", "Overall fall (%)",
                 "Falls towards", "Mean local grade (%)", "Area flatter than minimum (%)", "Flag"], rows, 2),
     ]
@@ -521,7 +532,8 @@ def stage_storage(xyz, faces, rim=None, freeboard=0.5, step=0.1, required=None):
 
 def basin_report_html(summary, surface, units, source_file="", warnings=()):
     """HTML report of a basin's stage–storage table; volumes already converted to ``units.volume``."""
-    from .reports import _document, _table
+    from .grading_charts import stage_storage_svg
+    from .reports import _cards, _document, _table
 
     v, a, d = units.volume, units.area, units.depth
     required = summary["required_volume"]
@@ -541,6 +553,10 @@ def basin_report_html(summary, surface, units, source_file="", warnings=()):
         "(water depth is linear on each triangle). The check uses the storage with freeboard; "
         "PASS TO RIM ONLY means the required volume fits only if the basin is filled to the rim.</p>",
         f"<h2>Capacity: {html.escape(summary['status'])}</h2>",
+        _cards([(f"Storage to the rim ({v})", f"{summary['rim_volume']:,.1f}"),
+                (f"With freeboard ({v})", f"{summary['design_volume']:,.1f}"),
+                (f"Required ({v})", "–" if required is None else f"{required:,.1f}"), ("Capacity", summary["status"])]),
+        stage_storage_svg(summary, units),
         _table(["Quantity", "Value"], rows, 3),
         "<h2>Stage–storage table</h2>",
         _table([f"Level ({d})", f"Depth ({d})", f"Water area ({a})", f"Storage ({v})"],
@@ -613,7 +629,8 @@ def earthwork_balance(sites, factors=DEFAULT_SHRINKAGE, unsuitable=0.0, topsoil_
 
 def balance_report_html(balance, units, source_file="", warnings=()):
     """HTML report; volumes already in ``units.volume``, areas in ``units.area``."""
-    from .reports import _document, _table
+    from .grading_charts import bars_svg
+    from .reports import CUT_COLOR, FILL_COLOR, _document, _table
 
     v, a = units.volume, units.area
     site_rows = [(site["name"], site["area"], site["cut"], site["fill"], site["fill"] - site["cut"])
@@ -633,7 +650,14 @@ def balance_report_html(balance, units, source_file="", warnings=()):
         + "</p>",
         "<h2>Sites (in place)</h2>",
         _table(["Site", f"Plan area ({a})", f"Cut ({v})", f"Fill ({v})", f"Net, fill − cut ({v})"], site_rows, 2),
+        bars_svg([site["name"] for site in balance["sites"]],
+                 [("Cut (in place)", CUT_COLOR, [site["cut"] for site in balance["sites"]]),
+                  ("Fill", FILL_COLOR, [site["fill"] for site in balance["sites"]])], v),
         "<h2>Balance by shrinkage factor</h2>",
+        bars_svg([f"Factor {item['factor']:.2f}" for item in balance["scenarios"]],
+                 [("Moved between sites (compacted)", "#1f5f8b", [item["transfer"] for item in balance["scenarios"]]),
+                  ("Import (compacted)", "#c0392b", [item["import_compacted"] for item in balance["scenarios"]]),
+                  ("Spoil (in place)", "#7b4fbf", [item["spoil_in_place"] for item in balance["scenarios"]])], v),
         _table(["Shrinkage factor", f"Moved between sites ({v}, compacted)", f"Import ({v}, compacted)",
                 f"Import ({v}, in place)", f"Spoil ({v}, in place)"], scenario_rows, 2),
     ]
@@ -735,25 +759,37 @@ def scale_comparison(comparison, factor):
 
 def comparison_report_html(comparison, labels, units, sources=("", ""), warnings=()):
     """HTML report; ``labels`` names the two revisions, e.g. ("Rev B", "Rev C")."""
-    from .reports import _document, _table
+    from .grading_charts import bars_svg
+    from .reports import CUT_COLOR, FILL_COLOR, _cards, _document, _table
 
     v, a = units.volume, units.area
     first, second = labels
     header = ["Zone", f"{first} cut ({v})", f"{first} fill ({v})", f"{second} cut ({v})", f"{second} fill ({v})",
-              f"Cut change ({v})", f"Fill change ({v})", f"Net change, fill − cut ({v})", f"{first} area ({a})",
-              f"{second} area ({a})"]
+              f"Cut change ({v})", f"Fill change ({v})", f"Net change, fill − cut ({v})"]
     as_row = lambda r: (r["name"], r["cut_a"], r["fill_a"], r["cut_b"], r["fill_b"], r["cut_change"],  # noqa: E731
-                        r["fill_change"], r["net_change"], r["area_a"], r["area_b"])
+                        r["fill_change"], r["net_change"])
+    area_rows = [(r["name"], r["area_a"], r["area_b"], r["area_b"] - r["area_a"])
+                 for r in comparison["zones"] + [comparison["total"]]]
     body = [
         f"<p class='meta'>{html.escape(first)}: {html.escape(sources[0])} · {html.escape(second)}: {html.escape(sources[1])}</p>",
         "<p class='note'>Exact in-place cut and fill of each revision's volume surface. Changes are the second revision "
         "minus the first. Triangles are assigned to zones by their centroid, so zone totals near zone edges are approximate; "
         "the overall totals are exact. A change can come from the design or from a revised existing-ground surface: "
         "compare the existing-ground surfaces separately (Surface Cut/Fill) before attributing it to the design.</p>",
+        _cards([(f"Cut change ({v})", f"{comparison['total']['cut_change']:+,.2f}"),
+                (f"Fill change ({v})", f"{comparison['total']['fill_change']:+,.2f}"),
+                (f"Net change ({v})", f"{comparison['total']['net_change']:+,.2f}")]),
         "<h2>Overall</h2>", _table(header, [as_row(comparison["total"])], 2),
     ]
-    if comparison["zones"] and not (len(comparison["zones"]) == 1 and comparison["zones"][0]["name"] == "Outside zones"):
+    zoned = comparison["zones"] and not (len(comparison["zones"]) == 1 and comparison["zones"][0]["name"] == "Outside zones")
+    rows = comparison["zones"] if zoned else [comparison["total"]]
+    body.append(bars_svg([row["name"] for row in rows],
+                         [(f"{first} cut", "#f0b47a", [row["cut_a"] for row in rows]), (f"{second} cut", CUT_COLOR, [row["cut_b"] for row in rows]),
+                          (f"{first} fill", "#9fd1b0", [row["fill_a"] for row in rows]), (f"{second} fill", FILL_COLOR, [row["fill_b"] for row in rows])], v))
+    if zoned:
         body += ["<h2>By zone</h2>", _table(header, [as_row(row) for row in comparison["zones"]], 2)]
+    body += [f"<h3>Graded plan area ({a})</h3>",
+             _table(["Zone", f"{first} ({a})", f"{second} ({a})", f"Change ({a})"], area_rows if zoned else area_rows[-1:], 2)]
     if warnings:
         body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
     return _document("Grading revision comparison", "".join(body))

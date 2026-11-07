@@ -447,5 +447,29 @@ class RevisionComparisonTests(unittest.TestCase):
         self.assertNotIn("By zone", comparison_report_html(revision_comparison(self.first, self.second), ("A", "B"), units))
 
 
+class ReportChartTests(unittest.TestCase):
+    def test_every_grading_report_has_its_chart(self):
+        from landxml_plugin.landxml.grading_charts import bars_svg, depth_bands_svg, platforms_svg, stage_storage_svg
+
+        units = quantity_units("meter", "meter")
+        xyz, faces, _meta = read_tin(str(FIXTURE), "Pad Earthworks")
+        volumes = units.volumes(volume_summary(xyz, faces))
+        self.assertIn("<svg", grading_report_html(volumes, "Pad Earthworks", units))
+        pxyz, pfaces, _meta = read_tin(str(PLATFORMS), "Yard FWL")
+        platforms = platform_summary(pxyz, pfaces)
+        text = platform_report_html(platforms, "Yard FWL", units)
+        self.assertIn("marker-end='url(#fall)'", text)  # the 1 % platform gets a fall arrow
+        bxyz, bfaces, _meta = read_tin(str(BASIN), "Test Pond")
+        self.assertIn("Freeboard level", basin_report_html(stage_storage(bxyz, bfaces, required=300.0), "Test Pond", units))
+        balance = earthwork_balance(BalanceTests.SITES, (0.9,))
+        self.assertEqual(balance_report_html(balance, units).count("<svg"), 2)
+        grid = _grid(4, 4, z=lambda x, y: y - 2)
+        self.assertIn("<svg", comparison_report_html(revision_comparison(grid, grid), ("A", "B"), units))
+        self.assertEqual(depth_bands_svg([], units), "")
+        self.assertEqual(platforms_svg([]), "")
+        self.assertEqual(stage_storage_svg({"rows": []}, units), "")
+        self.assertIn("<rect", bars_svg(["x"], [("a", "#000000", [-1.0])], "m³"))
+
+
 if __name__ == "__main__":
     unittest.main()
