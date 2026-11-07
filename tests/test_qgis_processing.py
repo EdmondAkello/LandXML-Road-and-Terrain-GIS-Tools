@@ -34,6 +34,7 @@ from qgis.core import (
     QgsProcessingException,
     QgsProcessingFeedback,
     QgsProcessingOutputLayerDefinition,
+    QgsProcessingParameterDefinition,
     QgsProject,
     QgsWkbTypes,
 )
@@ -1244,6 +1245,28 @@ class QgisProcessingTests(unittest.TestCase):
             params.pop("DESIGN_SPEED")
             with self.assertRaisesRegex(QgsProcessingException, "design speed"):
                 self.algorithms["landxml_design_review"].processAlgorithm(params, self.context, self.feedback)
+
+    def test_design_review_map_points_by_default_and_without_crs(self):
+        algorithm = self.algorithms["landxml_design_review"]
+        definition = algorithm.parameterDefinition("MAP_OUTPUT")
+        self.assertTrue(definition.flags() & QgsProcessingParameterDefinition.Flag.FlagOptional)
+        self.assertTrue(definition.createByDefault())
+        warnings = []
+        feedback = QgsProcessingFeedback()
+        feedback.pushWarning = warnings.append
+        params = {"INPUT": CORRIDOR, "DESIGN_SPEED": 60, "OUTPUT": "memory:", "MAP_OUTPUT": "memory:"}
+        result = algorithm.processAlgorithm(params, self.context, feedback)
+        self.assertEqual(result["MAP_OUTPUT"], "")
+        self.assertTrue(any("Findings map points were not created" in text for text in warnings))
+
+    def test_northing_first_warning(self):
+        from landxml_plugin.processing_common import northing_first_warning
+
+        self.assertIn("Swap X / Y", northing_first_warning((9886035.5, 202951.8, 9898762.7, 211672.6)))
+        for bounds in (None, (202951.8, 9886035.5, 211672.6, 9898762.7), (0.0, 0.0, 100.0, 50.0),
+                       (500000.0, 4100000.0, 510000.0, 4110000.0)):
+            with self.subTest(bounds=bounds):
+                self.assertIsNone(northing_first_warning(bounds))
 
     def test_us_customary_review_and_design_report(self):
         from landxml_plugin.landxml.criteria import list_standards

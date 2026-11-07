@@ -51,6 +51,22 @@ class BoundsTracker:
             )
 
 
+def northing_first_warning(bounds):
+    """Warn when stored order is kept but the first plan coordinate looks like a UTM-style northing.
+
+    Only a warning: the coordinate interpretation is never changed automatically.
+    """
+    if bounds is None:
+        return None
+    x0, y0, x1, y1 = bounds
+    if 1.0e6 <= x0 <= x1 <= 1.0e7 and 1.0e5 <= y0 <= y1 < 1.0e6:
+        return (f"Stored order kept, but the first plan coordinate ({x0:,.0f}–{x1:,.0f}) looks like a northing and the "
+                f"second ({y0:,.0f}–{y1:,.0f}) like an easting. Civil 3D and OpenRoads usually write Northing, Easting: "
+                "choose Swap X / Y unless this file is known to store Easting first, and use the same choice for every "
+                "layer you overlay.")
+    return None
+
+
 def coordinate_choices(algorithm, parameters, context, feedback, path):
     """Read explicitly supplied CRS/transform settings; never infer source CRS."""
     document = load_document(path)
@@ -88,6 +104,10 @@ def coordinate_choices(algorithm, parameters, context, feedback, path):
             f"Unknown coordinate interpretation option {method_index}."
         )
     method = methods[method_index]
+    if method in ("stored", "offset"):
+        warning = northing_first_warning(report["bounds"])
+        if warning:
+            feedback.pushWarning(warning)
     src = algorithm.parameterAsCrs(parameters, "SOURCE_CRS", context)
     if method == "reproject" and (
         parameters.get("SOURCE_CRS") in (None, "") or not src.isValid()

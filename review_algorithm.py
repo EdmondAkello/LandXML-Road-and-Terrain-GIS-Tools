@@ -193,7 +193,8 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
         _param_coordinates(self, output_optional=True)
         self.addParameter(QgsProcessingParameterFeatureSink("OUTPUT", "Findings table", type=QgsProcessing.SourceType.TypeVector))
         self.addParameter(
-            QgsProcessingParameterFeatureSink("MAP_OUTPUT", "Findings on the map (points)", type=QgsProcessing.SourceType.TypeVectorPoint, optional=True)
+            QgsProcessingParameterFeatureSink("MAP_OUTPUT", "Findings on the map (points)", type=QgsProcessing.SourceType.TypeVectorPoint, optional=True,
+                                              createByDefault=True)
         )
         self.addParameter(QgsProcessingParameterFileDestination("REPORT", "HTML review report", fileFilter="HTML (*.html)", optional=True))
         self.addParameter(
@@ -267,7 +268,10 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
                 feature.setAttributes(attributes(result["name"], f))
                 sink.addFeature(feature)
         outputs = {"OUTPUT": dest, "MAP_OUTPUT": "", "REPORT": "", "PROFILE_TXT": "", "PROFILE_LANDXML": ""}
-        if p.get("MAP_OUTPUT"):
+        if p.get("MAP_OUTPUT") and p.get("OUTPUT_CRS") in (None, ""):
+            fb.pushWarning("Findings map points were not created: choose an output CRS (and the coordinate "
+                           "interpretation used for your other layers) to place them on the alignment.")
+        elif p.get("MAP_OUTPUT"):
             from .earthworks_algorithm import _placers
 
             method, crs, _src, params, _doc = coordinate_choices(self, p, c, fb, path)

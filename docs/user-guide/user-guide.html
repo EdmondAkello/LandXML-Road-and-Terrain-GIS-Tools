@@ -272,7 +272,7 @@ a { color: var(--accent); }
     <tr><td>Reproject from source CRS</td><td>The stored coordinates are valid in a known CRS that differs from the output CRS. You must select the source CRS.</td></tr>
   </tbody>
 </table>
-<p><b>Output CRS</b> is always chosen by you. Use the same interpretation and CRS for every layer of a project, and check one feature against known survey control before converting a whole design.</p>
+<p><b>Output CRS</b> is always chosen by you. Use the same interpretation and CRS for every layer of a project, and check one feature against known survey control before converting a whole design. If you keep the stored order but the first coordinate looks like a northing (for example 9,886,035 with an easting-sized second value), every tool warns you; it never swaps on its own.</p>
 <p><b>OpenRoads axis-order reminder.</b> Every coordinate-interpretation selector includes a reminder and detailed help. Standard LandXML uses Northing, Easting, with elevation third (see the <a href="https://www.anzlic.gov.au/sites/default/files/files/ePlan-Protocol-LandXML-Mapping-v2.1.4.pdf">ICSM mapping</a>); the downloaded FHWA OpenRoads examples follow this order. Verify a known control point instead of assuming every version or edited export behaves identically. Use stored coordinates if the file already contains Easting, Northing. Preparation preserves axis order; apply the same choice to matching geometry and terrains. Profile station/elevation and section offset/elevation pairs are not plan coordinates and must not be swapped.</p>
 <p><b>Units.</b> Metres, international feet and US survey feet are kept distinct. When a file declares a horizontal unit, the output CRS must use the same unit or the tool stops. Vertical units are never inferred from horizontal ones; if the file does not declare them, the log says so.</p>
 
@@ -500,7 +500,7 @@ a { color: var(--accent); }
     <tr><td>Apply profile fixes … at most (m)</td><td>Fixes changing any level by more than this are reported but not applied to the recommended profile (default 1 m).</td></tr>
     <tr><td>Use corridor cross-sections</td><td>Enables barrier warrants and sight distance on curves.</td></tr>
     <tr><td>Section surfaces</td><td>Ground and design section surfaces (blank = detect).</td></tr>
-    <tr><td>Outputs</td><td>Findings table, findings as map points (needs a CRS), HTML report, recommended profile as Civil 3D text and as LandXML.</td></tr>
+    <tr><td>Outputs</td><td>Findings table, findings as map points (created by default; needs an output CRS and the same coordinate interpretation as your other layers), HTML report, recommended profile as Civil 3D text and as LandXML.</td></tr>
   </tbody>
 </table>
 <figure>
