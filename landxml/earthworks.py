@@ -282,6 +282,45 @@ class SectionLine:
         return _value(self.offsets, self.values, offset, side)
 
 
+def embankment_toe(design, ground, hinge, side):
+    """Fill height and batter run on one side of a section, measured to original ground.
+
+    Walks outward from ``hinge`` (offset, elevation) along the design line and returns
+    ``(height, run, toe_offset)`` where the design line first meets the ground: the
+    height is the hinge elevation minus the ground at that toe, so a toe drain, bench
+    or retaining wall beyond the toe does not change it. When the design line ends
+    above ground, its last point is taken as the toe. Returns None where the hinge is
+    not above the ground (cut) or the ground does not reach the hinge.
+    """
+    design_line, ground_line = SectionLine(design), SectionLine(ground)
+    sign = -1.0 if side == "left" else 1.0
+    x_h, z_h = hinge
+    g_h = ground_line.at(x_h)
+    if g_h is None or z_h - g_h <= 1e-9:
+        return None
+    end = design_line.low if sign < 0 else design_line.high
+    xs = sorted({x for x in design_line.offsets + ground_line.offsets
+                 if min(x_h, end) - 1e-9 <= x <= max(x_h, end) + 1e-9}, key=lambda x: sign * x)
+    previous = None
+    for x in xs:
+        z, g = design_line.at(x), ground_line.at(x)
+        if z is None or g is None:
+            continue
+        d = z - g
+        if d <= 1e-9:
+            if previous is None:
+                toe = x
+            else:
+                x0, d0 = previous
+                toe = x0 + (x - x0) * d0 / (d0 - d) if d0 - d > 1e-12 else x
+            return z_h - ground_line.at(toe), abs(toe - x_h), toe
+        previous = (x, d)
+    g_end = ground_line.at(end)
+    if g_end is None:
+        return None
+    return z_h - g_end, abs(end - x_h), end
+
+
 def section_areas(design, ground):
     """Return (cut area, fill area, low offset, high offset) over the common range."""
     design, ground = SectionLine(design), SectionLine(ground)

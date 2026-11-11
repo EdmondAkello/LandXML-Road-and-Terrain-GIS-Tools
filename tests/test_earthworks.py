@@ -965,6 +965,48 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(s2["side"], "right")
         self.assertGreater(s2["required"], s2["value"])
 
+    def test_barrier_fill_height_measured_to_ground(self):
+        """Fill height runs from the hinge to original ground at the toe, not to the daylight point."""
+        review = Review(self.kenya, speed_function([], 100))
+        # 6 m fill at 1:2 to the toe at 18 m, then a 0.6 m deep toe drain and a daylight point 1.6 m above
+        # the toe on rising ground: hinge-to-daylight would read 4.4 m at about 1:3.5.
+        right = [(6, 100), (18, 94), (19.2, 93.4), (20.2, 93.4), (23.0, 95.6)]
+        design = [(-x, z) for x, z in reversed(right)] + [(0, 100)] + right
+        ground = [(-30, 94), (-18, 94), (18, 94), (30, 98)]
+        views = [{"station": s, "design": design, "ground": ground, "daylight": (-23.0, 23.0)} for s in (0, 20, 40)]
+        review.check_barriers(views)
+        barriers = [f for f in review.findings if f["code"] == "R1"]
+        self.assertEqual({f["side"] for f in barriers}, {"left", "right"})
+        for f in barriers:
+            self.assertAlmostEqual(f["value"], 6.0, places=6)
+            self.assertIn("side slope 1:2.0", f["detail"])
+            self.assertEqual(f["severity"], "High")
+        # the design line ending above the ground (a wall or a truncated section): its last point is the toe
+        wall = [(6, 100), (12, 97)]
+        design = [(-x, z) for x, z in reversed(wall)] + [(0, 100)] + wall
+        review = Review(self.kenya, speed_function([], 100))
+        review.check_barriers([{"station": 0, "design": design, "ground": [(-30, 90), (30, 90)], "daylight": (-12, 12)}])
+        self.assertTrue(all(abs(f["value"] - 10.0) < 1e-6 for f in review.findings if f["code"] == "R1"))
+        # cut: the hinge is below the ground, no barrier
+        review = Review(self.kenya, speed_function([], 100))
+        review.check_barriers([{"station": 0, "design": [(-12, 94), (-6, 100), (6, 100), (12, 94)],
+                                "ground": [(-30, 104), (30, 104)], "daylight": (-12, 12)}])
+        self.assertFalse([f for f in review.findings if f["code"] == "R1"])
+
+    def test_embankment_toe(self):
+        from landxml_plugin.landxml.earthworks import embankment_toe
+        design = [(0, 100), (6, 100), (18, 94), (19.2, 93.4), (20.2, 93.4), (23, 95.6)]
+        h, run, toe = embankment_toe(design, [(0, 94), (40, 94)], (6, 100), "right")
+        self.assertAlmostEqual(h, 6.0); self.assertAlmostEqual(run, 12.0); self.assertAlmostEqual(toe, 18.0)
+        left = [(-x, z) for x, z in design]
+        h, run, toe = embankment_toe(left, [(-40, 94), (0, 94)], (-6, 100), "left")
+        self.assertAlmostEqual(h, 6.0); self.assertAlmostEqual(toe, -18.0)
+        # sloping ground: the toe is where the batter meets it
+        h, run, toe = embankment_toe([(0, 100), (6, 100), (30, 88)], [(0, 95), (40, 91)], (6, 100), "right")
+        self.assertAlmostEqual(toe, 6 + (100 - 94.4) / (0.5 - 0.1), places=6)
+        self.assertAlmostEqual(h, 100 - (95 - 0.1 * toe), places=6)
+        self.assertIsNone(embankment_toe(design, [(0, 101), (40, 101)], (6, 100), "right"))
+
     def test_speed_ranges_and_exports(self):
         self.assertEqual(parse_speed_ranges("0-5000:60; 5000-:80"), [(0, 60), (5000, 80)])
         speed = speed_function(parse_speed_ranges("0-5000:60; 5000-:80"), None)

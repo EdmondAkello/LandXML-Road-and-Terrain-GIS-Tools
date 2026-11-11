@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Geometric Design Review barrier warrant (R1): the fill height is measured from the hinge to original ground at the toe, where the design line meets the ground, instead of to the daylight point, and the side slope is the batter from hinge to toe. Toe drains, benches and walls beyond the toe no longer change the height or slope. Where the design line ends above the ground, its last point is taken as the toe. New `earthworks.embankment_toe`; synthetic tests with a toe drain, a truncated section, sloping ground and a cut.
+
 ## 1.10.0 — 2026-11-07
 
 ### Added
