@@ -14,6 +14,8 @@ from __future__ import annotations
 from bisect import bisect_right
 import math
 
+from .earthworks import embankment_toe
+
 SEVERITY_ORDER = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
 
 
@@ -750,14 +752,11 @@ class Review:
             design, ground = view.get("design"), view.get("ground")
             if not design or not ground:
                 continue
-            for side, daylight in (("left", view["daylight"][0]), ("right", view["daylight"][1])):
-                if daylight is None:
-                    continue
+            for side in ("left", "right"):
                 points = [p for p in design if (p[0] <= 0 if side == "left" else p[0] >= 0)]
                 if len(points) < 2:
                     continue
                 points.sort(key=lambda p: abs(p[0]))
-                outer = min(points, key=lambda p: abs(p[0] - daylight))
                 # Hinge: outermost design point before the slope steepens (largest elevation drop starts).
                 hinge = None
                 for a, b in zip(points, points[1:]):
@@ -767,8 +766,13 @@ class Review:
                         break
                 if hinge is None:
                     continue
-                height = hinge[1] - outer[1]
-                run = abs(outer[0] - hinge[0])
+                # Fill height from the hinge down to original ground at the toe (where the design
+                # line meets the ground), not to the daylight point, so toe drains, benches and
+                # walls beyond the toe do not change it.
+                toe = embankment_toe(design, ground, hinge, side)
+                if toe is None:
+                    continue
+                height, run, _toe = toe
                 if height <= self.c.metres(0.5) or run <= 0:
                     continue
                 ratio = run / height
