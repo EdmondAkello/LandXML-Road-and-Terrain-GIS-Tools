@@ -243,6 +243,19 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(feature["source_user_id"], "42")
         self.assertTrue(QgsWkbTypes.hasZ(feature.geometry().wkbType()))
 
+    def test_civil3d_plan_features_extract_as_feature_lines(self):
+        params = self._params(str(ROOT / "tests" / "fixtures" / "civil3d" / "plan_features.xml"), "EPSG:26915")
+        params["OUTPUT"] = "memory:"
+        result = self.algorithms["landxml_feature_lines"].processAlgorithm(
+            params, self.context, self.feedback
+        )
+        layer = self.context.getMapLayer(result["OUTPUT"])
+        self.assertEqual(layer.featureCount(), 2)
+        names = {f["feature_name"]: f for f in layer.getFeatures()}
+        self.assertEqual(set(names), {"ETW R", "Kerb"})
+        self.assertEqual(names["ETW R"]["feature_code"], "FeatureLine")
+        self.assertTrue(QgsWkbTypes.hasZ(names["ETW R"].geometry().wkbType()))
+
     def test_civil3d_alignment_profile_and_sections(self):
         alignment = self._params(CIVIL3D, "EPSG:26915")
         alignment["OUTPUT"] = "memory:"

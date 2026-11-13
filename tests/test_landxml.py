@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 from pathlib import Path
 import sys
 import subprocess
@@ -248,6 +249,31 @@ assert Path(path).is_file()
         self.assertEqual(record.breakline_type, "standard")
         self.assertEqual(record.properties, {"id": "1", "UsrID": "42"})
         self.assertIsNone(record.name)
+
+    def test_plan_features_read_as_feature_lines(self):
+        doc = load_document(str(FIXTURES / "civil3d" / "plan_features.xml"))
+        records, warnings = read_line_features(doc.root)
+        self.assertEqual(len(warnings), 1)                       # the PlanFeature with a broken Line
+        self.assertIn("Broken", warnings[0])
+        by_name = {r.name: r for r in records}
+        self.assertEqual(set(by_name), {"ETW R", "Kerb"})
+        etw = by_name["ETW R"]
+        self.assertEqual(etw.kind, "FeatureLine")
+        self.assertEqual(etw.feature_code, "FeatureLine")
+        self.assertEqual(etw.properties, {"site": "Site 1", "landxml_element": "PlanFeature"})
+        self.assertIsNone(etw.surface_name)
+        # stored order (northing easting elevation); line then the sampled curve, no repeated vertex
+        self.assertEqual(etw.points[0], (5000.0, 1000.0, 100.0))
+        self.assertEqual(etw.points[1], (5000.0, 1100.0, 101.0))
+        self.assertEqual(etw.points[-1], (5100.0, 1200.0, 102.0))
+        self.assertEqual(len({p[:2] for p in etw.points}), len(etw.points))
+        mid = etw.points[1 + (len(etw.points) - 2) // 2]
+        self.assertAlmostEqual(math.dist(mid[:2], (5100.0, 1100.0)), 100.0, places=6)   # on the arc
+        self.assertGreater(mid[1], 1100.0)                        # bulges east of the centre (left turn)
+        self.assertTrue(101.0 < mid[2] < 102.0)                   # elevation along the curve
+        kerb = by_name["Kerb"]
+        self.assertIsNone(kerb.feature_code)
+        self.assertEqual(kerb.points[-1], (4991.0, 1080.0, 100.2))
 
     def test_ftus_unit_is_preserved(self):
         doc = load_document(str(OPENROADS))
