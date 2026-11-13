@@ -5,6 +5,10 @@
 ### Added
 - Feature lines exported as `PlanFeatures` are read: Civil 3D writes its feature lines this way, and Road Furniture Designer's feature-line export uses it. Each `PlanFeature` becomes a feature-line record from its `CoordGeom` (lines, curves and spirals sampled as alignments are, irregular lines), in stored order (northing, easting, elevation), with elevations along curves interpolated between their ends, its name, `Feature` code and properties (such as `site`), and `landxml_element=PlanFeature`. They appear in **Extract LandXML Feature Lines**, the Complete Road Design `feature_lines` layer and the Inspect LandXML count. A PlanFeature that cannot be read is skipped with a warning.
 
+### Fixed
+- Civil 3D feature lines (corridor feature lines included) were skipped: Civil 3D writes a feature-line `Curve` as three points on the arc (`Start`, `Center` = the middle of the arc, with its elevation, `End`) with only a `radius` and no `rot`. Such curves are now drawn through those three points, with chords within 5 mm of the arc.
+- Feature-line elevation points (`<Location desc="FeatureLine Elevation Point">`, where Civil 3D keeps levels between PIs) were ignored, so the levels between PIs were a straight grade. They are now inserted into the line, and the points sampled along curves are graded between them, as Civil 3D grades them. Checked against a Civil 3D 2022 export of a 2.7 km corridor: lines read back within 6 mm of Civil 3D's levels.
+
 ### Changed
 - Geometric Design Review barrier warrant (R1): the fill height is measured from the hinge to original ground at the toe, where the design line meets the ground, instead of to the daylight point, and the side slope is the batter from hinge to toe. Toe drains, benches and walls beyond the toe no longer change the height or slope. Where the design line ends above the ground, its last point is taken as the toe. New `earthworks.embankment_toe`; synthetic tests with a toe drain, a truncated section, sloping ground and a cut.
 

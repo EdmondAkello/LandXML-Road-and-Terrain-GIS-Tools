@@ -275,6 +275,27 @@ assert Path(path).is_file()
         self.assertIsNone(kerb.feature_code)
         self.assertEqual(kerb.points[-1], (4991.0, 1080.0, 100.2))
 
+    def test_civil3d_three_point_feature_line_curve(self):
+        doc = load_document(str(FIXTURES / "civil3d" / "corridor_feature_line.xml"))
+        records, warnings = read_line_features(doc.root)
+        self.assertEqual(warnings, [])
+        record, = records
+        self.assertEqual(record.feature_code, "AutoCorridorFeatureLine")
+        self.assertEqual(record.properties["code"], "ETW")
+        self.assertEqual(record.points[-1][:2], (5100.0, 1200.0))
+        # the elevation point on the line is kept (a hump the straight grade would miss); one off it is not
+        self.assertEqual(record.points[1], (5000.0, 1050.0, 101.2))
+        self.assertNotIn(999.0, [p[2] for p in record.points])
+        arc = record.points[2:]
+        self.assertGreater(len(arc), 10)                          # sampled, not the three points
+        for n, e, z in arc:                                       # on the circle through the three points
+            self.assertAlmostEqual(math.hypot(e - 1100.0, n - 5100.0), 100.0, places=4)
+            self.assertTrue(101.0 - 1e-9 <= z <= 102.0 + 1e-9)
+        mid = min(arc, key=lambda p: abs(math.atan2(p[0] - 5100.0, p[1] - 1100.0) + math.pi / 4))
+        self.assertAlmostEqual(mid[2], 101.5, delta=0.01)         # graded through the middle of the arc
+        # quarter circle, not the long way round
+        self.assertLess(sum(math.dist(a[:2], b[:2]) for a, b in zip(arc, arc[1:])), 100.0 * math.pi / 2 + 0.01)
+
     def test_ftus_unit_is_preserved(self):
         doc = load_document(str(OPENROADS))
         self.assertEqual(doc.horizontal_unit, "USSurveyFoot")

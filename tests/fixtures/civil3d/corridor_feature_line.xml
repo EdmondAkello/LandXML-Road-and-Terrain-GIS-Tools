@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2" date="2026-11-13" time="12:00:00">
+  <Units><Metric linearUnit="meter" areaUnit="squareMeter" volumeUnit="cubicMeter" angularUnit="decimal degrees" directionUnit="decimal degrees"/></Units>
+  <Application name="Synthetic fixture" desc="Civil 3D 2022 style corridor feature line: a three-point Curve (Center is the arc's middle point, no rot)"/>
+  <PlanFeatures name="Siteless FeatureLines">
+    <PlanFeature name="FL - main - ETW - 1">
+      <CoordGeom>
+        <Line><Start>5000.0 1000.0 100.0</Start><End>5000.0 1100.0 101.0</End></Line>
+        <Curve radius="100.000000"><Start>5000.000000 1100.000000 101.000000</Start><Center>5029.289322 1170.710678 101.500000</Center><End>5100.000000 1200.000000 102.000000</End></Curve>
+      </CoordGeom>
+      <Location desc="FeatureLine Elevation Point">5000.0 1050.0 101.2</Location>
+      <Location desc="FeatureLine Elevation Point">5050.0 1050.0 999.0</Location>
+      <Feature code="AutoCorridorFeatureLine" source="Autodesk Civil 3D"><Property label="layer" value="C-TOPO-FEAT"/><Property label="corridorRefs" value="main"/><Property label="code" value="ETW"/></Feature>
+    </PlanFeature>
+    <Feature code="FeatureLines" source="Autodesk Civil 3D"/>
+  </PlanFeatures>
+</LandXML>

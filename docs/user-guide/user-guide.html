@@ -359,7 +359,7 @@ a { color: var(--accent); }
   <li><b>Absolute</b> sections (<code>PntList3D</code>) keep their coordinates.</li>
   <li><b>Station-relative</b> sections (<code>CrossSectSurf/PntList2D</code> offset–elevation pairs, as Civil 3D writes for sample lines) are placed along their alignment as 3D lines, one per sampled surface. Versions before 1.6 placed these at false coordinates.</li>
 </ul>
-<p><b>Extract LandXML Breaklines</b> and <b>Extract LandXML Feature Lines</b> keep the design linework with its source names, descriptions, codes and IDs. OpenRoads breaklines carry codes and IDs but no names; the plugin keeps those without treating IDs as names. Feature lines exported from Civil 3D come as <code>PlanFeatures</code>; they are read as feature lines from their lines, curves and spirals (curves sampled as alignments are, elevations along a curve interpolated between its ends), with their site and other properties and <code>landxml_element = PlanFeature</code>.</p>
+<p><b>Extract LandXML Breaklines</b> and <b>Extract LandXML Feature Lines</b> keep the design linework with its source names, descriptions, codes and IDs. OpenRoads breaklines carry codes and IDs but no names; the plugin keeps those without treating IDs as names. Feature lines exported from Civil 3D come as <code>PlanFeatures</code>; they are read as feature lines from their lines, curves and spirals, with Civil 3D's three-point feature-line curves (start, middle and end points on the arc, no rotation) and its elevation points between PIs, with their site and other properties and <code>landxml_element = PlanFeature</code>.</p>
 
 <!-- ============================== PART C ============================== -->
 <h1 class="part"><span class="num">Part C</span>Viewing, quantities and reports</h1>
