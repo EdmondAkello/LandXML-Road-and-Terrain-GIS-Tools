@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Documentation
+- README front page: a one-line summary, three figures from the demonstration data and the highlights before the details. The validation notes of versions 1.5.0 to 1.9.1 moved to `HISTORY.md`.
+
 ### Added
 - Feature lines exported as `PlanFeatures` are read: Civil 3D writes its feature lines this way, and Road Furniture Designer's feature-line export uses it. Each `PlanFeature` becomes a feature-line record from its `CoordGeom` (lines, curves and spirals sampled as alignments are, irregular lines), in stored order (northing, easting, elevation), with elevations along curves interpolated between their ends, its name, `Feature` code and properties (such as `site`), and `landxml_element=PlanFeature`. They appear in **Extract LandXML Feature Lines**, the Complete Road Design `feature_lines` layer and the Inspect LandXML count. A PlanFeature that cannot be read is skipped with a warning.
 
