@@ -359,7 +359,7 @@ a { color: var(--accent); }
   <li><b>Absolute</b> sections (<code>PntList3D</code>) keep their coordinates.</li>
   <li><b>Station-relative</b> sections (<code>CrossSectSurf/PntList2D</code> offset–elevation pairs, as Civil 3D writes for sample lines) are placed along their alignment as 3D lines, one per sampled surface. Versions before 1.6 placed these at false coordinates.</li>
 </ul>
-<p><b>Extract LandXML Breaklines</b> and <b>Extract LandXML Feature Lines</b> keep the design linework with its source names, descriptions, codes and IDs. OpenRoads breaklines carry codes and IDs but no names; the plugin keeps those without treating IDs as names.</p>
+<p><b>Extract LandXML Breaklines</b> and <b>Extract LandXML Feature Lines</b> keep the design linework with its source names, descriptions, codes and IDs. OpenRoads breaklines carry codes and IDs but no names; the plugin keeps those without treating IDs as names. Feature lines exported from Civil 3D come as <code>PlanFeatures</code>; they are read as feature lines from their lines, curves and spirals (curves sampled as alignments are, elevations along a curve interpolated between its ends), with their site and other properties and <code>landxml_element = PlanFeature</code>.</p>
 
 <!-- ============================== PART C ============================== -->
 <h1 class="part"><span class="num">Part C</span>Viewing, quantities and reports</h1>
@@ -764,7 +764,7 @@ a { color: var(--accent); }
     <tr><td><code>CrossSects</code></td><td>Absolute <code>PntList3D</code> and station-relative <code>PntList2D</code> sections; <code>DesignCrossSectSurf</code> shapes, links and Datum.</td></tr>
     <tr><td><code>Superelevation</code></td><td>Transition stations and full rates (two-lane rotation about the centreline assumed).</td></tr>
     <tr><td><code>Feature name="SpeedStation"</code>, <code>Roadway/DesignSpeed</code></td><td>Design speeds by station.</td></tr>
-    <tr><td><code>Breaklines</code>, feature lines</td><td>Geometry with names, codes and IDs.</td></tr>
+    <tr><td><code>Breaklines</code>, feature lines, <code>PlanFeatures</code></td><td>Geometry with names, codes and IDs; PlanFeatures from their <code>CoordGeom</code>.</td></tr>
   </tbody>
 </table>
 <p><b>Not supported:</b> decreasing station progression and specialized railway posting, pipe networks, COGO points and plan features, DWG/DGN files, curvature correction of volumes, intersection and passing sight distance. XML is parsed with a hardened parser that refuses DTDs and entity expansion.</p>

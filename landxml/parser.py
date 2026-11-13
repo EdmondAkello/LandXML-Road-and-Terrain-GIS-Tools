@@ -228,7 +228,8 @@ class LandXMLDocument:
             "surface_profiles": len(list(descendants(self.root, "ProfSurf"))),
             "surface_volumes": surface_volumes,
             "breaklines": len(list(descendants(self.root, "Breakline"))),
-            "feature_lines": len(list(descendants(self.root, "FeatureLine"))),
+            "feature_lines": len(list(descendants(self.root, "FeatureLine")))
+            + len(list(descendants(self.root, "PlanFeature"))),
             "bounds": bounds,
             "elevation_range": elevations,
             "station_equation_error": equation_error,

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Feature lines exported as `PlanFeatures` are read: Civil 3D writes its feature lines this way, and Road Furniture Designer's feature-line export uses it. Each `PlanFeature` becomes a feature-line record from its `CoordGeom` (lines, curves and spirals sampled as alignments are, irregular lines), in stored order (northing, easting, elevation), with elevations along curves interpolated between their ends, its name, `Feature` code and properties (such as `site`), and `landxml_element=PlanFeature`. They appear in **Extract LandXML Feature Lines**, the Complete Road Design `feature_lines` layer and the Inspect LandXML count. A PlanFeature that cannot be read is skipped with a warning.
+
 ### Changed
 - Geometric Design Review barrier warrant (R1): the fill height is measured from the hinge to original ground at the toe, where the design line meets the ground, instead of to the daylight point, and the side slope is the batter from hinge to toe. Toe drains, benches and walls beyond the toe no longer change the height or slope. Where the design line ends above the ground, its last point is taken as the toe. New `earthworks.embankment_toe`; synthetic tests with a toe drain, a truncated section, sloping ground and a cut.
 

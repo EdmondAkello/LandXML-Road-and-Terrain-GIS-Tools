@@ -236,7 +236,7 @@ LandXML numeric coordinates are kept in stored order. The plugin does not infer 
 
 ## Supported entities and limits
 
-- TIN points and triangular faces (faces flagged invisible with `i="1"`, which Civil 3D writes for triangles hidden by a surface boundary, are excluded from rasters, boundaries and volumes), multiple surfaces, TIN edge boundaries, breakline and feature-line `PntList3D`/`PntList2D` geometry.
+- TIN points and triangular faces (faces flagged invisible with `i="1"`, which Civil 3D writes for triangles hidden by a surface boundary, are excluded from rasters, boundaries and volumes), multiple surfaces, TIN edge boundaries, breakline and feature-line `PntList3D`/`PntList2D` geometry, and `PlanFeatures` (how Civil 3D exports feature lines) read as feature lines from their `CoordGeom`.
 - Horizontal `Line`, circular `Curve`, and **explicitly declared clothoid** `Spiral`; compound geometry is kept as connected segments. Unsupported or disconnected geometry is reported rather than joined into a false line.
 - `PVI` and `ParaCurve` vertical controls, tangent grades, crest/sag classification and sampled profile graph lines.
 - Cross-sections: absolute `PntList3D` lists keep their coordinates. Station-relative `CrossSectSurf` offset/elevation lists (Civil 3D sample-line exports) are positioned along their own alignment as 3D lines, one per surface; earlier versions read these offset/elevation pairs as map X/Y. Corridor links and shapes (`DesignCrossSectSurf`) feed Corridor Section Quantities.
