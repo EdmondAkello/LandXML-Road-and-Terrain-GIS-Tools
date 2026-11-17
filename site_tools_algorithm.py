@@ -249,7 +249,7 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         return "landxml_export_scene"
 
     def displayName(self):
-        return "Export 3D Scene (Site Grading)"
+        return "Export 3D Scene and Viewer (Site Grading)"
 
     def group(self):
         return GROUP

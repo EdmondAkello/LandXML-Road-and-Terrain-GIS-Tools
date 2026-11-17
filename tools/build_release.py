@@ -53,10 +53,16 @@ def git_files():
     return [name for name in output.decode("utf-8").split("\0") if name]
 
 
+# The HTML user guide and its figures ship with the plugin (opened offline from the menu and each
+# tool's Help); the PDF editions stay out of the package.
+INCLUDE_DOCS = ("docs/user-guide/user-guide.html", "docs/user-guide/figures/")
+
+
 def release_files():
     return sorted(
         name for name in git_files()
-        if not name.startswith(EXCLUDE_PREFIXES) and name not in EXCLUDE_FILES and "__pycache__" not in name and not name.endswith(".pyc")
+        if (not name.startswith(EXCLUDE_PREFIXES) or name.startswith(INCLUDE_DOCS))
+        and name not in EXCLUDE_FILES and "__pycache__" not in name and not name.endswith(".pyc")
     )
 
 

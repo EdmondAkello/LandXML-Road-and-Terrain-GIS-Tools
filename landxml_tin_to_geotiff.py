@@ -35,10 +35,13 @@ class LandXMLTinToGeoTIFFPlugin:
         pick_action = QAction(icon, "Pick Alignment Profile on Map", self.iface.mainWindow())
         pick_action.setToolTip("Click an alignment in the map to open its long-section at that station")
         pick_action.triggered.connect(self.pick_on_map)
+        guide_action = QAction(icon, "User Guide", self.iface.mainWindow())
+        guide_action.setToolTip("Open the user guide (installed with the plugin; works offline)")
+        guide_action.triggered.connect(self.show_guide)
         locator_action = QAction(icon, "Station && Offset Locator", self.iface.mainWindow())
         locator_action.setToolTip("Locate map clicks or entered station/offset positions along a LandXML alignment")
         locator_action.triggered.connect(self.show_locator)
-        for action in (viewer_action, pick_action, locator_action):
+        for action in (viewer_action, pick_action, locator_action, guide_action):
             self.iface.addPluginToMenu(MENU, action)
             self.actions.append(action)
         self.iface.addToolBarIcon(pick_action)
@@ -58,6 +61,14 @@ class LandXMLTinToGeoTIFFPlugin:
 
     def pick_on_map(self):
         self._ensure_viewer().pick_button.setChecked(True)
+
+    def show_guide(self):
+        from qgis.PyQt.QtCore import QUrl
+        from qgis.PyQt.QtGui import QDesktopServices
+
+        from .project_settings import guide_url
+
+        QDesktopServices.openUrl(QUrl(guide_url()))
 
     def show_locator(self):
         if self.locator is None:

@@ -85,6 +85,21 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(len(self.algorithms), 28)
         self.assertIn("inspect_landxml", self.algorithms)
 
+    def test_every_tool_opens_its_section_of_the_bundled_guide(self):
+        from landxml_plugin.project_settings import GUIDE_SECTIONS, guide_path
+
+        self.assertIsNotNone(guide_path())
+        guide = Path(guide_path()).read_text(encoding="utf-8")
+        for algorithm in self.algorithms.values():
+            section = GUIDE_SECTIONS.get(algorithm.name())
+            self.assertIsNotNone(section, algorithm.name())
+            self.assertIn(f'id="{section}"', guide)
+            self.assertTrue(algorithm.helpUrl().startswith("file:") and algorithm.helpUrl().endswith("#" + section))
+        scene = self.algorithms["landxml_3d_scene"]
+        advanced = [d.name() for d in scene.parameterDefinitions() if int(d.flags()) & 2]
+        self.assertIn("SYN_CAMBER", advanced)
+        self.assertNotIn("SYNTHETIC", advanced)
+
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
         fixtures = ROOT / "tests/fixtures/generic"
         for tool in ("landxml_tin_to_geotiff", "landxml_surface_cut_fill"):

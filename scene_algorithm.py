@@ -28,6 +28,7 @@ from qgis.core import (
     QgsWkbTypes,
 )
 
+from .compat import mark_advanced
 from .core import read_tin, transform_vertices
 from .grading_algorithm import HORIZONTAL_UNITS
 from .landxml import surface_style as ss
@@ -336,6 +337,11 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addOutput(QgsProcessingOutputFile("VIEWER", "Interactive 3D viewer (HTML)"))
 
     # ------------------------------------------------------------------ helpers
+        mark_advanced(self, ("RASTER_CONTOURS", "STRETCH", "SYN_LANES", "SYN_CAMBER", "SYN_SHOULDER_FALL", "SYN_CUT_SLOPE",
+                             "SYN_FILL_SLOPE", "SYN_MAX_WIDTH", "SYN_BRIDGES", "SYN_BRIDGE_SPAN", "SYN_FIT_WIDTH",
+                             "SYN_CHANNELS", "SYN_MATCH_PROFILE", "WATER", "EXTRUDE_FIELD", "EXTRUDE_HEIGHT",
+                             "MAX_TRIANGLES", "EXAGGERATION", "VIEWS", "TITLE"))
+
     def _crs_and_method(self, p, c, fb, path):
         if path:
             method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
@@ -586,7 +592,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         outer = xyz.reshape(len(centre), 7, 3)[:, [0, 6], :2].reshape(-1, 2)
         known = np.isfinite(ground_index.sample(outer)).reshape(len(centre), 2).all(axis=1)
         short = (daylight.max(axis=1) >= max_width - 1e-6) & known      # no daylight against ground that is there
-        ground_at = lambda points: ground_index.sample(np.asarray(points, float)[:, :2])
+        def ground_at(points):
+            return ground_index.sample(np.asarray(points, float)[:, :2])
         normal = corridor_normals(centre[:, :2])
         edge = width / 2 + shoulder
 

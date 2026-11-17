@@ -84,7 +84,8 @@ def read_schedule_csv(path_or_text):
         notes.append(f"Ignored columns ({len(ignored)}): " + ", ".join(ignored[:12]) + (" …" if len(ignored) > 12 else ""))
     structures = []
     for line, row in enumerate(reader, 2):
-        get = lambda field: row.get(mapping[field]) if field in mapping else None
+        def get(field, row=row):
+            return row.get(mapping[field]) if field in mapping else None
         try:
             station = parse_station(get("station"))
         except (ValueError, TypeError):

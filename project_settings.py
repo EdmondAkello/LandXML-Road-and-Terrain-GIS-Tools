@@ -5,7 +5,56 @@ import json
 from qgis.core import QgsProcessingAlgorithm, QgsProject, QgsVariantUtils
 
 
+# Rarely changed coordinate adjustments sit in the dialog's Advanced section in every tool.
+ADVANCED_EVERYWHERE = {"DX", "DY", "ROTATION", "SCALE"}
+
+
+# The user guide ships inside the plugin; each tool's Help opens its section offline.
+GUIDE_SECTIONS = {
+    "inspect_landxml": "inspect", "prepare_landxml": "export", "landxml_complete_road_design": "complete",
+    "landxml_tin_to_geotiff": "terrain", "landxml_surface_boundary": "terrain", "landxml_alignments_to_vector": "alignments",
+    "landxml_station_points": "alignments", "landxml_3d_centerlines": "alignments", "landxml_profiles_to_vector": "profiles",
+    "landxml_cross_sections": "sections", "landxml_breaklines": "sections", "landxml_feature_lines": "sections",
+    "landxml_profile_cut_fill": "cutfill", "landxml_corridor_quantities": "corridor", "landxml_surface_cut_fill": "tin-diff",
+    "landxml_grading_quantities": "grading", "landxml_platform_levels": "platforms", "landxml_earthwork_balance": "balance",
+    "landxml_grading_revision_comparison": "revisions", "landxml_basin_storage": "basins", "landxml_grading_edges": "edges",
+    "landxml_surface_style": "styles", "landxml_grading_report": "site-report", "landxml_export_scene": "scene",
+    "landxml_3d_scene": "scene-viewer", "landxml_cross_section_sheets": "sheets", "landxml_design_report": "report",
+    "landxml_design_review": "review-run",
+}
+
+
+def guide_path():
+    """The user guide shipped with the plugin (None when it is missing, e.g. a trimmed build)."""
+    import os
+
+    path = os.path.join(os.path.dirname(__file__), "docs", "user-guide", "user-guide.html")
+    return path if os.path.isfile(path) else None
+
+
+def guide_url(section=""):
+    from qgis.PyQt.QtCore import QUrl
+
+    path = guide_path()
+    if path is None:
+        return "https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/blob/main/docs/user-guide/user-guide.html"
+    url = QUrl.fromLocalFile(path)
+    if section:
+        url.setFragment(section)
+    return url.toString()
+
+
 class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
+    def helpUrl(self):
+        return guide_url(GUIDE_SECTIONS.get(self.name(), ""))
+
+    def addParameter(self, definition, createOutput=True):
+        if definition.name() in ADVANCED_EVERYWHERE:
+            from .compat import mark_advanced_definition
+
+            mark_advanced_definition(definition)
+        return super().addParameter(definition, createOutput)
+
     def createCustomParametersWidget(self, parent=None):
         # Import the GUI only when opening a dialog; scripts and models use normal defaults.
         try:
