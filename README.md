@@ -24,7 +24,7 @@
 
 A QGIS Processing provider for inspecting and importing LandXML terrain and road-design data. Written by **Edmond Akello**, with Bentley OpenRoads support, the shared LandXML parser, the QGIS 4 port, the LandXML preparation tool, the AASHTO US customary criteria and the earthwork volume units contributed by **Cole Winstead**. Licensed under GPL-2.0-or-later.
 
-The **[User Guide and Technical Manual](docs/user-guide/user-guide.html)** for version **1.10.0** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. A [PDF edition (1.10.0)](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.10.0_User_Guide.pdf) is included; the [previous PDF edition (1.9.2)](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.9.2_User_Guide.pdf) remains available. Source and figure scripts are in `docs/user-guide` and `tools/guide`.
+The **[User Guide and Technical Manual](docs/user-guide/user-guide.html)** for version **1.10.0** covers installation, every tool, the design review and the computation methods, with figures from a synthetic demonstration road. A [PDF edition (1.10.0)](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.10.0_User_Guide.pdf) is included; the [previous PDF edition (1.9.2)](docs/user-guide/LandXML_Road_and_Terrain_GIS_Tools_v1.9.2_User_Guide.pdf) remains available. Source and figure scripts are in `docs/user-guide` and `tools/guide`. The HTML guide is also installed with the plugin and opens offline from **Plugins → LandXML Road & Terrain → User Guide** and from each tool's **Help** button.
 
 ## Compatibility and validation
 
