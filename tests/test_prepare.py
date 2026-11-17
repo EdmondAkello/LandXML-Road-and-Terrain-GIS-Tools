@@ -109,6 +109,48 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((second["GENERATED_PROFILES"], second["GENERATED_SECTIONS"]), (0, 0))
         self.assertEqual(Path(second["OUTPUT"]).read_bytes(), Path(result["OUTPUT"]).read_bytes())
 
+    def test_tin_blocks_are_copied_byte_for_byte_and_full_parse_gives_the_same_tree(self):
+        from landxml_plugin.core import read_tin
+        from landxml_plugin.landxml import preparation
+
+        odd = ('<Surface name="Odd"><Definition surfType="TIN"><Pnts>\r\n  <P id="1"> -10  -60 100 </P>\r\n'
+               '<P id="2">50 -60 100</P><P id="3">50 60 100</P><P id="4">-10 60 100</P>\r\n</Pnts>'
+               '<Faces><F>1 2 3</F>\r\n<F n="x">1 3 4</F></Faces></Definition>'
+               '<SourceData><Contours><Contour elev="100"><PntList2D>0 0 1 1</PntList2D></Contour></Contours></SourceData>'
+               '</Surface>')
+        primary = self.write("with_surface.xml", document(alignment(), surfaces=odd))
+        result = self.run_prepare(INPUT=primary, OUTPUT=str(self.folder / "spliced.xml"))
+        out = Path(result["OUTPUT"]).read_bytes()
+        source = Path(primary).read_bytes()
+        for block in (b"Pnts", b"Faces", b"Contours"):
+            start = source.index(b"<" + block + b">")
+            end = source.index(b"</" + block + b">") + len(block) + 3
+            self.assertIn(source[start:end], out)
+        self.assertNotIn(b"landxmltools_", out)
+        existing = Path(self.existing).read_bytes()
+        self.assertIn(existing[existing.index(b"<Pnts>"):existing.index(b"</Faces>")], out)  # copied surface
+        for name in ("Odd", "Prepared Existing Ground", "Prepared Proposed Terrain"):
+            got, expected = read_tin(result["OUTPUT"], name), read_tin(primary if name == "Odd" else
+                                                                        (self.existing if "Existing" in name else self.proposed))
+            self.assertTrue(np.array_equal(got[0], expected[0]) and np.array_equal(got[1], expected[1]))
+        with patch.object(preparation.tin_stream, "open_skeleton", return_value=None):
+            whole = self.run_prepare(INPUT=primary, OUTPUT=str(self.folder / "whole.xml"))
+        def summary(path):
+            return dict(load_document(path, full=True).inspect(), source_file=None)
+        self.assertEqual(summary(whole["OUTPUT"]), summary(result["OUTPUT"]))
+
+    def test_prefixed_tin_elements_fall_back_to_a_full_parse(self):
+        from landxml_plugin.landxml import preparation
+
+        text = document(alignment(), surfaces=surface("Terrain", [(-10, -60, 50, 60)]))
+        text = text.replace('version="1.2">', 'version="1.2" xmlns:lx="http://www.landxml.org/schema/LandXML-1.2">', 1)
+        text = text.replace("<P ", "<lx:P ").replace("</P>", "</lx:P>")
+        path = self.write("prefixed.xml", text)
+        root = preparation.read_tree(path)
+        self.assertFalse(any(preparation.tin_stream.SPAN_ATTRIBUTE in node.attrib
+                             for node in root.iter() if isinstance(node.tag, str)))
+        self.assertTrue(any(local_name(node.tag) == "P" for node in root.iter() if isinstance(node.tag, str)))
+
     def test_distant_terrain_is_not_indexed_and_results_are_unchanged(self):
         base = self.run_prepare()
         far = [(1000 + 2 * i, 1000 + 2 * (i % 7), 1001 + 2 * i, 1001 + 2 * (i % 7)) for i in range(25_100)]
