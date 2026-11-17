@@ -72,7 +72,7 @@ def _design_and_existing(algorithm, p, c, fb, path, doc, method, params):
     if not design or not existing:
         raise QgsProcessingException("Choose the design surface and the existing-ground surface.")
     keep = {}
-    _depth_surface(path, design, existing, method, params, fb, existing_path, keep)
+    _depth_surface(path, design, existing, method, params, fb, existing_path, keep, overlay=False)
     xyz, faces, depth = _design_depth(keep)
     return design, existing, existing_path, existing_doc, transform_vertices(xyz, method=method, **params), faces, depth
 
@@ -325,7 +325,7 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         extra_labels = _labels(self.parameterAsString(p, "LABELS", c))
 
         keep = {}
-        _depth_surface(path, design, existing, method, params, fb, existing_path, keep)
+        _depth_surface(path, design, existing, method, params, fb, existing_path, keep, overlay=False)
         raw, faces, depth = _design_depth(keep)
         x0, y0, x1, y1 = raw[:, 0].min(), raw[:, 1].min(), raw[:, 0].max(), raw[:, 1].max()
         margin = self.parameterAsDouble(p, "CONTEXT_MARGIN", c)
@@ -361,8 +361,8 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
                     continue
                 values = ss.triangle_values(xyz, tri, style["attribute"], dep, vertical_factor)
                 resolved = ss.resolve(style, values, units.depth)
-                writer.surface(surface_id, name, role, xyz, tri, ss.vertex_colors(xyz, tri, values, resolved),
-                               resolved, dep)
+                mesh_xyz, mesh_faces, rgb, mesh_depth = ss.mesh_colors(xyz, tri, resolved, dep, vertical_factor)
+                writer.surface(surface_id, name, role, mesh_xyz, mesh_faces, rgb, resolved, mesh_depth)
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
 
@@ -391,15 +391,22 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
                                  "length": round(run["length"], 3)})
         if self.parameterAsBool(p, "ROADS", c) and read_catalog(path).alignments:
             width = self.parameterAsDouble(p, "ROAD_WIDTH", c)
+            area = (x0 - margin_source, y0 - margin_source, x1 + margin_source, y1 + margin_source)
             for name, start, end, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled):
-                writer.line("road", name, transform_vertices(stored, method=method, **params),
-                            {"station_start": start, "station_end": end, **({"width": width} if width else {})})
+                within = ((stored[:, 0] >= area[0]) & (stored[:, 0] <= area[2]) &
+                          (stored[:, 1] >= area[1]) & (stored[:, 1] <= area[3]))
+                runs = np.split(np.arange(len(stored)), np.flatnonzero(np.diff(within.astype(int))) + 1)
+                for run in runs:           # only the parts of a road inside the scene area
+                    if within[run[0]] and len(run) > 1:
+                        writer.line("road", name, transform_vertices(stored[run], method=method, **params),
+                                    {"station_start": start, "station_end": end, **({"width": width} if width else {})})
         for text, x, y, lift in extra_labels:
             z = sample_tin((design_t, faces), np.array([[x, y]]))[0]
             if not np.isfinite(z):
                 z = sample_tin((context_t, efaces), np.array([[x, y]]))[0] if len(efaces) else np.nan
             writer.label(text, (x, y, float(z) if np.isfinite(z) else origin[2]), lift)
-        writer.views(views)
+        low, high = design_t.min(axis=0), design_t.max(axis=0)
+        writer.views(views, target=(low + high) / 2, size=float(np.linalg.norm((high - low)[:2])))
         scene = writer.write()
         fb.pushInfo(f"Scene written: {scene} ({len(writer.scene['surfaces'])} surfaces, {len(writer.scene['lines'])} "
                     f"lines, {len(writer.scene['labels'])} labels, {len(writer.scene['views'])} views).")

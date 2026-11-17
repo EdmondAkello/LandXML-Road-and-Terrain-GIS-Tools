@@ -176,19 +176,29 @@ def class_areas(xyz, faces, index, count):
     return np.bincount(index, weights=area, minlength=count)
 
 
-def vertex_colors(xyz, faces, values, resolved):
-    """RGB (uint8) per vertex: the area-weighted class colour of the triangles around it (for meshes)."""
-    index = classify(values, resolved)
-    rgb = np.array([[int(item["color"][i:i + 2], 16) for i in (1, 3, 5)] for item in resolved["classes"]], float)
-    a, b, c = xyz[faces[:, 0], :2], xyz[faces[:, 1], :2], xyz[faces[:, 2], :2]
-    area = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])) + 1e-12
-    total = np.zeros((len(xyz), 3))
-    weight = np.zeros(len(xyz))
-    for corner in range(3):
-        np.add.at(total, faces[:, corner], rgb[index] * area[:, None])
-        np.add.at(weight, faces[:, corner], area)
-    weight[weight == 0] = 1.0
-    return np.clip(np.round(total / weight[:, None]), 0, 255).astype(np.uint8)
+def _rgb(resolved):
+    return np.array([[int(item["color"][i:i + 2], 16) for i in (1, 3, 5)] for item in resolved["classes"]], np.uint8)
+
+
+def mesh_colors(xyz, faces, resolved, depth=None, vertical_factor=1.0):
+    """(xyz, faces, rgb per vertex, depth per vertex) of a mesh coloured by ``resolved``.
+
+    Elevation and depth are coloured at each vertex, so classes follow the surface smoothly.
+    Slope and aspect belong to triangles: those meshes get their own vertices per triangle,
+    so each triangle keeps its class colour exactly."""
+    xyz = np.asarray(xyz, float)
+    faces = np.asarray(faces, np.int64)
+    attribute = resolved["attribute"]
+    rgb = _rgb(resolved)
+    if attribute in ("elevation", "depth"):
+        if attribute == "depth" and depth is None:
+            raise ValueError("A depth style needs the depth (design − existing) at each vertex.")
+        values = xyz[:, 2] if attribute == "elevation" else np.asarray(depth, float)
+        return xyz, faces, rgb[classify(values, resolved)], depth
+    index = classify(triangle_values(xyz, faces, attribute, depth, vertical_factor), resolved)
+    split = xyz[faces].reshape(-1, 3)
+    return (split, np.arange(len(split)).reshape(-1, 3), np.repeat(rgb[index], 3, axis=0),
+            None if depth is None else np.asarray(depth, float)[faces].reshape(-1))
 
 
 def plan_svg(layers, width=760, height=None, legend=None, lines=(), labels=(), north=True):

@@ -149,10 +149,12 @@ class SceneWriter:
         self.scene["labels"].append({"text": str(text), "position": [round(float(v), 4) for v in point],
                                      "lift": float(lift), "kind": kind})
 
-    def views(self, views, target=None):
+    def views(self, views, target=None, size=None):
+        """Add views aimed at ``target`` (absolute; default the scene centre); the default distance
+        is 1.4 × ``size`` (default the plan diagonal of everything written)."""
         low, high = self._low, self._high
         centre = (low + high) / 2 if target is None else np.asarray(target, float) - self.origin
-        size = float(np.linalg.norm((high - low)[:2]))
+        size = float(np.linalg.norm((high - low)[:2])) if size is None else float(size)
         for view in views:
             item = dict(view)
             item["target"] = [round(float(v), 4) for v in centre]

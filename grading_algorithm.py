@@ -176,7 +176,7 @@ def _existing_file(algorithm, p, c, doc, feedback):
     return path, other
 
 
-def _depth_surface(path, surface, existing, method, params, feedback, existing_path=None, keep=None):
+def _depth_surface(path, surface, existing, method, params, feedback, existing_path=None, keep=None, overlay=True):
     """(xyz, faces, meta) of a depth surface in output coordinates.
 
     With ``existing`` blank, ``surface`` is read as a volume (depth) surface.
@@ -199,6 +199,8 @@ def _depth_surface(path, surface, existing, method, params, feedback, existing_p
             exyz, efaces, emeta = read_tin(source, existing, cancel=feedback.isCanceled, bounds=meta["bounds"])
             if keep is not None:
                 keep.update(design=(xyz, faces), existing=(exyz, efaces))
+                if not overlay:            # the caller needs the two surfaces only
+                    return None, None, meta
             xyz, faces, stats = depth_tin((xyz, faces), (exyz, efaces))
         except ValueError as exc:
             if "touch the requested area" in str(exc):
