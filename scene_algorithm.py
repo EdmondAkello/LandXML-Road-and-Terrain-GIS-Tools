@@ -45,6 +45,7 @@ from .project_settings import ProjectSettingsAlgorithm
 from .road_features import _alignment_parts, _param_coordinates, centerlines_3d
 
 GROUP = "8. Reports and sheets"
+DEFAULT_VIEWS = "sw: -0.6, -0.8, 0.55; se: 0.8, -0.5, 0.6"
 GROUP_ID = "reports"
 SURFACE_COLOURS = ["#cfd8c4", "#b8c7d9", "#d9c7b8", "#c4d8d3", "#d8d0c4"]
 VERTICAL_UNITS = [("As declared in the file", None), ("Metre", "meter"), ("International foot", "foot"),
@@ -255,6 +256,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                                                               [QgsProcessing.SourceType.TypeVectorPolygon], optional=True))
         self.addParameter(QgsProcessingParameterString("CORRIDOR", "Corridor: alignment name", defaultValue="", optional=True))
         self.addParameter(number_param("CORRIDOR_WIDTH", "Corridor width either side (output units)", 60.0, 1.0, 1e5, decimals=1))
+        self.addParameter(QgsProcessingParameterNumber("STATION_FROM", "Corridor from station (blank = start)",
+                                                       QgsProcessingParameterNumber.Type.Double, optional=True))
+        self.addParameter(QgsProcessingParameterNumber("STATION_TO", "Corridor to station (blank = end)",
+                                                       QgsProcessingParameterNumber.Type.Double, optional=True))
         for key, label, default in (("ALIGNMENTS", "Alignments", True), ("FEATURE_LINES", "LandXML feature lines and breaklines", True)):
             self.addParameter(QgsProcessingParameterBoolean(key, label, defaultValue=default))
         self.addParameter(number_param("STATION_LABELS", "Station labels every (0 = none)", 100.0, 0.0, 1e6, decimals=1))
@@ -262,7 +267,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
         self.addParameter(number_param("MAX_TRIANGLES", "Triangle budget (all surfaces)", 2_000_000, 10_000, 5e7, decimals=0))
         self.addParameter(number_param("EXAGGERATION", "Suggested vertical exaggeration", 1.5, 0.1, 20.0, decimals=2))
-        self.addParameter(QgsProcessingParameterString("VIEWS", "Camera views", defaultValue="sw: -0.6, -0.8, 0.55; se: 0.8, -0.5, 0.6"))
+        self.addParameter(QgsProcessingParameterString("VIEWS", "Camera views (a corridor gets side and along views by default)",
+                                                       defaultValue=DEFAULT_VIEWS))
         self.addParameter(QgsProcessingParameterString("TITLE", "Title", defaultValue="", optional=True))
         _param_coordinates(self)
         self.addParameter(QgsProcessingParameterEnum("VERTICAL_UNIT", "Vertical unit (when the file does not declare it)",
@@ -304,7 +310,23 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             points = [pt for part in (parts[0][4] if parts else []) for pt in part]
             if not points:
                 raise QgsProcessingException(f"Alignment '{name}' has no geometry.")
-            plan = transform_vertices(np.array([[x, y, 0.0] for x, y in points]), method=method, **params)
+            raw = np.array(points, float)
+            start = float(parts[0][2]) if parts[0][2] not in (None, "") else 0.0
+            stations = start + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(raw[:, :2], axis=0).T))])
+            low = p.get("STATION_FROM")
+            high = p.get("STATION_TO")
+            low = stations[0] if low in (None, "") else float(low)
+            high = stations[-1] if high in (None, "") else float(high)
+            if high <= low:
+                raise QgsProcessingException("The corridor end station must be after its start station.")
+            chosen = np.unique(np.concatenate([[low, high], stations[(stations > low) & (stations < high)]]))
+            chosen = chosen[(chosen >= stations[0]) & (chosen <= stations[-1])]
+            if len(chosen) < 2:
+                raise QgsProcessingException(f"The stations are outside alignment '{name}'.")
+            points = np.column_stack([np.interp(chosen, stations, raw[:, 0]), np.interp(chosen, stations, raw[:, 1])])
+            plan = transform_vertices(np.column_stack([points, np.zeros(len(points))]), method=method, **params)
+            chord = plan[-1, :2] - plan[0, :2]
+            self._axis = chord / max(np.hypot(*chord), 1e-9)
             buffer = QgsGeometry.fromPolylineXY([QgsPointXY(float(x), float(y)) for x, y, _z in plan]).buffer(
                 self.parameterAsDouble(p, "CORRIDOR_WIDTH", c), 8)
             for polygon in (buffer.asMultiPolygon() if buffer.isMultipart() else [buffer.asPolygon()]):
@@ -340,7 +362,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                            if horizontal and vertical.lower() in LINEAR_UNITS else 1.0)
         unit_label = LINEAR_UNITS.get(vertical.lower(), (1, "m"))[1]
         intervals = parse_intervals(self.parameterAsString(p, "CONTOURS", c))
+        self._axis = None
         area = self._area(p, c, path, method, params, crs, fb)
+        corridor_axis = self._axis
         budget = int(self.parameterAsDouble(p, "MAX_TRIANGLES", c))
 
         # ---- surfaces in output coordinates
@@ -366,6 +390,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 loaded[name] = (xyz, faces)
             return loaded[name]
 
+        cutouts = {}      # existing surface → designs drawn over it
         for k, (requested, style_text, over) in enumerate(surfaces):
             name = match_name(names, requested, "surface")
             xyz, faces = load(name)
@@ -381,6 +406,23 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 exyz, efaces = load(match_name(names, over, "surface"))
                 depth = xyz[:, 2] - sample_tin((exyz, efaces), xyz)
             meshes.append((f"s{k + 1}", name, "design" if depth is not None else "surface", xyz, faces, style, depth))
+            if over:
+                base_name = match_name(names, over, "surface")
+                cutouts.setdefault(base_name, []).append((xyz, faces))
+        # ground under a design drawn over it is left out, and ground points just inside the design's edge
+        # take the design level, so the ground cannot show through the design
+        for index, mesh in enumerate(meshes):
+            if mesh[1] not in cutouts:
+                continue
+            xyz, faces = mesh[3].copy(), mesh[4]
+            for dxyz, dfaces in cutouts[mesh[1]]:
+                under = sample_tin((dxyz, dfaces), xyz)
+                inside = np.isfinite(under)
+                faces = faces[~inside[faces].all(axis=1)]
+                xyz[inside, 2] = under[inside]
+            if len(faces):
+                xyz, faces, _used = _compact(xyz, faces)
+                meshes[index] = (*mesh[:3], xyz, faces, *mesh[5:])
         try:
             raster_style = ss.parse_style(self.parameterAsString(p, "RASTER_STYLE", c), "elevation")
         except ValueError as exc:
@@ -435,10 +477,16 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                                 {"surface": name, "level": float(level)},
                                 color="#6b5a45" if index else "#8f7f6a", width=2 if index else 1, lift=0.05)
         # drape onto the first surface
-        drape = (meshes[0][3], meshes[0][4])
+        # drape on the designs first, then the other surfaces in the order given
+        drapes = [(m[3], m[4]) for m in meshes if m[2] == "design"] + [(m[3], m[4]) for m in meshes if m[2] != "design"]
 
         def drape_points(points):
-            z = sample_tin(drape, points)
+            z = np.full(len(points), np.nan)
+            for tin in drapes:
+                missing = np.isnan(z)
+                if not missing.any():
+                    break
+                z[missing] = sample_tin(tin, points[missing])
             if np.isnan(z).all():
                 return None
             fill = np.nanmean(z) if np.isnan(z).any() else 0.0
@@ -465,10 +513,11 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 for run in _runs_inside(line3, area):
                     writer.line("alignment", name, run, {"alignment": name, "profile": name in profiled},
                                 color="#c2185b" if name in profiled else "#7a3b5e", width=3, lift=0.15)
-                if every > 0 and sta0 not in (None, "") and len(distances) == len(pts):
+                if every > 0 and sta0 not in (None, ""):
                     plan = transform_vertices(np.array([[x, y, 0.0] for x, y in pts]), method=method, **params)
                     start = float(sta0)
-                    cum = np.asarray(distances, float)
+                    raw = np.array(pts, float)
+                    cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(raw[:, :2], axis=0).T))])
                     first = math.ceil(start / every) * every
                     for station in np.arange(first, start + cum[-1] + 1e-9, every):
                         d = station - start
@@ -476,7 +525,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                         y = np.interp(d, cum, plan[:, 1])
                         point = drape_points(np.array([[x, y]]))
                         if point is not None and area.keep_points(point[:, :2])[0]:
-                            writer.label(station_label(station, doc.horizontal_unit if doc else None), point[0], 1.0, "station")
+                            text = station_label(station, doc.horizontal_unit if doc else None)
+                            writer.label(text[:-3] if text.endswith(".00") else text, point[0], 1.0, "station")
         if path and self.parameterAsBool(p, "FEATURE_LINES", c):
             from .landxml.features import read_line_features
             from .landxml.parser import load_document
@@ -530,10 +580,18 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                         count += 1
             fb.pushInfo(f"{layer.name()}: {count:,} lines.")
 
-        views = parse_views(self.parameterAsString(p, "VIEWS", c))
+        view_text = self.parameterAsString(p, "VIEWS", c)
         focus = np.vstack([m[3] for m in meshes if m[2] == "design"] or [all_xyz])
         low, high = focus.min(axis=0), focus.max(axis=0)
-        writer.views(views, target=(low + high) / 2, size=float(np.linalg.norm((high - low)[:2])))
+        size = float(np.linalg.norm((high - low)[:2]))
+        if corridor_axis is not None and view_text.strip() == DEFAULT_VIEWS:
+            # a corridor is seen from its sides and along it, not from a fixed compass direction
+            ax, ay = corridor_axis
+            view_text = (f"left: {-ay:.3f}, {ax:.3f}, 0.45; right: {ay:.3f}, {-ax:.3f}, 0.45; "
+                         f"along: {-ax:.3f}, {-ay:.3f}, 0.25")
+            size = 1.3 * max(np.ptp(focus[:, 0] * ax + focus[:, 1] * ay), 1.0)
+        views = parse_views(view_text)
+        writer.views(views, target=(low + high) / 2, size=size * 0.8)   # distance = 1.4 × this
         scene = writer.write()
         viewer = write_viewer(os.path.dirname(scene), writer.scene, title=title)
         fb.pushInfo(f"Scene: {len(writer.scene['surfaces'])} surfaces ({total:,} triangles), {len(writer.scene['lines']):,} lines, "

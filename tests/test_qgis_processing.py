@@ -828,7 +828,7 @@ class QgisProcessingTests(unittest.TestCase):
             fence = np.array(next(l for l in scene["lines"] if l["kind"] == "vector")["points"]) + origin
             self.assertTrue(np.allclose(fence[:, 2], 100 + 0.02 * fence[:, 0] + 0.01 * 30, atol=1e-6))   # draped on EG
             stations = sorted(l["text"] for l in scene["labels"] if l["kind"] == "station")
-            self.assertEqual(stations[0], "1+000.00")
+            self.assertEqual(stations[0], "1+000")
             self.assertEqual(len(stations), 6)
             levels = sorted({l["properties"]["level"] for l in scene["lines"] if l["properties"].get("surface") == "EG"})
             self.assertEqual(levels[0], 100.5)
@@ -839,7 +839,15 @@ class QgisProcessingTests(unittest.TestCase):
             corridor, _ = load_scene(narrow["SCENE"])
             eg = next(s for s in corridor["surfaces"] if s["name"] == "EG")
             self.assertLess(eg["triangles"], 200)
-            self.assertGreater(eg["triangles"], 20)
+            self.assertGreater(eg["triangles"], 10)          # the ground under the design is left out
+            part = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", CORRIDOR="Main", CORRIDOR_WIDTH=15,
+                                                   STATION_FROM=1050, STATION_TO=1080,
+                                                   OUTPUT_FOLDER=str(Path(directory) / "part")), self.context, self.feedback)
+            stretch, _ = load_scene(part["SCENE"])
+            from landxml_plugin.landxml.scene import read_ply
+            ground = read_ply(str(Path(directory) / "part" / next(s["mesh"] for s in stretch["surfaces"] if s["name"] == "EG")))[0]
+            self.assertLessEqual(np.ptp(ground[:, 0]), 70.0)    # stations 1050–1080 ± 15 m, whole 10 m cells (full corridor: 100)
+            self.assertEqual([v["name"] for v in stretch["views"]], ["left", "right", "along"])
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
 
