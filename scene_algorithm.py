@@ -44,8 +44,8 @@ from .processing_common import coordinate_choices
 from .project_settings import ProjectSettingsAlgorithm
 from .road_features import _alignment_parts, _param_coordinates, centerlines_3d
 
-GROUP = "10. 3D scenes"
-GROUP_ID = "scenes_3d"
+GROUP = "8. Reports and sheets"
+GROUP_ID = "reports"
 SURFACE_COLOURS = ["#cfd8c4", "#b8c7d9", "#d9c7b8", "#c4d8d3", "#d8d0c4"]
 VERTICAL_UNITS = [("As declared in the file", None), ("Metre", "meter"), ("International foot", "foot"),
                   ("US survey foot", "USSurveyFoot")]
