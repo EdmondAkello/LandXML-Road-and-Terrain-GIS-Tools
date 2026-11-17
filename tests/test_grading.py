@@ -806,3 +806,34 @@ class ConceptStructureTests(unittest.TestCase):
         self.assertIn("4 spans", text)
         ground = 100 - 5 * np.exp(-((xs - 50) / 8) ** 2)
         self.assertEqual(low_points(xs, np.full_like(xs, 101.0), ground), [50.0])
+
+
+class ChannelAndIndexTests(unittest.TestCase):
+    def test_channel_lowers_the_ground_only_along_the_culvert(self):
+        from landxml_plugin.landxml.structures import carve_channels
+
+        xs, ys = np.meshgrid(np.arange(-60, 61, 10.0), np.arange(-60, 61, 10.0))
+        xyz = np.column_stack([xs.ravel(), ys.ravel(), np.full(xs.size, 100.0)])
+        n = 13
+        faces = np.array([[r * n + c, r * n + c + 1, (r + 1) * n + c + 1] for r in range(n - 1) for c in range(n - 1)]
+                         + [[r * n + c, (r + 1) * n + c + 1, (r + 1) * n + c] for r in range(n - 1) for c in range(n - 1)])
+        channel = {"left": np.array([0.0, -10.0]), "right": np.array([0.0, 10.0]), "z_left": 97.0, "z_right": 97.0, "width": 4.0}
+        cxyz, cfaces, lowered = carve_channels(xyz, faces, [channel])
+        self.assertGreater(lowered, 0)
+        self.assertGreater(len(cfaces), len(faces))
+        self.assertAlmostEqual(cxyz[np.hypot(cxyz[:, 0], cxyz[:, 1]) < 1e-9, 2].min(), 97.0)
+        self.assertTrue(np.allclose(cxyz[np.abs(cxyz[:, 0]) > 20, 2], 100.0))          # banks reach the ground within 4.5 m
+
+    def test_tin_index_matches_sample_tin(self):
+        from landxml_plugin.landxml.tin_overlay import TinIndex, sample_tin
+
+        xs, ys = np.meshgrid(np.arange(0, 101, 5.0), np.arange(0, 101, 5.0))
+        xyz = np.column_stack([xs.ravel(), ys.ravel(), np.sin(xs.ravel() / 9.0) * 3 + ys.ravel() * 0.1])
+        n = 21
+        faces = np.array([[r * n + c, r * n + c + 1, (r + 1) * n + c + 1] for r in range(n - 1) for c in range(n - 1)]
+                         + [[r * n + c, (r + 1) * n + c + 1, (r + 1) * n + c] for r in range(n - 1) for c in range(n - 1)])
+        points = np.random.default_rng(3).uniform(-10, 110, (5000, 2))
+        expected = sample_tin((xyz, faces), points)
+        got = TinIndex(xyz, faces).sample(points)
+        self.assertTrue(np.array_equal(np.isnan(expected), np.isnan(got)))
+        self.assertTrue(np.allclose(expected[~np.isnan(expected)], got[~np.isnan(got)]))

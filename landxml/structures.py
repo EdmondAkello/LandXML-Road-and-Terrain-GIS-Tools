@@ -203,7 +203,7 @@ class MeshBuilder:
         return np.vstack(self.xyz), np.vstack(self.faces)
 
 
-def culvert(builder, item, centre, normal, left_length, right_length, ground_at, cover=0.6):
+def culvert(builder, item, centre, normal, left_length, right_length, ground_at, cover=0.6, record=None):
     """Add a box or pipe culvert at plan point ``centre`` crossing the road along ``normal`` rotated by the skew.
 
     ``left_length`` / ``right_length``: barrel length each side of the centreline (to the fill toes).
@@ -263,11 +263,15 @@ def culvert(builder, item, centre, normal, left_length, right_length, ground_at,
             builder.box(mid + v * offset, u, v, length, wall, zs, (z_left + rise, z_right + rise))
         height = rise + 2 * wall
         label = f"{cells} x {span:g} x {rise:g} m box"
+    if record is not None:
+        record.append({"left": left_end, "right": right_end, "z_left": z_left, "z_right": z_right, "width": width})
     # headwalls and splayed wingwalls at both ends
     for end, z, sign in ((left_end, z_left, -1.0), (right_end, z_right, 1.0)):
         base = z - (0.3 if item["kind"] == "box" else 0.1)
         top = base + height + 0.5
-        builder.box(end + u * sign * 0.15, u, v, 0.3, width + 0.6, base, top)
+        soffit = z + (rise if item["kind"] == "box" else span + max(0.06, span / 12.0))
+        builder.box(end + u * sign * 0.15, u, v, 0.3, width + 0.6, soffit, top)                     # headwall over the openings
+        builder.box(end + u * sign * 1.0, u, v, 2.0, width + 0.6, base, z)                            # apron at bed level
         for side in (-1.0, 1.0):
             flare = (u * sign + v * side) / math.sqrt(2.0)
             wing_length = max(1.5 * height, 1.5)
@@ -324,6 +328,69 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
         builder.box(p, along, n, 2.0, deck_width + 2.0, g - 1.0, p[2] - depth)
     return (f"bridge {start:.0f}–{end:.0f}: {length:.0f} m, {spans} span{'s' if spans > 1 else ''} of about "
             f"{length / spans:.0f} m, {len(piers)} pier{'s' if len(piers) != 1 else ''}"), len(piers)
+
+
+def carve_channels(xyz, faces, channels, apron=30.0, bank=1.5, bed_rise=0.05):
+    """Lower the ground along each culvert: a bed at the barrel inverts between the ends, rising ``bed_rise``
+    per metre for ``apron`` beyond them, as wide as the structure, with banks at ``bank`` H:1V. The ground is
+    only ever lowered. Returns (xyz, faces, number of vertices lowered); triangles near the channels are split
+    first so the cut has a shape."""
+    xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
+    lowered = 0
+    for item in channels:
+        a, b = np.asarray(item["left"], float), np.asarray(item["right"], float)
+        length = float(np.linalg.norm(b - a))
+        if length <= 0:
+            continue
+        u = (b - a) / length
+        v = np.array([-u[1], u[0]])
+        reach = item["width"] / 2 + 6.0
+        corners = [a - u * apron - v * reach, b + u * apron - v * reach, b + u * apron + v * reach, a - u * apron + v * reach]
+        footprint = (np.array([[*q, 0.0] for q in corners]), np.array([[0, 1, 2], [0, 2, 3]]))
+        xyz, faces = refine(xyz, faces, footprint, max(item["width"] / 4.0, 1.0))
+        rel = xyz[:, :2] - a
+        along, across = rel @ u, rel @ v
+        inside = (along >= -apron) & (along <= length + apron) & (np.abs(across) <= reach + 30.0)
+        t = np.clip(along / length, 0.0, 1.0)
+        bed = item["z_left"] + (item["z_right"] - item["z_left"]) * t
+        beyond = np.where(along < 0, -along, np.where(along > length, along - length, 0.0))
+        surface = bed + bed_rise * beyond + np.maximum(np.abs(across) - item["width"] / 2, 0.0) / bank
+        cut = inside & (surface < xyz[:, 2])
+        xyz = xyz.copy()
+        xyz[cut, 2] = surface[cut]
+        lowered += int(cut.sum())
+    return xyz, faces, lowered
+
+
+def refine(xyz, faces, footprint, target, rounds=5):
+    """Split triangles touching ``footprint`` (a TIN) into four at their edge midpoints until their edges are at most
+    ``target`` long; the midpoints lie on the original planes, so the surface keeps its shape."""
+    from .tin_overlay import TinIndex, sample_tin
+
+    low, high = footprint[0][:, :2].min(axis=0), footprint[0][:, :2].max(axis=0)
+    index = TinIndex(*footprint)
+    for _round in range(rounds):
+        tri = xyz[faces]
+        longest = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
+        near = ((tri[:, :, :2].max(axis=1) >= low) & (tri[:, :, :2].min(axis=1) <= high)).all(axis=1) & (longest > target)
+        touch = np.zeros(len(faces), bool)
+        if near.any():
+            sub = tri[near]
+            probes = np.concatenate([sub, (sub + np.roll(sub, 1, axis=1)) / 2, sub.mean(axis=1, keepdims=True)], axis=1)
+            touch[near] = np.isfinite(sample_tin(index, probes.reshape(-1, 3)[:, :2])).reshape(len(sub), 7).any(axis=1)
+        chosen = touch
+        if not chosen.any():
+            break
+        picked = faces[chosen]
+        edges = np.sort(np.concatenate([picked[:, [0, 1]], picked[:, [1, 2]], picked[:, [2, 0]]]), axis=1)
+        unique, inverse = np.unique(edges, axis=0, return_inverse=True)
+        middle = len(xyz) + inverse.reshape(-1).reshape(3, -1).T
+        xyz = np.vstack([xyz, (xyz[unique[:, 0]] + xyz[unique[:, 1]]) / 2])
+        p0, p1, p2 = picked.T
+        m01, m12, m20 = middle.T
+        faces = np.concatenate([faces[~chosen], np.column_stack([p0, m01, m20]), np.column_stack([m01, p1, m12]),
+                                np.column_stack([m20, m12, p2]), np.column_stack([m01, m12, m20])])
+    return xyz, faces
 
 
 def low_points(stations, road_z, ground_z, min_fill=1.5, window=50.0):

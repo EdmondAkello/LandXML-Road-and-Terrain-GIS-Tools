@@ -38,7 +38,7 @@ from .landxml.quantity_units import LINEAR_UNITS
 from .landxml.reports import station_label
 from .landxml.scene import SceneWriter, extrude, parse_views, station_offset, water_mesh
 from .landxml.scene_viewer import write_viewer
-from .landxml.tin_overlay import sample_tin
+from .landxml.tin_overlay import TinIndex, sample_tin
 from .params import number_param
 from .processing_common import coordinate_choices
 from .project_settings import ProjectSettingsAlgorithm
@@ -133,31 +133,11 @@ def _compact(xyz, faces):
 
 
 def refine_near(xyz, faces, footprint, target, rounds=5):
-    """Split ground triangles that touch ``footprint`` (a TIN) until their edges are at most ``target`` long.
+    """Split ground triangles that touch ``footprint`` (a TIN) until their edges are at most ``target`` long,
+    so a coarse DEM can be cut cleanly along a narrow road; the ground keeps its shape."""
+    from .landxml.structures import refine
 
-    Each chosen triangle is split into four at its edge midpoints, which lie on the original planes, so
-    the ground keeps its shape; a coarse DEM can then be cut cleanly along a narrow road."""
-    xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
-    for _round in range(rounds):
-        tri = xyz[faces]
-        longest = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
-        probes = np.concatenate([tri, (tri + np.roll(tri, 1, axis=1)) / 2, tri.mean(axis=1, keepdims=True)], axis=1)
-        touch = np.isfinite(sample_tin(footprint, probes.reshape(-1, 3)[:, :2])).reshape(len(faces), 7).any(axis=1)
-        chosen = touch & (longest > target)
-        if not chosen.any():
-            break
-        picked = faces[chosen]
-        edges = np.sort(np.concatenate([picked[:, [0, 1]], picked[:, [1, 2]], picked[:, [2, 0]]]), axis=1)
-        unique, inverse = np.unique(edges, axis=0, return_inverse=True)
-        inverse = inverse.reshape(-1)
-        middle = len(xyz) + inverse.reshape(3, -1).T                      # midpoints of edges 01, 12, 20
-        xyz = np.vstack([xyz, (xyz[unique[:, 0]] + xyz[unique[:, 1]]) / 2])
-        a, b, c = picked.T
-        m01, m12, m20 = middle.T
-        new = np.concatenate([np.column_stack([a, m01, m20]), np.column_stack([m01, b, m12]),
-                              np.column_stack([m20, m12, c]), np.column_stack([m01, m12, m20])])
-        faces = np.concatenate([faces[~chosen], new])
-    return xyz, faces
+    return refine(np.asarray(xyz, float), np.asarray(faces, np.int64), footprint, target, rounds)
 
 
 def _runs_inside(points, area):
@@ -315,6 +295,13 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             "SYN_STRUCTURES", "Synthetic: structures typed in (e.g. 1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9)",
             defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterBoolean(
+            "SYN_FIT_PROFILE", "Synthetic: fit DEMs to the surveyed ground profile along the road (valleys at crossings)",
+            defaultValue=False))
+        self.addParameter(number_param("SYN_FIT_WIDTH", "Synthetic: profile fit fades out over (each side)", 60.0, 5.0, 1000.0,
+                                       decimals=1))
+        self.addParameter(QgsProcessingParameterBoolean(
+            "SYN_CHANNELS", "Synthetic: cut a channel into the ground at each culvert", defaultValue=True))
+        self.addParameter(QgsProcessingParameterBoolean(
             "SYN_MATCH_PROFILE", "Synthetic: shift DEMs to match the alignment's surveyed ground profile", defaultValue=False))
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
@@ -407,6 +394,28 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         return None
 
     @staticmethod
+    def _ground_profile(path, name):
+        """f(stations) -> surveyed ground levels (NaN outside the profile), or None."""
+        from .landxml.longsection import default_pair, read_alignment_profiles
+        from .landxml.parser import load_document
+
+        alignment = next((a for a in load_document(path).alignments() if (a.attrib.get("name") or "") == name), None)
+        if alignment is None:
+            return None
+        _design, profile = default_pair(read_alignment_profiles(alignment, 5.0))
+        if profile is None:
+            return None
+        parts = [np.asarray(part, float) for part in profile.parts]
+
+        def levels(stations):
+            out = np.full(len(stations), np.nan)
+            for part in parts:
+                inside = (stations >= part[:, 0].min()) & (stations <= part[:, 0].max())
+                out[inside] = np.interp(stations[inside], part[:, 0], part[:, 1])
+            return out
+        return levels
+
+    @staticmethod
     def _dem_offset(path, name, centre, stations, ground, fb):
         """Median (surveyed ground profile − DEM) along the alignment, or None without a ground profile."""
         from .landxml.longsection import default_pair, read_alignment_profiles
@@ -444,7 +453,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
     def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor):
         """Add a synthetic finished road along an alignment's profile, cut into the ground meshes."""
         from .landxml.grading import volume_summary
-        from .landxml.structures import MeshBuilder, bridge, culvert, low_points, read_schedule_csv, read_schedule_text
+        from .landxml.structures import (MeshBuilder, bridge, carve_channels, culvert, low_points, read_schedule_csv,
+                                         read_schedule_text)
         from .landxml.synthetic_corridor import _normals as corridor_normals, synthetic_corridor
         from .landxml.tin_overlay import depth_tin
 
@@ -477,27 +487,62 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                         meshes[index] = (*mesh[:3], moved, *mesh[4:])
                 ground = next((m[3], m[4]) for m in meshes if m[0] == grounds[0][0])
                 fb.pushInfo(f"DEMs raised by {shift:+.2f} to match the alignment's surveyed ground profile.")
-        covered = np.isfinite(sample_tin(ground, centre[:, :2]))
+        covered = np.isfinite(TinIndex(*ground).sample(centre[:, :2]))
         if covered.sum() < 2:
             raise QgsProcessingException(f"The ground does not cover alignment '{name}' in the area.")
         if not covered.all():
             idx = np.flatnonzero(covered)
             centre, stations = centre[idx[0]:idx[-1] + 1], stations[idx[0]:idx[-1] + 1]
             fb.pushInfo(f"Synthetic corridor limited to {stations[0]:.0f}–{stations[-1]:.0f}, where the ground covers the alignment.")
+        if self.parameterAsBool(p, "SYN_FIT_PROFILE", c):
+            profile = self._ground_profile(path, name)
+            if profile is None:
+                fb.pushWarning(f"Alignment '{name}' has no surveyed ground profile; the ground is not fitted to it.")
+            else:
+                taper = self.parameterAsDouble(p, "SYN_FIT_WIDTH", c)
+                normal0 = corridor_normals(centre[:, :2])
+                ribbon = np.concatenate([np.column_stack([centre[:, :2] + normal0 * side * taper, centre[:, 2]])
+                                         for side in (-1.0, 1.0)])
+                n = len(centre)
+                band_faces = np.concatenate([np.column_stack([np.arange(n - 1), np.arange(n - 1) + n, np.arange(n - 1) + 1]),
+                                             np.column_stack([np.arange(n - 1) + 1, np.arange(n - 1) + n, np.arange(n - 1) + n + 1])])
+                surveyed = profile(stations)
+                for index, mesh in enumerate(meshes):
+                    if mesh[2] != "raster":
+                        continue
+                    rxyz, rfaces = refine_near(mesh[3], mesh[4], (ribbon, band_faces), max(taper / 8.0, 2.0), rounds=4)
+                    difference = surveyed - sample_tin((rxyz, rfaces), centre[:, :2])
+                    known = np.isfinite(difference)
+                    if known.sum() < 2:
+                        continue
+                    # station and offset of each ground point, read off the ribbon (station and offset as its "levels")
+                    vs = sample_tin((np.column_stack([ribbon[:, :2], np.tile(stations, 2)]), band_faces), rxyz[:, :2])
+                    vo = sample_tin((np.column_stack([ribbon[:, :2], np.repeat([-taper, taper], n)]), band_faces), rxyz[:, :2])
+                    weight = np.clip(1.0 - np.abs(np.nan_to_num(vo, nan=taper)) / taper, 0.0, 1.0)
+                    vs = np.nan_to_num(vs, nan=-np.inf)
+                    covered = (vs >= stations[known][0]) & (vs <= stations[known][-1])
+                    rxyz = rxyz.copy()
+                    rxyz[:, 2] += np.where(covered, weight * np.interp(vs, stations[known], difference[known]), 0.0)
+                    meshes[index] = (*mesh[:3], rxyz, rfaces, *mesh[5:])
+                    fb.pushInfo(f"{mesh[1]}: fitted to the surveyed ground profile along the road (correction "
+                                f"{np.nanmin(difference):+.1f} to {np.nanmax(difference):+.1f} on the centreline, fading out "
+                                f"{taper:g} either side).")
+                ground = next((m[3], m[4]) for m in meshes if m[0] == grounds[0][0])
         width = self.parameterAsDouble(p, "SYN_CARRIAGEWAY", c)
         shoulder = self.parameterAsDouble(p, "SYN_SHOULDER", c)
         lanes = int(self.parameterAsDouble(p, "SYN_LANES", c))
+        ground_index = TinIndex(*ground)
         xyz, faces, station, offset, daylight = synthetic_corridor(
-            centre, stations, ground, width, shoulder,
+            centre, stations, ground_index, width, shoulder,
             self.parameterAsDouble(p, "SYN_CAMBER", c) / 100.0, self.parameterAsDouble(p, "SYN_SHOULDER_FALL", c) / 100.0,
             self.parameterAsDouble(p, "SYN_CUT_SLOPE", c), self.parameterAsDouble(p, "SYN_FILL_SLOPE", c),
             self.parameterAsDouble(p, "SYN_MAX_WIDTH", c))
         style = ss.road_style(width, shoulder, lanes)
         max_width = self.parameterAsDouble(p, "SYN_MAX_WIDTH", c)
         outer = xyz.reshape(len(centre), 7, 3)[:, [0, 6], :2].reshape(-1, 2)
-        known = np.isfinite(sample_tin(ground, outer)).reshape(len(centre), 2).all(axis=1)
+        known = np.isfinite(ground_index.sample(outer)).reshape(len(centre), 2).all(axis=1)
         short = (daylight.max(axis=1) >= max_width - 1e-6) & known      # no daylight against ground that is there
-        ground_at = lambda points: sample_tin(ground, np.asarray(points, float)[:, :2])
+        ground_at = lambda points: ground_index.sample(np.asarray(points, float)[:, :2])
         normal = corridor_normals(centre[:, :2])
         edge = width / 2 + shoulder
 
@@ -542,29 +587,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         sid = f"syn{len(meshes) + 1}"
         meshes.append((sid, f"{name} (synthetic corridor)", "design", xyz, road_faces, style, None))
         self._synthetic_extra = {sid: {"station": station, "offset": offset}}
-        # cut the ground under the corridor, as for a designed surface drawn over it
-        for index, mesh in enumerate(meshes):
-            if mesh[2] not in ("surface", "raster"):
-                continue
-            refined_xyz, refined_faces = refine_near(mesh[3], mesh[4], (xyz, earth_faces), max(width / 4.0, 1.0))
-            if len(refined_faces) != len(mesh[4]):
-                mesh = (*mesh[:3], refined_xyz, refined_faces, *mesh[5:])
-                meshes[index] = mesh
-            gxyz, gfaces = mesh[3].copy(), mesh[4]
-            under = sample_tin((xyz, earth_faces), mesh[3])
-            inside = np.isfinite(under)
-            removed = inside[gfaces].all(axis=1)
-            gxyz[inside, 2] = under[inside]
-            if removed.any():
-                uxyz, ufaces, _u = _compact(mesh[3], gfaces[removed])
-                unders.append((mesh[0], mesh[1], uxyz, ufaces, mesh[5]))
-                keep = gfaces[~removed]
-                if len(keep):
-                    gxyz, keep, _used = _compact(gxyz, keep)
-                    meshes[index] = (*mesh[:3], gxyz, keep, *mesh[5:])
         fb.pushInfo(f"Side slopes run out {np.median(daylight):.1f} (median), up to {daylight.max():.1f} beyond the shoulders.")
 
         builder = MeshBuilder()
+        channels = []
         notes = []
         views = self._synthetic_views = []
         if bridge_rows.any():
@@ -598,18 +624,50 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             reach = daylight[i - 1] + (daylight[i] - daylight[i - 1]) * t
             try:
                 notes.append(culvert(builder, item, point, normal[i - 1], edge + reach[0] + 0.5, edge + reach[1] + 0.5,
-                                     ground_at))
+                                     ground_at, record=channels))
                 culverts.append(s)
                 n = normal[i - 1]
                 along = np.array([n[1], -n[0]])
-                views.append((f"{item['id']} ({s:.0f})", (-n[0] * 0.8 + along[0] * 0.6, -n[1] * 0.8 + along[1] * 0.6, 0.55),
-                              (point[0], point[1], point[2] - 1.5), max(3.0 * (2 * edge + reach.sum()), 40.0)))
+                end = channels[-1]                              # look at the outlet end along the barrel
+                outward = (end["right"] - end["left"]) / max(np.linalg.norm(end["right"] - end["left"]), 1e-9)
+                views.append((f"{item['id']} ({s:.0f})",
+                              (outward[0] + along[0] * 0.35, outward[1] + along[1] * 0.35, 0.4),
+                              (end["right"][0], end["right"][1], end["z_right"] + 1.0),
+                              max(2.5 * end["width"], 30.0)))
             except ValueError as exc:
                 notes.append(str(exc))
         for note in notes:
             (fb.pushWarning if "does not fit" in note else fb.pushInfo)(note)
         sxyz, sfaces = builder.result()
         self._synthetic_structures = (sxyz, sfaces) if len(sfaces) else None
+        if channels and self.parameterAsBool(p, "SYN_CHANNELS", c):
+            for index, mesh in enumerate(meshes):
+                if mesh[2] in ("surface", "raster"):
+                    cxyz, cfaces, lowered = carve_channels(mesh[3], mesh[4], channels)
+                    meshes[index] = (*mesh[:3], cxyz, cfaces, *mesh[5:])
+            fb.pushInfo(f"Channels cut into the ground at {len(channels)} culvert{'s' if len(channels) > 1 else ''} "
+                        "(barrel width, banks 1V:1.5H, beds rising 1:20 for 30 m beyond the headwalls).")
+        # cut the ground under the corridor, as for a designed surface drawn over it
+        footprint_index = TinIndex(xyz, earth_faces)
+        for index, mesh in enumerate(meshes):
+            if mesh[2] not in ("surface", "raster"):
+                continue
+            refined_xyz, refined_faces = refine_near(mesh[3], mesh[4], (xyz, earth_faces), max(width / 4.0, 1.0))
+            if len(refined_faces) != len(mesh[4]):
+                mesh = (*mesh[:3], refined_xyz, refined_faces, *mesh[5:])
+                meshes[index] = mesh
+            gxyz, gfaces = mesh[3].copy(), mesh[4]
+            under = footprint_index.sample(mesh[3])
+            inside = np.isfinite(under)
+            removed = inside[gfaces].all(axis=1)
+            gxyz[inside, 2] = under[inside]
+            if removed.any():
+                uxyz, ufaces, _u = _compact(mesh[3], gfaces[removed])
+                unders.append((mesh[0], mesh[1], uxyz, ufaces, mesh[5]))
+                keep = gfaces[~removed]
+                if len(keep):
+                    gxyz, keep, _used = _compact(gxyz, keep)
+                    meshes[index] = (*mesh[:3], gxyz, keep, *mesh[5:])
         # dips in the ground under fill with no structure near them
         road = centre[:, 2]
         surveyed = ground_at(centre)
@@ -838,7 +896,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                                 color="#6b5a45" if index else "#8f7f6a", width=2 if index else 1, lift=0.05)
         # drape onto the first surface
         # drape on the designs first, then the other surfaces in the order given
-        drapes = [(m[3], m[4]) for m in meshes if m[2] == "design"] + [(m[3], m[4]) for m in meshes if m[2] != "design"]
+        drapes = [TinIndex(m[3], m[4]) for m in meshes if m[2] == "design"] + [TinIndex(m[3], m[4]) for m in meshes if m[2] != "design"]
 
         def drape_points(points):
             z = np.full(len(points), np.nan)

@@ -202,8 +202,80 @@ def depth_tin(design, existing, with_design=False):
     return triangles, faces, stats
 
 
+class TinIndex:
+    """A TIN prepared once for many lookups: triangle planes and a grid of the cells each triangle covers.
+
+    ``sample_tin`` accepts one in place of ``(xyz, faces)``; build it when the same surface is sampled
+    again and again (draping lines and labels, running side slopes out to the ground)."""
+
+    WIDTH = np.int64(1) << 31
+
+    def __init__(self, xyz, faces):
+        xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
+        self.px, self.py, self.q, boxes, self.corners = _planes(xyz, faces)
+        self.empty = not len(boxes)
+        if self.empty:
+            return
+        corners = self.corners
+        self.boxes = boxes
+        self.edge = np.roll(corners, -1, axis=1) - corners                  # (n, 3, 2) edge vectors
+        scale = np.abs(corners).max(axis=(1, 2)) + 1.0
+        self.slack = -1e-9 * scale[:, None] * np.hypot(self.edge[:, :, 0], self.edge[:, :, 1])
+        extent = (boxes[:, 2:] - boxes[:, :2]).max(axis=1)
+        positive = extent[extent > 0]
+        self.cell = float(np.median(positive)) * 1.0001 if len(positive) else 1.0
+        self.origin = boxes[:, :2].min(axis=0)
+        while True:                        # a few huge triangles (hull slivers) must not fill memory
+            x0, y0, x1, y1 = _cells(boxes, self.origin, self.cell)
+            nx, ny = x1 - x0 + 1, y1 - y0 + 1
+            if int((nx * ny).sum()) <= max(8 * len(boxes), 4_000_000):
+                break
+            self.cell *= 2.0
+        owner, index = _expand(np.arange(len(boxes)), np.zeros(len(boxes), np.int64), nx * ny)
+        cx = np.repeat(x0, nx * ny) + index % np.repeat(nx, nx * ny)
+        cy = np.repeat(y0, nx * ny) + index // np.repeat(nx, nx * ny)
+        keys = cy * self.WIDTH + cx
+        order = np.argsort(keys, kind="stable")
+        self.keys, self.owner = keys[order], owner[order]
+
+    def sample(self, points, tolerance=1e-9):
+        points = np.asarray(points, float)[:, :2]
+        out = np.full(len(points), np.nan)
+        if self.empty or not len(points):
+            return out
+        cell = np.floor((points - self.origin) / self.cell).astype(np.int64)
+        key = cell[:, 1] * self.WIDTH + cell[:, 0]
+        lo = np.searchsorted(self.keys, key, "left")
+        count = np.searchsorted(self.keys, key, "right") - lo
+        total = np.cumsum(count)
+        start = 0
+        while start < len(points):
+            done = total[start - 1] if start else 0
+            stop = max(int(np.searchsorted(total, done + CHUNK * 4, "right")), start + 1)
+            i, position = _expand(np.arange(start, stop), lo[start:stop], count[start:stop])
+            j = self.owner[position]
+            self._fill(out, points, i, j, tolerance)
+            start = stop
+        return out
+
+    def _fill(self, out, points, i, j, tolerance):
+        x, y = points[i, 0], points[i, 1]
+        box = self.boxes[j]
+        near = (x >= box[:, 0]) & (x <= box[:, 2]) & (y >= box[:, 1]) & (y <= box[:, 3])
+        i, j, x, y = i[near], j[near], x[near], y[near]
+        c, e = self.corners[j], self.edge[j]
+        slack = self.slack[j] * (tolerance / 1e-9)
+        inside = np.ones(len(i), bool)
+        for k in range(3):
+            inside &= e[:, k, 0] * (y - c[:, k, 1]) - e[:, k, 1] * (x - c[:, k, 0]) >= slack[:, k]
+        i, j, x, y = i[inside], j[inside], x[inside], y[inside]
+        out[i] = self.px[j] * x + self.py[j] * y + self.q[j]
+
+
 def sample_tin(tin, points, tolerance=1e-9):
-    """Elevation of the TIN ``(xyz, faces)`` at each plan point of ``points`` (NaN outside it)."""
+    """Elevation of the TIN ``(xyz, faces)`` (or a :class:`TinIndex`) at each plan point of ``points`` (NaN outside it)."""
+    if isinstance(tin, TinIndex):
+        return tin.sample(points, tolerance)
     xyz, faces = np.asarray(tin[0], float), np.asarray(tin[1], np.int64)
     points = np.asarray(points, float)[:, :2]
     out = np.full(len(points), np.nan)
