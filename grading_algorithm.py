@@ -83,7 +83,7 @@ from .landxml.grading import (
 )
 from .params import number_param
 from .processing_common import coordinate_choices
-from .processing_widgets import name_param
+from .processing_widgets import name_param, names_param
 from .project_settings import ProjectSettingsAlgorithm
 from .road_features import _param_coordinates
 
@@ -762,9 +762,9 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
 
     def initAlgorithm(self, config=None):
         _input_param(self)
-        self.addParameter(QgsProcessingParameterString(
-            "VOLUME_SURFACES", "Volume surfaces, one per site, or 'Design | Existing' pairs (separate with ; — blank = all named as volume surfaces)",
-            defaultValue="", optional=True))
+        self.addParameter(names_param(
+            "VOLUME_SURFACES", "Volume surfaces, one per site, or 'Design | Existing' pairs (blank = all named as volume surfaces)",
+            "surfaces", ";"))
         self.addParameter(QgsProcessingParameterFile(
             "EXISTING_FILE", "Existing-ground LandXML for the 'Design | Existing' pairs (blank = the same file)",
             extension="xml", optional=True))
@@ -947,9 +947,10 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
                                      "surfaces", file_param="EXISTING_FILE", fallback_file_param="INPUT"))
         self.addParameter(QgsProcessingParameterFile(
             "INPUT_B", "Second revision LandXML (blank = same file)", extension="xml", optional=True))
-        self.addParameter(QgsProcessingParameterString("SURFACE_B", "Second revision: volume surface (or design surface)"))
-        self.addParameter(QgsProcessingParameterString("EXISTING_B", "Second revision: existing-ground surface (blank = volume surface above)",
-                                                       defaultValue="", optional=True))
+        self.addParameter(name_param("SURFACE_B", "Second revision: volume surface (or design surface)", "surfaces",
+                                     optional=False, file_param="INPUT_B", fallback_file_param="INPUT"))
+        self.addParameter(name_param("EXISTING_B", "Second revision: existing-ground surface (blank = volume surface above)",
+                                     "surfaces", file_param="EXISTING_FILE", fallback_file_param="INPUT_B"))
         self.addParameter(QgsProcessingParameterString("LABEL_A", "First revision label", defaultValue="Revision A"))
         self.addParameter(QgsProcessingParameterString("LABEL_B", "Second revision label", defaultValue="Revision B"))
         self.addParameter(QgsProcessingParameterFeatureSource(

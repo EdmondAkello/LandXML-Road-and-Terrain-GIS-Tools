@@ -42,7 +42,7 @@ from .landxml.edges import DEFAULT_BANDS, edge_analysis, edges_report_html
 from .landxml.quantity_units import LINEAR_UNITS
 from .params import number_param
 from .processing_common import coordinate_choices
-from .processing_widgets import name_param
+from .processing_widgets import name_param, style_param
 from .project_settings import ProjectSettingsAlgorithm
 from .road_features import _param_coordinates
 
@@ -275,8 +275,8 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         from qgis.core import QgsProcessingOutputFile, QgsProcessingParameterBoolean, QgsProcessingParameterFolderDestination
 
         _design_and_existing_params(self)
-        self.addParameter(QgsProcessingParameterString("DESIGN_STYLE", "Design surface style", defaultValue="depth"))
-        self.addParameter(QgsProcessingParameterString("CONTEXT_STYLE", "Existing-ground style", defaultValue="plain #cfd8c4"))
+        self.addParameter(style_param("DESIGN_STYLE", "Design surface style", default="depth"))
+        self.addParameter(style_param("CONTEXT_STYLE", "Existing-ground style", default="plain #cfd8c4"))
         self.addParameter(number_param("CONTEXT_MARGIN", "Existing ground around the design (output units)", 50.0, 0.0, 1e6, decimals=1))
         self.addParameter(number_param("EXAGGERATION", "Suggested vertical exaggeration", 1.5, 0.1, 20.0, decimals=2))
         self.addParameter(QgsProcessingParameterString("VIEWS", "Camera views", defaultValue="sw: -0.6, -0.8, 0.55; se: 0.8, -0.5, 0.6"))
@@ -494,7 +494,7 @@ class SurfaceStyleAlgorithm(ProjectSettingsAlgorithm):
             "EXISTING_FILE", "Existing-ground LandXML for depth (blank = the same file)", extension="xml", optional=True))
         self.addParameter(name_param("EXISTING_SURFACE", "Existing-ground surface (depth only)", "surfaces",
                                      file_param="EXISTING_FILE", fallback_file_param="INPUT"))
-        self.addParameter(QgsProcessingParameterString("STYLE", "Style", defaultValue="slope"))
+        self.addParameter(style_param("STYLE", "Style", default="slope"))
         _param_coordinates(self)
         _vertical_unit_param(self)
         self.addParameter(QgsProcessingParameterFeatureSink("OUTPUT", "Surface classes", type=QgsProcessing.SourceType.TypeVectorPolygon))
