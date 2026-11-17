@@ -198,7 +198,7 @@ class QgisProcessingTests(unittest.TestCase):
             if parameter is None:
                 continue
             checked.append(name)
-            self.assertIn("OpenRoads: usually Swap X / Y", parameter.description(), name)
+            self.assertIn("store Northing first: choose Swap X / Y", parameter.description(), name)
             for text in ("Northing, Easting", "Civil 3D", "X = Easting", "known control point"):
                 self.assertIn(text, parameter.help(), name)
             self.assertEqual(parameter.defaultValue(), 0, name)
