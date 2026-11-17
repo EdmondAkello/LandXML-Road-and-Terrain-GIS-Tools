@@ -107,7 +107,7 @@ def _strip_length(polygons):
 
 
 def edge_analysis(xyz, faces, depth, vertical_factor=1.0, tolerance=0.01, tie=0.1, flat=0.02,
-                  bands=DEFAULT_BANDS, min_step=0.5, min_length=1.0):
+                  bands=DEFAULT_BANDS, min_step=0.5, min_length=3.0):
     """Perimeter edge runs, internal steps and the schedule of a graded site (see module notes)."""
     xyz = np.asarray(xyz, float)
     faces = np.asarray(faces, np.int64)
