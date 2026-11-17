@@ -1,0 +1,245 @@
+"""Surface styles shared by QGIS layers, HTML reports and 3D scenes.
+
+A style colours the triangles of a TIN by one attribute:
+
+* ``elevation`` (vertical units),
+* ``slope`` (percent; V/H × 100 with vertical units converted to horizontal ones),
+* ``depth`` (design minus existing, vertical units; cut negative, fill positive),
+* ``aspect`` (downhill bearing in degrees, 0 = north / +Y, clockwise).
+
+A style is a plain dict, so it can be stored in a project, written into ``scene.json``
+and read by any renderer::
+
+    {"attribute": "slope", "breaks": [2, 5, 30, 250], "colors": [...], "labels": [...]}
+
+``breaks`` are the upper limits of every class but the last (n breaks give n + 1
+classes). Leave them out to use the preset's, or give ``"classes": n`` with
+``"method": "equal"`` or ``"quantile"`` to compute them from the data. ``colors`` may be
+a list of hex colours (one per class) or the name of a palette in ``PALETTES``.
+"""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+
+PALETTES = {
+    "cut_fill": ["#7f2704", "#a63603", "#d9822b", "#f0b27a", "#fae0c4", "#fdf3e7",
+                 "#eef7ef", "#d5ecd9", "#9fd3ac", "#5fb37b", "#3a9e5f", "#1d6b3a"],
+    "slope_classes": ["#2b83ba", "#abdda4", "#fdae61", "#d7191c"],
+    "terrain": ["#1a9641", "#73c044", "#c4e687", "#fdf2a3", "#f4c47d", "#d99456", "#a8673d", "#7f4f35", "#f0f0f0"],
+    "greys": ["#f7f7f7", "#d9d9d9", "#bdbdbd", "#969696", "#737373", "#525252"],
+    "aspect": ["#e41a1c", "#ff7f00", "#ffd92f", "#a6d854", "#4daf4a", "#66c2a5", "#377eb8", "#984ea3"],
+}
+
+PRESETS = {
+    "depth": {"attribute": "depth", "breaks": [-5, -3, -2, -1, -0.5, 0, 0.5, 1, 2, 3, 5], "colors": "cut_fill"},
+    "slope": {"attribute": "slope", "breaks": [2, 30, 250], "colors": "slope_classes",
+              "labels": ["Flat (platforms) < 2 %", "Sloping 2–30 %", "Batter 30–250 %", "Near-vertical > 250 %"]},
+    "elevation": {"attribute": "elevation", "classes": 9, "method": "equal", "colors": "terrain"},
+    "aspect": {"attribute": "aspect", "breaks": [22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5],
+               "colors": ["#e41a1c", "#ff7f00", "#ffd92f", "#a6d854", "#4daf4a", "#66c2a5", "#377eb8", "#984ea3",
+                          "#e41a1c"],
+               "labels": ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"]},
+}
+UNITS = {"elevation": "{v}", "depth": "{v}", "slope": "%", "aspect": "°"}
+
+
+def triangle_values(xyz, faces, attribute, depth=None, vertical_factor=1.0):
+    """Per-triangle value of ``attribute`` (see module notes); ``depth`` is per vertex."""
+    xyz = np.asarray(xyz, float)
+    faces = np.asarray(faces, np.int64)
+    if attribute == "elevation":
+        return xyz[faces, 2].mean(axis=1)
+    if attribute == "depth":
+        if depth is None:
+            raise ValueError("A depth style needs the depth (design − existing) at each vertex.")
+        return np.asarray(depth, float)[faces].mean(axis=1)
+    a, b, c = xyz[faces[:, 0]], xyz[faces[:, 1]], xyz[faces[:, 2]]
+    u, v = b - a, c - a
+    u[:, 2] *= vertical_factor
+    v[:, 2] *= vertical_factor
+    n = np.cross(u, v)
+    n[n[:, 2] < 0] *= -1
+    if attribute == "slope":
+        with np.errstate(divide="ignore", invalid="ignore"):
+            slope = 100.0 * np.hypot(n[:, 0], n[:, 1]) / n[:, 2]
+        return np.where(np.isfinite(slope), slope, 1e9)
+    if attribute == "aspect":
+        return np.degrees(np.arctan2(n[:, 0], n[:, 1])) % 360.0
+    raise ValueError(f"Unknown surface attribute: {attribute}")
+
+
+def _nice(value):
+    if not math.isfinite(value) or value == 0:
+        return value
+    digits = 2 - int(math.floor(math.log10(abs(value))))
+    return round(value, max(digits, 0))
+
+
+def resolve(style, values=None, vertical_unit="m"):
+    """Classes of a style as [{"low", "high", "color", "label"}], computing data breaks if asked."""
+    spec = dict(PRESETS.get(style.get("attribute"), {}), **style) if isinstance(style, dict) else dict(PRESETS[style])
+    attribute = spec["attribute"]
+    breaks = spec.get("breaks") if "classes" not in style else None
+    if breaks is None:
+        count = int(spec.get("classes", 9))
+        data = np.asarray(values if values is not None else [], float)
+        data = data[np.isfinite(data)]
+        if count < 2 or not len(data):
+            breaks = []
+        elif spec.get("method", "equal") == "quantile":
+            breaks = sorted(set(_nice(v) for v in np.quantile(data, np.linspace(0, 1, count + 1)[1:-1])))
+        else:
+            low, high = float(data.min()), float(data.max())
+            breaks = [_nice(low + (high - low) * k / count) for k in range(1, count)] if high > low else []
+    breaks = [float(b) for b in breaks]
+    if breaks != sorted(breaks) or len(set(breaks)) != len(breaks):
+        raise ValueError("Style breaks must be increasing.")
+    colors = spec.get("colors", "greys")
+    palette = PALETTES[colors] if isinstance(colors, str) else list(colors)
+    count = len(breaks) + 1
+    if len(palette) != count:      # stretch or sample a palette to the class count
+        palette = [palette[round(k * (len(palette) - 1) / max(count - 1, 1))] for k in range(count)]
+    unit = UNITS[attribute].format(v=vertical_unit)
+    labels = spec.get("labels")
+    classes = []
+    for k in range(count):
+        low = breaks[k - 1] if k else None
+        high = breaks[k] if k < len(breaks) else None
+        if labels and len(labels) == count:
+            label = labels[k]
+        elif low is None:
+            label = f"< {high:g} {unit}"
+        elif high is None:
+            label = f"≥ {low:g} {unit}"
+        else:
+            label = f"{low:g} – {high:g} {unit}"
+        classes.append({"low": low, "high": high, "color": palette[k], "label": label})
+    return {"attribute": attribute, "unit": unit, "classes": classes}
+
+
+def classify(values, resolved):
+    """Class index of each value (a value equal to a break goes to the class above it)."""
+    breaks = [item["high"] for item in resolved["classes"][:-1]]
+    return np.searchsorted(np.asarray(breaks, float), np.asarray(values, float), side="right")
+
+
+def parse_style(text, attribute=None):
+    """A style from Processing text: a preset name, or ``attribute: b1, b2, ...`` with optional ``| #c1, #c2, ...``.
+
+    ``plain #rrggbb`` gives one colour. Examples: ``slope``, ``slope: 1, 5, 30``, ``elevation: equal 12``, ``elevation: quantile 6 | terrain``,
+    ``depth: -2, 0, 2 | #d9822b, #f7d9b8, #c7e9c0, #3a9e5f``."""
+    text = (text or "").strip()
+    if not text:
+        return dict(PRESETS[attribute or "elevation"])
+    if text.lower().startswith("plain"):
+        color = text[5:].strip() or "#cfd8c4"
+        return {"attribute": attribute or "elevation", "breaks": [], "colors": [color], "labels": ["Surface"]}
+    head, _, colors = text.partition("|")
+    name, _, breaks = head.partition(":")
+    name = name.strip().lower()
+    if name not in PRESETS:
+        raise ValueError(f"Unknown surface style '{name}'. Use elevation, slope, depth or aspect.")
+    style = {"attribute": name}
+    breaks = breaks.strip()
+    if breaks:
+        words = breaks.replace(",", " ").split()
+        if words[0].lower() in ("equal", "quantile"):
+            style.update(method=words[0].lower(), classes=int(words[1]) if len(words) > 1 else 9)
+        else:
+            style["breaks"] = [float(word) for word in words]
+            style.pop("labels", None)
+    colors = colors.strip()
+    if colors:
+        names = [part.strip() for part in colors.replace(",", " ").split()]
+        style["colors"] = names[0] if len(names) == 1 and names[0] in PALETTES else names
+    return style
+
+
+def class_regions(xyz, faces, index, count):
+    """Merged plan polygons per class: {class: [(outer, [holes]), ...]}."""
+    from .grading import outline_polygons
+
+    regions = {}
+    for k in range(count):
+        member = faces[index == k]
+        if len(member):
+            regions[k] = outline_polygons(xyz, member)
+    return regions
+
+
+def class_areas(xyz, faces, index, count):
+    a, b, c = xyz[faces[:, 0], :2], xyz[faces[:, 1], :2], xyz[faces[:, 2], :2]
+    area = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1]))
+    return np.bincount(index, weights=area, minlength=count)
+
+
+def vertex_colors(xyz, faces, values, resolved):
+    """RGB (uint8) per vertex: the area-weighted class colour of the triangles around it (for meshes)."""
+    index = classify(values, resolved)
+    rgb = np.array([[int(item["color"][i:i + 2], 16) for i in (1, 3, 5)] for item in resolved["classes"]], float)
+    a, b, c = xyz[faces[:, 0], :2], xyz[faces[:, 1], :2], xyz[faces[:, 2], :2]
+    area = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])) + 1e-12
+    total = np.zeros((len(xyz), 3))
+    weight = np.zeros(len(xyz))
+    for corner in range(3):
+        np.add.at(total, faces[:, corner], rgb[index] * area[:, None])
+        np.add.at(weight, faces[:, corner], area)
+    weight[weight == 0] = 1.0
+    return np.clip(np.round(total / weight[:, None]), 0, 255).astype(np.uint8)
+
+
+def plan_svg(layers, width=760, height=None, legend=None, lines=(), labels=(), north=True):
+    """An SVG plan: ``layers`` is a list of (regions, resolved) as from ``class_regions``/``resolve``,
+    drawn in order; ``lines`` are (points (n, ≥2), colour, width); ``labels`` (x, y, text)."""
+    import html
+
+    rings = [ring for regions, _ in layers for polys in regions.values() for outer, holes in polys for ring in [outer, *holes]]
+    rings += [np.asarray(points)[:, :2] for points, _c, _w in lines]
+    if not rings:
+        return ""
+    stack = np.vstack(rings)
+    x0, y0 = stack.min(axis=0)
+    x1, y1 = stack.max(axis=0)
+    span = max(x1 - x0, y1 - y0, 1e-9)
+    pad = 0.03 * span
+    x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
+    scale = width / (x1 - x0)
+    height = height or int(math.ceil((y1 - y0) * scale))
+
+    def path(ring):
+        pts = " ".join(f"{(x - x0) * scale:.1f},{(y1 - y) * scale:.1f}" for x, y in ring[:, :2])
+        return f"M{pts}Z"
+
+    parts = [f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {height}' width='100%' "
+             f"style='max-width:{width}px;background:#fff;border:1px solid #ddd'>"]
+    for regions, resolved in layers:
+        for k, polys in regions.items():
+            d = " ".join(path(ring) for outer, holes in polys for ring in [outer, *holes])
+            parts.append(f"<path d='{d}' fill='{resolved['classes'][k]['color']}' fill-rule='evenodd' stroke='none'/>")
+    for points, color, line_width in lines:
+        pts = " ".join(f"{(x - x0) * scale:.1f},{(y1 - y) * scale:.1f}" for x, y in np.asarray(points)[:, :2])
+        parts.append(f"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='{line_width}'/>")
+    for x, y, text in labels:
+        parts.append(f"<text x='{(x - x0) * scale:.1f}' y='{(y1 - y) * scale:.1f}' font-size='11' text-anchor='middle' "
+                     f"paint-order='stroke' stroke='white' stroke-width='3'>{html.escape(str(text))}</text>")
+    # scale bar
+    bar = 10 ** math.floor(math.log10(span / 4))
+    for step in (5, 2, 1):
+        if bar * step <= span / 3:
+            bar *= step
+            break
+    parts.append(f"<g font-size='10'><rect x='12' y='{height - 18}' width='{bar * scale:.1f}' height='4' fill='#333'/>"
+                 f"<text x='12' y='{height - 22}'>{bar:g}</text></g>")
+    if north:
+        parts.append(f"<g transform='translate({width - 24},28)'><path d='M0,-14 L6,6 L0,2 L-6,6Z' fill='#333'/>"
+                     "<text y='18' font-size='10' text-anchor='middle'>N</text></g>")
+    parts.append("</svg>")
+    if legend:
+        items = "".join(f"<span style='display:inline-block;margin:2px 10px 2px 0'><span style='display:inline-block;"
+                        f"width:12px;height:12px;background:{item['color']};border:1px solid #999;vertical-align:middle'>"
+                        f"</span> {html.escape(item['label'])}</span>" for item in legend["classes"])
+        parts.append(f"<div style='font-size:12px;margin:4px 0 12px'>{items}</div>")
+    return "".join(parts)

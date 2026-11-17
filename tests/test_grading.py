@@ -657,3 +657,42 @@ class SampleTinTests(unittest.TestCase):
         got = sample_tin(tin, points)
         self.assertTrue(np.allclose(got[:4], points[:4, 0] + points[:4, 1]))
         self.assertTrue(np.isnan(got[4:]).all())
+
+
+class SurfaceStyleTests(unittest.TestCase):
+    def test_presets_custom_breaks_and_data_classes(self):
+        from landxml_plugin.landxml import surface_style as ss
+
+        slope = ss.resolve(ss.parse_style("slope"))
+        self.assertEqual([c["label"] for c in slope["classes"]][0], "Flat (platforms) < 2 %")
+        self.assertEqual(list(ss.classify([0, 2, 29.9, 30, 300], slope)), [0, 1, 1, 2, 3])
+        depth = ss.resolve(ss.parse_style("depth"))
+        self.assertEqual(len(depth["classes"]), 12)
+        self.assertTrue(depth["classes"][0]["label"].startswith("< -5"))
+        custom = ss.resolve(ss.parse_style("depth: -1, 0, 1 | #ff0000, #ffaaaa, #aaffaa, #00ff00"))
+        self.assertEqual([c["color"] for c in custom["classes"]], ["#ff0000", "#ffaaaa", "#aaffaa", "#00ff00"])
+        elevation = ss.resolve(ss.parse_style("elevation: equal 4"), values=[100, 104, 108])
+        self.assertEqual([c["high"] for c in elevation["classes"]][:3], [102.0, 104.0, 106.0])
+        quantile = ss.resolve(ss.parse_style("elevation: quantile 2 | greys"), values=[1, 2, 3, 10])
+        self.assertEqual(len(quantile["classes"]), 2)
+        with self.assertRaises(ValueError):
+            ss.parse_style("colour: 1, 2")
+
+    def test_triangle_values_and_regions(self):
+        from landxml_plugin.landxml import surface_style as ss
+
+        xyz = np.array([[0, 0, 0], [10, 0, 0], [10, 10, 5], [0, 10, 5]], float)   # rises 50 % to the north
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        self.assertTrue(np.allclose(ss.triangle_values(xyz, faces, "slope"), 50.0))
+        self.assertTrue(np.allclose(ss.triangle_values(xyz, faces, "aspect"), 180.0))   # falls towards the south
+        self.assertTrue(np.allclose(ss.triangle_values(xyz, faces, "elevation"), [5 / 3, 10 / 3]))
+        resolved = ss.resolve(ss.parse_style("slope"))
+        index = ss.classify(ss.triangle_values(xyz, faces, "slope"), resolved)
+        regions = ss.class_regions(xyz, faces, index, len(resolved["classes"]))
+        self.assertEqual(list(regions), [2])
+        self.assertAlmostEqual(float(ss.class_areas(xyz, faces, index, 4)[2]), 100.0)
+        colors = ss.vertex_colors(xyz, faces, ss.triangle_values(xyz, faces, "slope"), resolved)
+        self.assertEqual(tuple(colors[0]), (0xfd, 0xae, 0x61))
+        svg = ss.plan_svg([(regions, resolved)], legend=resolved)
+        self.assertIn("<svg", svg)
+        self.assertIn("Batter 30–250 %", svg)

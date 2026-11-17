@@ -82,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 24)
+        self.assertEqual(len(self.algorithms), 25)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
@@ -675,6 +675,58 @@ class QgisProcessingTests(unittest.TestCase):
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(self._params(EDGES, "EPSG:26915"), DESIGN_SURFACE="Site FG",
                                             EXISTING_SURFACE="Site FG", OUTPUT="memory:"), self.context, self.feedback)
+
+    def test_export_scene_writes_json_meshes_lines_labels_and_views(self):
+        from landxml_plugin.landxml.scene import load_scene, read_ply
+
+        import re
+
+        algorithm = self.algorithms["landxml_export_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            grid = [(x, y) for y in range(-20, 81, 5) for x in range(-20, 81, 5)]
+            n = 21
+            tris = [(r * n + col + 1, r * n + col + 2, (r + 1) * n + col + 2) for r in range(n - 1) for col in range(n - 1)]
+            tris += [(r * n + col + 1, (r + 1) * n + col + 2, (r + 1) * n + col + 1) for r in range(n - 1) for col in range(n - 1)]
+            ground = ('<Surface name="Site EG"><Definition surfType="TIN"><Pnts>'
+                      + "".join(f'<P id="{k}">{x} {y} 100</P>' for k, (x, y) in enumerate(grid, 1)) + "</Pnts><Faces>"
+                      + "".join(f"<F>{a} {b} {c}</F>" for a, b, c in tris) + "</Faces></Definition></Surface>")
+            dense = Path(directory) / "dense.xml"
+            dense.write_text(re.sub(r'<Surface name="Site EG">.*?</Surface>', ground, Path(EDGES).read_text(), count=1,
+                                    flags=re.S), encoding="utf-8")
+            params = dict(self._params(str(dense), "EPSG:26915"), DESIGN_SURFACE="Site FG", EXISTING_SURFACE="Site EG",
+                          CONTEXT_MARGIN=10.0, DESIGN_STYLE="slope", LABELS="Gate @ 5, 5; Mast @ 30, 30, 8",
+                          OUTPUT_FOLDER=str(Path(directory) / "scene"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            scene, folder = load_scene(result["SCENE"])
+            self.assertEqual((scene["format"], scene["version"], scene["units"]["vertical"]),
+                             ("landxmltools-scene", 1, "meter"))
+            self.assertEqual(scene["origin"], [30, 30, 103])
+            self.assertEqual(scene["crs"]["authid"], "EPSG:26915")
+            self.assertEqual(scene["vertical_exaggeration"], 1.5)
+            surfaces = {item["id"]: item for item in scene["surfaces"]}
+            self.assertEqual(set(surfaces), {"context", "design"})
+            self.assertEqual(surfaces["design"]["style"]["attribute"], "slope")
+            xyz, faces, rgb, depth = read_ply(str(Path(folder) / surfaces["design"]["mesh"]))
+            self.assertEqual((len(xyz), len(faces)), (surfaces["design"]["vertices"], surfaces["design"]["triangles"]))
+            self.assertTrue(np.allclose(np.sort(np.unique(np.round(depth, 6))), [3.0, 5.0]))
+            self.assertAlmostEqual(float(xyz[:, 2].max()) + 103, 105.0, places=4)
+            cxyz, cfaces, crgb, _ = read_ply(str(Path(folder) / surfaces["context"]["mesh"]))
+            self.assertTrue((crgb == [0xcf, 0xd8, 0xc4]).all())
+            # ground under the design is dropped; the 10 m margin is kept
+            corners = cxyz[cfaces] + [30, 30, 103]
+            inside = (corners[..., 0] > 0) & (corners[..., 0] < 60) & (corners[..., 1] > 0) & (corners[..., 1] < 60)
+            self.assertFalse(inside.all(axis=1).any())
+            self.assertTrue(-15.0 - 1e-6 <= float(cxyz[:, 0].min()) + 30 <= -10.0)   # triangles touching the margin
+            kinds = sorted({line["kind"] for line in scene["lines"]})
+            self.assertEqual(kinds, ["daylight", "platform_outline", "retained_edge"])
+            texts = sorted(label["text"] for label in scene["labels"])
+            self.assertEqual(texts, ["Gate", "Mast", "P1 RL 103.00", "P2 RL 105.00"])
+            self.assertEqual([view["name"] for view in scene["views"]], ["sw", "se"])
+            self.assertGreater(scene["views"][0]["distance"], 50)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, VIEWS="sw: 0, 0, 0"), self.context, self.feedback)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, LABELS="no position"), self.context, self.feedback)
 
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]
