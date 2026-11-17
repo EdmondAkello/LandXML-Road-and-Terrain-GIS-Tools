@@ -550,3 +550,21 @@ class DepthFromTwoSurfacesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LevelLineTests(unittest.TestCase):
+    def test_pyramid_gives_one_closed_ring_and_plane_one_open_line(self):
+        from landxml_plugin.landxml.plan_features import level_lines
+
+        xyz = np.array([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], [1, 1, 2]], float)
+        faces = np.array([[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]])
+        (ring,) = level_lines(xyz, faces, 1.0)
+        self.assertTrue(np.allclose(ring[0], ring[-1]))
+        self.assertEqual(len(ring), 5)
+        self.assertTrue(np.allclose(ring[:, 2], 1.0))
+        self.assertTrue(np.allclose(np.abs(ring[:, :2] - 1.0).max(axis=1), 0.5))
+        self.assertEqual(level_lines(xyz, faces, 3.0), [])
+        plane = np.array([[0, 0, 0], [4, 0, 4], [4, 4, 4], [0, 4, 0]], float)
+        (line,) = level_lines(plane, np.array([[0, 1, 2], [0, 2, 3]]), 1.5)
+        self.assertTrue(np.allclose(sorted(line[[0, -1], 1]), [0, 4]))
+        self.assertTrue(np.allclose(line[:, 0], 1.5))

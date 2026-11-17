@@ -153,7 +153,7 @@ def _clip(poly, count, e0, e1):
     return out, filled
 
 
-def depth_tin(design, existing):
+def depth_tin(design, existing, with_design=False):
     """Depth surface (design − existing) on the area both TINs cover.
 
     ``design`` and ``existing`` are (vertices (n, 3), faces (m, 3)) in the same
@@ -166,7 +166,7 @@ def depth_tin(design, existing):
     epx, epy, eq, ebox, ecorner = _planes(exyz, efaces)
     design_area = float(_area(dcorner).sum()) if len(dcorner) else 0.0
     first, second = candidate_pairs(dbox, ebox)
-    pieces = []
+    pieces, levels = [], []
     for start in range(0, len(first), CHUNK):
         i, j = first[start:start + CHUNK], second[start:start + CHUNK]
         poly = dcorner[i].copy()
@@ -188,10 +188,15 @@ def depth_tin(design, existing):
             x, y = tri[:, :, 0], tri[:, :, 1]
             depth = (dpx[ii, None] * x + dpy[ii, None] * y + dq[ii, None]) - (epx[jj, None] * x + epy[jj, None] * y + eq[jj, None])
             pieces.append(np.stack([x, y, depth], axis=2))
+            if with_design:
+                levels.append(dpx[ii, None] * x + dpy[ii, None] * y + dq[ii, None])
     if not pieces:
         raise ValueError("The design and existing-ground surfaces do not overlap.")
     triangles = np.concatenate(pieces).reshape(-1, 3)
     faces = np.arange(len(triangles), dtype=np.int64).reshape(-1, 3)
     corners = triangles.reshape(-1, 3, 3)
     overlay_area = float(_area(corners).sum())
-    return triangles, faces, {"design_area": design_area, "overlay_area": overlay_area, "triangles": len(faces)}
+    stats = {"design_area": design_area, "overlay_area": overlay_area, "triangles": len(faces)}
+    if with_design:
+        stats["design_z"] = np.concatenate(levels).reshape(-1)
+    return triangles, faces, stats

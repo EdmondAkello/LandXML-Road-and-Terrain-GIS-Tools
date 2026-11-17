@@ -18,6 +18,8 @@ from __future__ import annotations
 import csv
 import os
 
+import numpy as np
+
 from qgis.core import (
     Qgis,
     QgsCoordinateTransform,
@@ -43,7 +45,7 @@ from qgis.core import (
 )
 
 from .compat import FIELD_DOUBLE, FIELD_INT, FIELD_STRING
-from .core import bounds, grid_for_bounds, rasterize_tin, read_tin, transform_vertices, write_geotiff
+from .core import _epsg_of, bounds, grid_for_bounds, rasterize_tin, read_tin, transform_vertices, write_geotiff
 from .earthworks_algorithm import (
     QUANTITY_HELP,
     _input_param,
@@ -54,6 +56,7 @@ from .earthworks_algorithm import (
 )
 from .landxml.catalog import read_catalog
 from .landxml.parser import load_document
+from .landxml.plan_features import level_lines, write_plan_features
 from .landxml.tin_overlay import depth_tin
 from .landxml.quantity_units import LINEAR_UNITS, quantity_units
 from .landxml.grading import (
@@ -67,6 +70,7 @@ from .landxml.grading import (
     basin_report_html,
     change_grid,
     comparison_report_html,
+    outline_polygons,
     platform_report_html,
     platform_summary,
     reconcile,
@@ -172,7 +176,7 @@ def _existing_file(algorithm, p, c, doc, feedback):
     return path, other
 
 
-def _depth_surface(path, surface, existing, method, params, feedback, existing_path=None):
+def _depth_surface(path, surface, existing, method, params, feedback, existing_path=None, keep=None):
     """(xyz, faces, meta) of a depth surface in output coordinates.
 
     With ``existing`` blank, ``surface`` is read as a volume (depth) surface.
@@ -193,7 +197,7 @@ def _depth_surface(path, surface, existing, method, params, feedback, existing_p
             raise QgsProcessingException(f"'{surface}' is both the design and the existing-ground surface.")
         try:
             exyz, efaces, emeta = read_tin(source, existing, cancel=feedback.isCanceled, bounds=meta["bounds"])
-            xyz, faces, stats = depth_tin((xyz, faces), (exyz, efaces))
+            xyz, faces, stats = depth_tin((xyz, faces), (exyz, efaces), with_design=keep is not None)
         except ValueError as exc:
             if "touch the requested area" in str(exc):
                 raise QgsProcessingException(
@@ -210,9 +214,39 @@ def _depth_surface(path, surface, existing, method, params, feedback, existing_p
         if uncovered > 1e-6 * max(stats["design_area"], 1.0):
             feedback.pushWarning(f"{uncovered:,.2f} source units² of '{surface}' lie outside '{existing}' and are not counted.")
         meta = dict(meta, depth_from=(surface, existing))
+        if keep is not None:
+            keep.update(raw=xyz, design_z=stats["design_z"])
     if feedback.isCanceled():
         raise QgsProcessingException("Cancelled.")
     return transform_vertices(xyz, method=method, **params), faces, meta
+
+
+FEATURE_LINES_HELP = (
+    "\n\nCivil 3D feature lines (optional): a LandXML file of PlanFeatures in the input file's stored "
+    "coordinates and units (northing easting elevation for Civil 3D), whatever coordinate interpretation "
+    "the GIS outputs use, so it imports back into the source drawing (Insert > LandXML).")
+
+
+def _feature_lines_param(algorithm, label):
+    algorithm.addParameter(QgsProcessingParameterFileDestination(
+        "FEATURE_LINES", label, fileFilter="LandXML (*.xml)", optional=True))
+
+
+def _feature_lines_path(algorithm, p, c):
+    return algorithm.parameterAsFileOutput(p, "FEATURE_LINES", c) if "FEATURE_LINES" in p else ""
+
+
+def _write_feature_lines(out, doc, vertical, features, feedback, group):
+    if not out:
+        return ""
+    if not features:
+        feedback.pushWarning("No feature lines were found to write; the feature-line file is empty.")
+    try:
+        count = write_plan_features(out, features, doc.horizontal_unit, vertical, _epsg_of(doc.root), group)
+    except OSError as exc:
+        raise QgsProcessingException(f"Could not write '{out}': {exc}") from exc
+    feedback.pushInfo(f"{count} feature lines written to {os.path.basename(out)} (source coordinates).")
+    return out
 
 
 def _split_pair(text):
@@ -252,7 +286,7 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             "To reconcile with the Civil 3D cut/fill summary, enter its unadjusted (factor 1.0) cut, fill and area "
             "in the reported units; each is checked against the tolerance and the result is PASS or FAIL. "
             "The Helmert option's scale changes plan areas and volumes; depths stay in source vertical units."
-            + EXISTING_HELP + QUANTITY_HELP
+            + EXISTING_HELP + QUANTITY_HELP + FEATURE_LINES_HELP
         )
 
     def initAlgorithm(self, config=None):
@@ -286,6 +320,7 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
+        _feature_lines_param(self, "Daylight lines (Civil 3D feature lines, LandXML; needs design and existing surfaces)")
         self.addParameter(
             QgsProcessingParameterFileDestination("BANDS_CSV", "Depth-band table (CSV)", fileFilter="CSV (*.csv)", optional=True)
         )
@@ -327,7 +362,20 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
                     f"Choose the volume surface: {reason}. Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
                 )
             fb.pushInfo(f"Volume surface chosen automatically: '{surface}' ({reason}).")
-        xyz, faces, meta = _depth_surface(path, surface, existing, method, params, fb, existing_path)
+        lines_out = _feature_lines_path(self, p, c)
+        keep = {} if lines_out and existing else None
+        xyz, faces, meta = _depth_surface(path, surface, existing, method, params, fb, existing_path, keep)
+        daylight = []
+        if lines_out:
+            if keep:
+                levels = keep["raw"].copy()
+                levels[:, 2] = keep["design_z"]
+                daylight = [{"name": f"Daylight {k}", "points": line,
+                             "description": f"{surface} meets {existing}", "properties": {"source": "daylight"}}
+                            for k, line in enumerate(level_lines(levels, faces, 0.0, values=keep["raw"][:, 2]), 1)]
+            else:
+                fb.pushWarning("Daylight feature lines need the design and existing-ground surfaces (a volume "
+                               "surface holds depths, not levels); none were written.")
         try:
             summary = volume_summary(xyz, faces, bands)
         except ValueError as exc:
@@ -380,6 +428,8 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             "CUT_AREA": reported["cut_area"], "FILL_AREA": reported["fill_area"],
             "CHECK": status, "VOLUME_UNIT": units.volume,
             "REPORT": report or "", "BANDS_CSV": bands_csv or "",
+            "FEATURE_LINES": _write_feature_lines(lines_out, doc, _vertical, daylight, fb, "Daylight lines")
+            if lines_out and keep else "",
         }
 
 
@@ -424,7 +474,7 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
             "overall fall is below the minimum are flagged, because water can pond on them.\n\n"
             "Outputs are platform polygons with these fields and an HTML report with the area in each slope class. "
             "Slopes account for the horizontal and vertical units; the Helmert option's scale changes plan "
-            "distances. Leave the surface blank only when the file has a single surface."
+            "distances. Leave the surface blank only when the file has a single surface." + FEATURE_LINES_HELP
         )
 
     def initAlgorithm(self, config=None):
@@ -441,6 +491,7 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
+        _feature_lines_param(self, "Platform outlines (Civil 3D feature lines, LandXML)")
         self.addOutput(QgsProcessingOutputNumber("PLATFORM_COUNT", "Platforms listed"))
         self.addOutput(QgsProcessingOutputNumber("FLAGGED_COUNT", "Platforms below the minimum fall"))
 
@@ -513,8 +564,19 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
             _write_text(report, platform_report_html(summary, surface, units, os.path.basename(path), warnings))
+        lines_out = _feature_lines_path(self, p, c)
+        outlines = []
+        if lines_out:
+            for item in summary["platforms"]:
+                for k, (outer, holes) in enumerate(outline_polygons(xyz, faces[item["members"]], dims=3), 1):
+                    for h, ring in enumerate([outer, *holes]):
+                        suffix = (f" part {k}" if len(item["polygons"]) > 1 else "") + (f" hole {h}" if h else "")
+                        outlines.append({"name": f"{item['id']} outline{suffix}", "points": np.vstack([ring, ring[:1]]),
+                                         "description": f"Platform {item['id']}, mean level {item['level_mean']:.3f}",
+                                         "properties": {"platform": item["id"]}})
         return {"OUTPUT": dest, "REPORT": report or "", "PLATFORM_COUNT": len(summary["platforms"]),
-                "FLAGGED_COUNT": flagged}
+                "FLAGGED_COUNT": flagged,
+                "FEATURE_LINES": _write_feature_lines(lines_out, doc, vertical, outlines, fb, "Platform outlines")}
 
 
 class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
@@ -543,7 +605,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
             "water would overflow. A rim above the spill level is flagged. With a required volume the tool checks "
             "the storage with freeboard (rim minus freeboard) and reports PASS, PASS TO RIM ONLY (enough only "
             "when filled to the rim), FAIL or NOT CHECKED. Enter the required volume in the reported units."
-            + QUANTITY_HELP
+            + QUANTITY_HELP + FEATURE_LINES_HELP
         )
 
     def initAlgorithm(self, config=None):
@@ -565,6 +627,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
+        _feature_lines_param(self, "Pond rim and design water level (Civil 3D feature lines, LandXML)")
         self.addParameter(
             QgsProcessingParameterFileDestination("TABLE_CSV", "Stage–storage table (CSV)", fileFilter="CSV (*.csv)", optional=True)
         )
@@ -623,6 +686,16 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
         if required is not None:
             (fb.pushInfo if summary["status"] == "PASS" else fb.pushWarning)(
                 f"Capacity {summary['status']}: required {required:,.3f} {units.volume}.")
+        lines_out = _feature_lines_path(self, p, c)
+        rims = []
+        if lines_out:
+            for label, level in (("Rim", summary["rim"]), ("Design water level", summary["design_level"])):
+                if label != "Rim" and not (summary["freeboard"] and level > summary["floor"]):
+                    continue
+                for k, line in enumerate(level_lines(xyz, faces, level), 1):
+                    line[:, 2] = level
+                    rims.append({"name": f"{surface} {label.lower()} {k}", "points": line,
+                                 "description": f"{label} {level:.3f}", "properties": {"level": f"{level:.3f}"}})
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
             _write_text(report, basin_report_html(reported, surface, units, os.path.basename(path), warnings))
@@ -641,6 +714,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
             "RIM_VOLUME": reported["rim_volume"], "FREEBOARD_VOLUME": reported["design_volume"],
             "RIM_LEVEL_USED": summary["rim"], "SPILL_LEVEL": summary["spill"], "FLOOR_LEVEL": summary["floor"],
             "CHECK": summary["status"], "VOLUME_UNIT": units.volume, "REPORT": report or "", "TABLE_CSV": table or "",
+            "FEATURE_LINES": _write_feature_lines(lines_out, doc, _vertical, rims, fb, "Pond rims"),
         }
 
 

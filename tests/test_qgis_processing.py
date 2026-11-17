@@ -595,6 +595,62 @@ class QgisProcessingTests(unittest.TestCase):
             algorithm.processAlgorithm(dict(self._params(GRADING, "EPSG:26915"), DESIGN_SURFACE="", OUTPUT="memory:"),
                                        self.context, self.feedback)
 
+    def test_grading_feature_lines_round_trip_as_plan_features(self):
+        from landxml_plugin.landxml.features import read_line_features
+        from landxml_plugin.landxml.parser import load_document
+
+        def lines(path):
+            records, warnings = read_line_features(load_document(path).root)
+            self.assertFalse(warnings)
+            return records
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = str(Path(directory) / "daylight.xml")
+            params = dict(self._params(GRADING, "EPSG:26915"), VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG",
+                          FEATURE_LINES=out)
+            result = self.algorithms["landxml_grading_quantities"].processAlgorithm(params, self.context, self.feedback)
+            self.assertEqual(result["FEATURE_LINES"], out)
+            (daylight,) = lines(out)
+            self.assertEqual((daylight.kind, daylight.feature_code, daylight.name), ("FeatureLine", "FeatureLine", "Daylight 1"))
+            self.assertEqual(load_document(out).vertical_unit, "meter")
+            # depth = (v - 10) / 5 is zero along v = 10, where the design is z = 98 + 0.1 u + 2.5
+            us = sorted(point[0] for point in daylight.points)
+            self.assertAlmostEqual(us[0], 0.0, places=6)
+            self.assertAlmostEqual(us[-1], 10.0, places=6)
+            for u, v, z in daylight.points:
+                self.assertAlmostEqual(v, 10.0, places=6)
+                self.assertAlmostEqual(z, 100.5 + 0.1 * u, places=6)
+            warnings = []
+            feedback = QgsProcessingFeedback()
+            feedback.pushWarning = warnings.append
+            result = self.algorithms["landxml_grading_quantities"].processAlgorithm(
+                dict(params, VOLUME_SURFACE="Pad Earthworks", EXISTING_SURFACE="", FEATURE_LINES=str(Path(directory) / "x.xml")),
+                self.context, feedback)
+            self.assertEqual(result["FEATURE_LINES"], "")
+            self.assertTrue(any("need the design and existing-ground" in text for text in warnings))
+
+            out = str(Path(directory) / "platforms.xml")
+            result = self.algorithms["landxml_platform_levels"].processAlgorithm(
+                dict(self._params(PLATFORMS, "EPSG:26915"), OUTPUT="memory:", FEATURE_LINES=out), self.context, self.feedback)
+            outlines = {line.name: line for line in lines(out)}
+            self.assertEqual(set(outlines), {"P1 outline", "P2 outline"})
+            for line in outlines.values():
+                ring = np.array(line.points)
+                self.assertTrue(np.allclose(ring[0], ring[-1]))
+                x, y = ring[:, 0], ring[:, 1]
+                self.assertAlmostEqual(abs(0.5 * (np.dot(x[:-1], y[1:]) - np.dot(x[1:], y[:-1]))), 400.0, places=6)
+                self.assertEqual(line.properties.get("platform"), line.name.split()[0])
+
+            out = str(Path(directory) / "pond.xml")
+            self.algorithms["landxml_basin_storage"].processAlgorithm(
+                dict(self._params(BASIN, "EPSG:26915"), BASIN_SURFACE="Test Pond", FREEBOARD=0.5, FEATURE_LINES=out),
+                self.context, self.feedback)
+            water = [line for line in lines(out) if "design water level" in line.name]
+            self.assertEqual(len(water), 1)
+            ring = np.array(water[0].points)
+            self.assertTrue(np.allclose(ring[0], ring[-1]))
+            self.assertTrue(np.allclose(ring[:, 2], 2.5))
+
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]
         with tempfile.TemporaryDirectory() as directory:
