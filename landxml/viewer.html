@@ -58,6 +58,13 @@
     .row { margin: 6px 0; }
     .lbl { font-size: 11px; }
   }
+  #printsheet { display: none; }
+  @media print {
+    @page { size: A3 landscape; margin: 0; }
+    body > *:not(#printsheet) { display: none !important; }
+    #printsheet { display: block; width: 420mm; height: 297mm; }
+    #printsheet img { width: 420mm; height: 297mm; display: block; }
+  }
 </style>
 </head>
 <body>
@@ -74,6 +81,7 @@
   <div id="notice"></div>
   <div id="error"></div>
 </div>
+<div id="printsheet"></div>
 <div id="panel">
   <button id="closesheet" style="float:right" title="Close">✕</button>
   <h1 id="title"></h1>
@@ -102,6 +110,12 @@
   <div id="views"></div>
   <div class="meta" style="margin-top:6px">Current view (paste into the tool's Views):</div>
   <input id="viewtext" readonly>
+  <h2>A3 sheet</h2>
+  <input id="sheettitle" placeholder="Sheet title" style="width:100%;box-sizing:border-box;font:inherit;padding:2px 4px;margin:2px 0">
+  <input id="sheetref" placeholder="Project, drawing no., revision" style="width:100%;box-sizing:border-box;font:inherit;padding:2px 4px;margin:2px 0">
+  <textarea id="sheetnotes" rows="3" placeholder="Notes (one per line)" style="width:100%;box-sizing:border-box;font:inherit;margin:2px 0"></textarea>
+  <div class="row"><button id="a3png">Save A3 PNG</button><button id="a3print">Print / PDF</button></div>
+  <div class="meta">The current view on an A3 landscape sheet: single border, title box bottom right, legend, notes and north arrow (200 dpi).</div>
   <h2>Save image</h2>
   <div class="row">Size <select id="scale"><option value="1">screen</option><option value="2" selected>2 ×</option><option value="3">3 ×</option></select>
     <button id="png">Save PNG</button></div>
@@ -570,17 +584,12 @@ for (const v of S.views) { const b = document.createElement("button"); b.textCon
 const planButton = document.createElement("button"); planButton.textContent = "plan";
 planButton.onclick = () => { stopDrive(true); cam.elevation = 1.55; cam.azimuth = Math.PI; draw(); }; viewsDiv.appendChild(planButton);
 
-// ---------------------------------------------------------------- PNG with legend panel and compass beside the model
-document.getElementById("png").onclick = () => {
-  const k = +document.getElementById("scale").value;
-  const w = canvas.clientWidth * k, h = canvas.clientHeight * k;
-  canvas.width = w; canvas.height = h; render(w, h);
-  const panel = Math.round(Math.max(w * 0.24, 320 * k)), out = document.createElement("canvas");
-  out.width = w + panel; out.height = h; const g = out.getContext("2d");
-  g.fillStyle = "#fff"; g.fillRect(0, 0, out.width, out.height); g.drawImage(canvas, 0, 0);
+// ---------------------------------------------------------------- callouts, compass and legend drawn into an image
+function drawCallouts(g, w, h, k, ox = 0, oy = 0) {
   const { mvp } = matrices(w, h);
-  if (showLabels) {
-    g.font = `600 ${12 * k}px system-ui, Arial`; g.textBaseline = "middle"; g.textAlign = "left";
+  if (!showLabels) return;
+  g.save(); g.translate(ox, oy);
+  g.font = `600 ${12 * k}px system-ui, Arial`; g.textBaseline = "middle"; g.textAlign = "left";
     for (const c of labelPositions(mvp, w, h, k)) {
       const t = S.labels[c.i].text, tw = g.measureText(t).width + 10 * k, x = c.side === "left" ? c.x + c.w - tw : c.x;
       if (c.side === "point") {
@@ -594,36 +603,134 @@ document.getElementById("png").onclick = () => {
       g.fillStyle = "rgba(255,253,231,.95)"; g.strokeStyle = "#b9b39a"; g.fillRect(x, c.y - 9 * k, tw, 18 * k); g.strokeRect(x, c.y - 9 * k, tw, 18 * k);
       g.fillStyle = "#222"; g.fillText(t, x + 5 * k, c.y + k);
     }
-  }
-  g.strokeStyle = "#bbb"; g.beginPath(); g.moveTo(w + 0.5, 0); g.lineTo(w + 0.5, h); g.stroke();
-  const x0 = w + 24 * k; let y = 30 * k;
-  const cx = w + panel / 2, cy = y + 40 * k, r = 32 * k, ang = -(cam.azimuth + Math.PI);
-  g.lineWidth = 1.5 * k; g.strokeStyle = "#555"; g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.stroke();
+  g.restore();
+}
+function drawCompass(g, cx, cy, r, k) {
+  const ang = -(cam.azimuth + Math.PI);
+  g.save(); g.lineWidth = 1.5 * k; g.strokeStyle = "#555"; g.fillStyle = "rgba(255,255,255,.9)";
+  g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.fill(); g.stroke();
   const at = (a, rr) => [cx + rr * Math.sin(a), cy - rr * Math.cos(a)];
   g.fillStyle = "#222"; g.beginPath(); g.moveTo(...at(ang, r * .85)); g.lineTo(...at(ang + 2.6, r * .45)); g.lineTo(cx, cy); g.lineTo(...at(ang - 2.6, r * .45)); g.fill();
   g.font = `700 ${13 * k}px system-ui, Arial`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("N", ...at(ang, r + 11 * k));
-  y = cy + r + 34 * k; g.textAlign = "left"; g.textBaseline = "top";
+  g.restore();
+}
+function layerHidden(info) { const sf = surfaces.find(x => x.info === info); return sf ? !sf.visible : info.visible === false; }
+function legendRows() {
+  const rows = [], seen = new Map();          // surfaces with the same classes share one legend entry
   for (const s of S.surfaces) {
-    const st = s.style; if (!st || !st.classes) continue;
-    g.font = `600 ${13 * k}px system-ui, Arial`; g.fillStyle = "#222"; g.fillText(s.name, x0, y); y += 20 * k;
-    g.font = `${12 * k}px system-ui, Arial`;
-    for (const c of st.classes.slice().reverse()) {
-      g.fillStyle = c.color; g.fillRect(x0, y, 12 * k, 12 * k); g.strokeStyle = "#888"; g.lineWidth = k; g.strokeRect(x0, y, 12 * k, 12 * k);
-      g.fillStyle = "#222"; g.fillText(c.label, x0 + 20 * k, y - k); y += 17 * k;
-    }
-    y += 10 * k;
+    const st = s.style; if (!st || !st.classes || layerHidden(s)) continue;
+    const key = JSON.stringify(st.classes.map(c => [c.color, c.label]));
+    if (seen.has(key)) { const head = seen.get(key); head.head += ", " + s.name; continue; }
+    const head = { head: s.name }; seen.set(key, head); rows.push(head);
+    for (const c of st.classes.slice().reverse()) rows.push({ swatch: c.color, text: c.label });
   }
   const shown = Object.entries(kinds).filter(([, v]) => v.visible);
-  if (shown.length) {
-    g.font = `600 ${13 * k}px system-ui, Arial`; g.fillStyle = "#222"; g.fillText("Lines", x0, y); y += 20 * k; g.font = `${12 * k}px system-ui, Arial`;
-    for (const [kind, v] of shown) { g.fillStyle = v.css; g.fillRect(x0, y + 4 * k, 18 * k, 3 * k); g.fillStyle = "#222"; g.fillText(LINE_NAMES[kind] || kind, x0 + 26 * k, y - k); y += 17 * k; }
+  if (shown.length) { rows.push({ head: "Lines" }); for (const [kind, v] of shown) rows.push({ line: v.css, text: LINE_NAMES[kind] || kind }); }
+  return rows;
+}
+function drawLegend(g, x0, y, k, maxY = Infinity) {
+  g.save(); g.textAlign = "left"; g.textBaseline = "top";
+  for (const r of legendRows()) {
+    if (y > maxY) break;
+    if (r.head) { g.font = `600 ${13 * k}px system-ui, Arial`; g.fillStyle = "#222"; g.fillText(r.head, x0, y + 4 * k); y += 21 * k; continue; }
+    g.font = `${12 * k}px system-ui, Arial`;
+    if (r.swatch) { g.fillStyle = r.swatch; g.fillRect(x0, y, 12 * k, 12 * k); g.strokeStyle = "#888"; g.lineWidth = k; g.strokeRect(x0, y, 12 * k, 12 * k); }
+    else { g.fillStyle = r.line; g.fillRect(x0, y + 4 * k, 18 * k, 3 * k); }
+    g.fillStyle = "#222"; g.fillText(r.text, x0 + 24 * k, y - k); y += 17 * k;
   }
+  g.restore(); return y;
+}
+function legendHeight(k) { return legendRows().reduce((n, r) => n + (r.head ? 21 : 17) * k, 0); }
+function legendWidth(g, k) {
+  let w = 0;
+  for (const r of legendRows()) { g.font = r.head ? `600 ${13 * k}px system-ui, Arial` : `${12 * k}px system-ui, Arial`; w = Math.max(w, g.measureText(r.head || r.text).width + (r.head ? 0 : 24 * k)); }
+  return w;
+}
+// ---------------------------------------------------------------- PNG with legend panel and compass beside the model
+document.getElementById("png").onclick = () => {
+  const k = +document.getElementById("scale").value;
+  const w = canvas.clientWidth * k, h = canvas.clientHeight * k;
+  canvas.width = w; canvas.height = h; render(w, h);
+  const panel = Math.round(Math.max(w * 0.24, 320 * k)), out = document.createElement("canvas");
+  out.width = w + panel; out.height = h; const g = out.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, out.width, out.height); g.drawImage(canvas, 0, 0);
+  drawCallouts(g, w, h, k);
+  g.strokeStyle = "#bbb"; g.beginPath(); g.moveTo(w + 0.5, 0); g.lineTo(w + 0.5, h); g.stroke();
+  const x0 = w + 24 * k; let y = 30 * k;
+  const cy = y + 40 * k, r = 32 * k;
+  drawCompass(g, w + panel / 2, cy, r, k);
+  y = cy + r + 34 * k;
+  drawLegend(g, x0, y, k, h - 80 * k);
   g.fillStyle = "#666"; g.font = `${11 * k}px system-ui, Arial`;
   const notes = [document.getElementById("title").textContent, `Vertical exaggeration × ${ve.toFixed(1)}`, S.crs && S.crs.authid ? `CRS: ${S.crs.authid}` : ""].filter(Boolean);
   notes.forEach((t, i) => g.fillText(t, x0, h - (notes.length - i) * 16 * k - 8 * k));
   const a = document.createElement("a"); a.download = (document.title || "scene").replace(/[^\w.-]+/g, "_") + ".png"; a.href = out.toDataURL("image/png"); a.click();
   resize();
 };
+// ---------------------------------------------------------------- A3 sheet: the current view at 200 dpi with the sheet furniture
+function composeA3() {
+  const dpi = 200, mm = dpi / 25.4, W = Math.round(420 * mm), H = Math.round(297 * mm), k = dpi / 96 * 1.15;
+  const out = document.createElement("canvas"); out.width = W; out.height = H;
+  const g = out.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
+  const m = 10 * mm, iw = Math.round(W - 2 * m), ih = Math.round(H - 2 * m);
+  const saved = [canvas.width, canvas.height];
+  canvas.width = iw; canvas.height = ih; render(iw, ih);           // the model fills the frame
+  g.drawImage(canvas, m, m);
+  drawCallouts(g, iw, ih, k, m, m);
+  canvas.width = saved[0]; canvas.height = saved[1];
+  // single border
+  g.strokeStyle = "#111"; g.lineWidth = 0.5 * mm; g.strokeRect(m, m, iw, ih);
+  const box = (x, y, w, h) => { g.fillStyle = "rgba(255,255,255,.94)"; g.fillRect(x, y, w, h); g.strokeStyle = "#555"; g.lineWidth = 0.25 * mm; g.strokeRect(x, y, w, h); };
+  // floating legend, top left
+  const pad = 4 * mm, lw = Math.min(legendWidth(g, k) + 2 * pad, 120 * mm), lh = Math.min(legendHeight(k) + 2 * pad, ih * 0.62);
+  if (legendRows().length) { box(m + 6 * mm, m + 6 * mm, lw, lh); drawLegend(g, m + 6 * mm + pad, m + 6 * mm + pad, k, m + 6 * mm + lh - 20 * k); }
+  // north arrow, top right
+  drawCompass(g, W - m - 22 * mm, m + 22 * mm, 13 * mm, k * 1.3);
+  // title box, bottom right
+  const tw = 130 * mm, th = 42 * mm, tx = W - m - tw, ty = H - m - th;
+  g.fillStyle = "#fff"; g.fillRect(tx, ty, tw, th); g.strokeStyle = "#111"; g.lineWidth = 0.35 * mm; g.strokeRect(tx, ty, tw, th);
+  g.beginPath(); g.moveTo(tx, ty + 17 * mm); g.lineTo(tx + tw, ty + 17 * mm); g.moveTo(tx, ty + 29 * mm); g.lineTo(tx + tw, ty + 29 * mm); g.stroke();
+  const title = document.getElementById("sheettitle").value || document.getElementById("title").textContent;
+  const ref = document.getElementById("sheetref").value;
+  g.fillStyle = "#111"; g.textAlign = "left"; g.textBaseline = "middle";
+  const fit = (text, size, weight, maxw) => { let f = size; do { g.font = `${weight} ${f}px system-ui, Arial`; f -= 1; } while (g.measureText(text).width > maxw && f > 8); };
+  fit(title, 6 * mm, 700, tw - 8 * mm); g.fillText(title, tx + 4 * mm, ty + 8.5 * mm);
+  fit(ref || " ", 3.6 * mm, 400, tw - 8 * mm); g.fillText(ref, tx + 4 * mm, ty + 23 * mm);
+  g.font = `400 ${2.9 * mm}px system-ui, Arial`; g.fillStyle = "#333";
+  const facts = [`3D view, not to scale · vertical exaggeration × ${ve.toFixed(1)}`,
+                 [S.crs && S.crs.authid ? `CRS ${S.crs.authid}` : "", new Date().toISOString().slice(0, 10)].filter(Boolean).join(" · ")];
+  facts.forEach((t, i) => g.fillText(t, tx + 4 * mm, ty + 32.5 * mm + i * 4.6 * mm));
+  // floating notes, bottom left
+  const notes = document.getElementById("sheetnotes").value.split("\n").map(t => t.trim()).filter(Boolean);
+  if (notes.length) {
+    g.font = `400 ${3 * mm}px system-ui, Arial`;
+    const nw = Math.min(Math.max(...notes.map(t => g.measureText(t).width), g.measureText("NOTES").width) + 8 * mm, W - 2 * m - tw - 20 * mm);
+    const nh = (notes.length + 1) * 5 * mm + 5 * mm, nx = m + 6 * mm, ny = H - m - 6 * mm - nh;
+    box(nx, ny, nw, nh);
+    g.fillStyle = "#111"; g.font = `700 ${3 * mm}px system-ui, Arial`; g.fillText("NOTES", nx + 4 * mm, ny + 5 * mm);
+    g.font = `400 ${3 * mm}px system-ui, Arial`;
+    notes.forEach((t, i) => g.fillText(`${i + 1}. ${t}`, nx + 4 * mm, ny + 10.5 * mm + i * 5 * mm));
+  }
+  resize();
+  return out;
+}
+const sheetName = () => ((document.getElementById("sheettitle").value || document.title || "scene").replace(/[^\w.-]+/g, "_")) + "_A3";
+document.getElementById("a3png").onclick = () => {
+  const a = document.createElement("a"); a.download = sheetName() + ".png"; a.href = composeA3().toDataURL("image/png"); a.click();
+};
+document.getElementById("a3print").onclick = () => {
+  const holder = document.getElementById("printsheet");
+  holder.innerHTML = ""; const img = new Image(); img.src = composeA3().toDataURL("image/png"); holder.appendChild(img);
+  img.onload = () => window.print();       // choose "Save as PDF" in the print dialog for a PDF
+};
+if (/(^|[#&])a3preview\b/.test(location.hash)) {      // viewer.html#a3preview shows the sheet over the page (for checking)
+  setTimeout(() => {
+    const img = new Image(); img.src = composeA3().toDataURL("image/png");
+    img.style.cssText = "position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#888;z-index:99";
+    document.body.appendChild(img);
+  }, 300);
+}
 // ---------------------------------------------------------------- before / after
 const pairs = S.surfaces.filter(s => s.pair);
 if (pairs.length) {

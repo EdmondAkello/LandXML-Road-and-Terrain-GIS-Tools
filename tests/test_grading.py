@@ -886,3 +886,13 @@ class BridgeLayoutTests(unittest.TestCase):
                              piers=[1020.0, 1050.0, 1090.0])
         self.assertEqual(piers, 3)
         self.assertIn("longest 40 m", text)
+
+
+class ViewerTemplateTests(unittest.TestCase):
+    def test_viewer_has_the_phone_layout_touch_gestures_and_a3_sheet(self):
+        from pathlib import Path
+
+        html = (Path(__file__).resolve().parents[1] / "landxml" / "viewer.html").read_text(encoding="utf-8")
+        for needle in ("@media (max-width: 760px)", "touch-action: none", "pinchState()", "function composeA3",
+                       "@page { size: A3 landscape", 'id="a3png"', 'id="a3print"', "function drawCallouts"):
+            self.assertIn(needle, html)

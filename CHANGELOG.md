@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added (A3 sheets)
+- **A3 sheets from the viewer.** The panel's *A3 sheet* section puts the current view on an A3 landscape sheet at 200 dpi: a single border, the title box bottom right (title, project / drawing no. / revision, "3D view, not to scale", vertical exaggeration, CRS and date), a floating legend (surfaces with the same classes share one entry), floating numbered notes and a north arrow; callouts are kept. **Save A3 PNG**, or **Print / PDF** (the browser's print dialog, A3 landscape, no margins; choose *Save as PDF*). It needs no QGIS 3D, so it works anywhere the viewer opens; `viewer.html#a3preview` shows the sheet for checking.
+
 ### Added (viewer on phones and tablets)
 - **The viewer works on phones and tablets.** On narrow screens the model fills the screen and the panel becomes a sheet from the bottom (☰ Layers and tools; `viewer.html#panel` opens it). One finger rotates, two fingers pinch to zoom and move to pan, a tap reads a surface. Saved views step back on portrait screens so the same width fits; the drawing buffer is capped at about 4 million pixels; station ticks give way to the callouts on small screens; a notice suggests a lower triangle budget when a scene is heavy for a phone.
 
