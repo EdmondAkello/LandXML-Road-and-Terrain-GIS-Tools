@@ -7,7 +7,7 @@ cannot be opened. This module keeps the DOM for everything else in the file and
 reads the TIN blocks straight from disk into NumPy arrays:
 
 * :func:`open_skeleton` gives the hardened parser a copy of the file in which
-  the *contents* of every ``<Pnts>`` and ``<Faces>`` block are removed and
+  the *contents* of every ``<Pnts>``, ``<Faces>`` and source ``<Contours>`` block are removed and
   replaced by an attribute holding the block's byte span. The parser (and its
   DOCTYPE/entity checks) sees only the small remainder.
 * :func:`read_points` and :func:`read_faces` read one block in bounded chunks,
@@ -27,6 +27,10 @@ import warnings
 import numpy as np
 
 SPAN_ATTRIBUTE = "landxmltools_span"
+# Blocks whose contents stay on disk. Pnts and Faces are the TIN itself; Contours is the
+# surface's source contour data (often hundreds of MB of text in one element), which no
+# tool reads.
+REGION_NAMES = (b"Pnts", b"Faces", b"Contours")
 BLOCK_BYTES = 48 << 20            # bytes of TIN text parsed at a time
 _NAME = rb"(?:[A-Za-z_][\w.\-]*:)?"
 _TAG_PREFIX = re.compile(rb"<(?:[A-Za-z_][\w.\-]*:)?$")
@@ -62,7 +66,7 @@ def _is_text_compatible(head: bytes) -> bool:
 def _find_regions(mm):
     """Yield (name, tag_start, gt_index, content_start, content_end, end_close) for each TIN block."""
     size = len(mm)
-    names = (b"Pnts", b"Faces")
+    names = REGION_NAMES
     nxt = {n: mm.find(n, 0) for n in names}
     pos = 0
     while True:

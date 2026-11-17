@@ -258,6 +258,19 @@ class TestCropAndDocument(StreamBase):
         self.assertEqual(light["surfaces"][0]["points"], len(pts))
         self.assertEqual(light["surfaces"][0]["triangles"], len(faces))
 
+    def test_source_contours_are_left_on_disk(self):
+        pts, faces = grid(5)
+        contours = "<SourceData><Contours>" + "".join(
+            f'<Contour elev="{k}"><PntList2D>' + " ".join(f"{k + i} {i}" for i in range(500)) + "</PntList2D></Contour>"
+            for k in range(20)) + "</Contours></SourceData>"
+        text = tin_xml(pts, faces).replace("<Definition", contours + "<Definition", 1)
+        path = self.write(text)
+        light, full = load_document(path), load_document(path, full=True)
+        self.assertEqual(len(list(descendants(light.root, "PntList2D"))), 0)
+        self.assertEqual(len(list(descendants(full.root, "PntList2D"))), 20)
+        self.assertEqual(light.inspect()["surfaces"][0]["points"], len(pts))
+        self.assertParity(path)
+
     def test_self_closing_and_empty_blocks(self):
         text = (f'<LandXML xmlns="{NS}" version="1.2"><Units><Metric linearUnit="meter" verticalLinearUnit="meter"/>'
                 '</Units><Surfaces><Surface name="Empty"><Definition surfType="TIN"><Pnts/><Faces></Faces>'
