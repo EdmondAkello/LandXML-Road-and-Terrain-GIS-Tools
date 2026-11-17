@@ -878,6 +878,17 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertTrue(np.allclose(extra["station"], 1000 + xyz[:, 0], atol=1e-3))
             self.assertTrue(np.allclose(extra["offset"], -xyz[:, 1], atol=1e-3))     # right of travel (east) is south
             self.assertIn("Drive through", Path(road["VIEWER"]).read_text(encoding="utf-8"))
+            # feasibility: a synthetic corridor on the profile, its slopes run out to the ground, ground cut under it
+            concept = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", WATER="", SURFACES="EG",
+                                                      SYNTHETIC="Main", SYN_CARRIAGEWAY=20.0, OUTPUT_FOLDER=str(Path(directory) / "concept")),
+                                                 self.context, self.feedback)
+            concept_scene, concept_folder = load_scene(concept["SCENE"])
+            synthetic = next(s for s in concept_scene["surfaces"] if "synthetic" in s["name"])
+            self.assertEqual((synthetic["role"], synthetic["style"]["attribute"]), ("design", "road"))
+            sxyz, _f, _rgb, _d, sextra = read_ply(str(Path(concept_folder) / synthetic["mesh"]), extras=True)
+            centre_z = sxyz[np.abs(sextra["offset"]) < 1e-6][:, 2] + concept_scene["origin"][2]
+            self.assertTrue(np.allclose(centre_z, 102.0, atol=1e-4), centre_z[:5])
+            self.assertTrue(any(s["role"] == "existing_under" for s in concept_scene["surfaces"]))
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
 

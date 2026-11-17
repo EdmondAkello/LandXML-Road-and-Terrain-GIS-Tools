@@ -732,3 +732,25 @@ class SceneSolidsTests(unittest.TestCase):
         wet = sum(0.5 * abs(np.cross(wxyz[b, :2] - wxyz[a, :2], wxyz[c, :2] - wxyz[a, :2])) for a, b, c in wfaces)
         self.assertAlmostEqual(wet, 40.0)
         self.assertTrue(np.allclose(wxyz[:, 2], 4.0))
+
+
+class SyntheticCorridorTests(unittest.TestCase):
+    def test_fill_slopes_run_out_to_flat_ground(self):
+        from landxml_plugin.landxml.synthetic_corridor import synthetic_corridor
+
+        ground = (np.array([[-50, -100, 100], [250, -100, 100], [250, 100, 100], [-50, 100, 100]], float),
+                  np.array([[0, 1, 2], [0, 2, 3]]))
+        xs = np.arange(0, 201, 2.0)
+        centre = np.column_stack([xs, np.zeros_like(xs), np.full_like(xs, 103.0)])          # 3 m above the ground
+        xyz, faces, station, offset, daylight = synthetic_corridor(centre, xs + 1000, ground, 7.0, 1.5, 0.025, 0.04, 1.5, 2.0)
+        edge_z = 103.0 - 0.025 * 3.5 - 0.04 * 1.5
+        self.assertTrue(np.allclose(daylight, 2.0 * (edge_z - 100.0), atol=1e-6))           # 1V:2H fill to the ground
+        self.assertTrue(np.allclose(xyz[offset == 0, 2], 103.0))
+        outer = np.abs(offset) == offset.max()
+        self.assertTrue(np.allclose(xyz[outer, 2], 100.0, atol=1e-6))
+        self.assertTrue(np.allclose(xyz[offset == 0, 1], 0.0))
+        self.assertTrue((xyz[offset > 0, 1] < 0).all())                                     # right of travel (east) is south
+        self.assertEqual(len(faces), 2 * 6 * (len(xs) - 1))
+        self.assertTrue(np.allclose(station[::7], xs + 1000))
+        cut = synthetic_corridor(centre - [0, 0, 6], xs, ground, 7.0, 1.5, 0.025, 0.04, 1.5, 2.0)[4]
+        self.assertTrue(np.allclose(cut, 1.5 * (100.0 - (97.0 - 0.025 * 3.5 - 0.04 * 1.5)), atol=1e-6))  # 1V:1.5H cut

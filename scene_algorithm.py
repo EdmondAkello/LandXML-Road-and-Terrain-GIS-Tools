@@ -266,6 +266,18 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(QgsProcessingParameterMultipleLayers("VECTORS", "Other line or polygon layers",
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
         self.addParameter(number_param("STRETCH", "Long corridors: a view every (stations; 0 = none)", 1000.0, 0.0, 1e6, decimals=0))
+        self.addParameter(QgsProcessingParameterString(
+            "SYNTHETIC", "Synthetic corridor along alignment (concept road where no corridor is designed)", defaultValue="", optional=True))
+        for key, label, default, lo, hi in (
+                ("SYN_CARRIAGEWAY", "Synthetic: carriageway width", 7.0, 2.0, 60.0),
+                ("SYN_SHOULDER", "Synthetic: shoulder width each side", 1.5, 0.0, 10.0),
+                ("SYN_LANES", "Synthetic: lanes", 2.0, 1.0, 8.0),
+                ("SYN_CAMBER", "Synthetic: carriageway crossfall (%)", 2.5, 0.0, 10.0),
+                ("SYN_SHOULDER_FALL", "Synthetic: shoulder crossfall (%)", 4.0, 0.0, 15.0),
+                ("SYN_CUT_SLOPE", "Synthetic: cut slope (horizontal per 1 vertical)", 1.5, 0.1, 10.0),
+                ("SYN_FILL_SLOPE", "Synthetic: fill slope (horizontal per 1 vertical)", 2.0, 0.1, 10.0),
+                ("SYN_MAX_WIDTH", "Synthetic: longest side slope (output units)", 40.0, 1.0, 500.0)):
+            self.addParameter(number_param(key, label, default, lo, hi, decimals=2))
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
         self.addParameter(number_param("EXTRUDE_HEIGHT", "Or raise all polygons by (0 = outlines only)", 0.0, 0.0, 1000.0, decimals=2))
@@ -356,6 +368,75 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             return name, xyz, stations
         return None
 
+    def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor):
+        """Add a synthetic finished road along an alignment's profile, cut into the ground meshes."""
+        from .landxml.grading import volume_summary
+        from .landxml.synthetic_corridor import synthetic_corridor
+        from .landxml.tin_overlay import depth_tin
+
+        if not path:
+            raise QgsProcessingException("A synthetic corridor needs the LandXML file with the alignment and profile.")
+        name = match_name(read_catalog(path).alignments, self.parameterAsString(p, "SYNTHETIC", c).strip(), "alignment")
+        lines = centerlines_3d(path, 2.0, name, fb.pushInfo, fb.isCanceled, max_step=2.0)
+        if not lines:
+            raise QgsProcessingException(f"Alignment '{name}' has no vertical profile; a synthetic corridor follows the profile.")
+        _n, first, _e, stored = lines[0]
+        centre = transform_vertices(stored, method=method, **params)
+        stations = first + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
+        if area is not None:
+            inside = area.keep_points(centre)
+            if inside.sum() < 2:
+                raise QgsProcessingException(f"Alignment '{name}' is outside the area.")
+            idx = np.flatnonzero(inside)
+            centre, stations = centre[idx[0]:idx[-1] + 1], stations[idx[0]:idx[-1] + 1]
+        grounds = [m for m in meshes if m[2] in ("surface", "raster")]
+        if not grounds:
+            raise QgsProcessingException("A synthetic corridor needs a ground surface or DEM to run its side slopes out to.")
+        ground = (grounds[0][3], grounds[0][4])
+        width = self.parameterAsDouble(p, "SYN_CARRIAGEWAY", c)
+        shoulder = self.parameterAsDouble(p, "SYN_SHOULDER", c)
+        lanes = int(self.parameterAsDouble(p, "SYN_LANES", c))
+        xyz, faces, station, offset, daylight = synthetic_corridor(
+            centre, stations, ground, width, shoulder,
+            self.parameterAsDouble(p, "SYN_CAMBER", c) / 100.0, self.parameterAsDouble(p, "SYN_SHOULDER_FALL", c) / 100.0,
+            self.parameterAsDouble(p, "SYN_CUT_SLOPE", c), self.parameterAsDouble(p, "SYN_FILL_SLOPE", c),
+            self.parameterAsDouble(p, "SYN_MAX_WIDTH", c))
+        style = ss.road_style(width, shoulder, lanes)
+        sid = f"syn{len(meshes) + 1}"
+        meshes.append((sid, f"{name} (synthetic corridor)", "design", xyz, faces, style, None))
+        self._synthetic_extra = {sid: {"station": station, "offset": offset}}
+        # cut the ground under the corridor, as for a designed surface drawn over it
+        for index, mesh in enumerate(meshes):
+            if mesh[2] not in ("surface", "raster"):
+                continue
+            gxyz, gfaces = mesh[3].copy(), mesh[4]
+            under = sample_tin((xyz, faces), mesh[3])
+            inside = np.isfinite(under)
+            removed = inside[gfaces].all(axis=1)
+            gxyz[inside, 2] = under[inside]
+            if removed.any():
+                uxyz, ufaces, _u = _compact(mesh[3], gfaces[removed])
+                unders.append((mesh[0], mesh[1], uxyz, ufaces, mesh[5]))
+                keep = gfaces[~removed]
+                if len(keep):
+                    gxyz, keep, _used = _compact(gxyz, keep)
+                    meshes[index] = (*mesh[:3], gxyz, keep, *mesh[5:])
+        try:
+            depth_xyz, depth_faces, _stats = depth_tin((xyz, faces), ground)
+            volumes = volume_summary(depth_xyz, depth_faces)
+            fb.pushInfo(f"Synthetic corridor {stations[0]:.0f}–{stations[-1]:.0f}: about {volumes['cut_volume']:,.0f} cut and "
+                        f"{volumes['fill_volume']:,.0f} fill (cubic output units, concept section, no bulking).")
+        except ValueError:
+            pass
+        fb.pushInfo(f"Side slopes run out {np.median(daylight):.1f} (median), up to {daylight.max():.1f} beyond the shoulders.")
+        short = daylight.max(axis=1) >= self.parameterAsDouble(p, "SYN_MAX_WIDTH", c) - 1e-6
+        if short.any():
+            edges = np.flatnonzero(np.diff(np.concatenate([[0], short.astype(int), [0]])))
+            runs = [f"{stations[a]:.0f}–{stations[b - 1]:.0f}" for a, b in zip(edges[::2], edges[1::2])]
+            fb.pushWarning("Side slopes do not reach the ground within the longest slope at " + ", ".join(runs[:12])
+                           + (" …" if len(runs) > 12 else "") + ": a deep crossing or high embankment, likely a structure "
+                           "at design stage. The volumes above count these stretches as fill.")
+
     # ------------------------------------------------------------------ run
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
@@ -382,6 +463,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         intervals = parse_intervals(self.parameterAsString(p, "CONTOURS", c))
         self._axis = None
         self._corridor_name = None
+        self._synthetic_extra = {}
         area = self._area(p, c, path, method, params, crs, fb)
         corridor_axis = self._axis
         budget = int(self.parameterAsDouble(p, "MAX_TRIANGLES", c))
@@ -470,6 +552,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 area = Area((e.xMinimum(), e.yMinimum(), e.xMaximum(), e.yMaximum()))
             xyz, faces = raster_mesh(layer, crs, area, max(budget // max(len(rasters) + len(meshes), 1), 10_000), fb)
             meshes.append((f"r{k + 1}", layer.name(), "raster", xyz, faces, raster_style, None))
+        synthetic_name = self.parameterAsString(p, "SYNTHETIC", c).strip()
+        if synthetic_name:
+            self._synthetic(p, c, fb, path, method, params, area, meshes, unders, vertical_factor)
         if not meshes:
             raise QgsProcessingException("Nothing to render in the area.")
         total = sum(len(m[4]) for m in meshes)
@@ -490,12 +575,17 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         writer.scene["title"] = title
         road_path = self._road_path(path, method, params, fb) if path and any(
             m[5]["attribute"] == "road" for m in meshes) else None
-        if road_path is None and any(m[5]["attribute"] == "road" for m in meshes):
+        if road_path is None and any(m[5]["attribute"] == "road" and m[0] not in getattr(self, "_synthetic_extra", {})
+                                     for m in meshes):
             raise QgsProcessingException("A road style needs an alignment with a vertical profile in the LandXML file.")
         designs = [m[0] for m in meshes if m[2] == "design"]
         for surface_id, name, role, xyz, faces, style, depth in meshes:
-            if style["attribute"] == "road":
+            if style["attribute"] == "road" and surface_id in getattr(self, "_synthetic_extra", {}):
+                extra = self._synthetic_extra[surface_id]
+                station, offset = extra["station"], extra["offset"]
+            elif style["attribute"] == "road":
                 station, offset = station_offset(xyz, road_path[1][:, :2], road_path[2])
+            if style["attribute"] == "road":
                 slope = np.zeros(len(xyz))
                 np.maximum.at(slope, faces.ravel(), np.repeat(ss.triangle_values(xyz, faces, "slope", None, vertical_factor), 3))
                 resolved = ss.resolve(style, None, unit_label)
