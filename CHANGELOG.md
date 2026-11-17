@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added (choosing instead of typing)
+- **Pickers from the file.** Names that were typed can now be chosen from the LandXML: the 3D scene's corridor alignment (dropdown), synthetic-road alignments and the synthetic ground (checklists, which also list the chosen DEM layers), Earthwork Balance's volume surfaces, and Grading Revision Comparison's second-revision surfaces (read from the second file). The fields stay plain text, so models, scripts and batch runs are unchanged.
+- **Surfaces and styles table.** The 3D scene's *LandXML surfaces and styles* field has an **Edit…** table: surface (from the file), style, and the surface it is drawn over.
+- **Style chooser with your own styles.** Style fields (raster style, site-scene design and ground styles, Surface Classes) list the built-in styles (elevation classes, slope classes, cut/fill depth, aspect, plain colours, finished roads) and the user's saved styles; **★** saves the current style under a name (checked first), **−** removes one. Saved styles live in the QGIS settings and are written into the field as text, so a model never depends on them.
+- A DEM that does not cover the scene area now gets a message with both extents in the output CRS and, when the LandXML's X and Y swapped would fall on the DEM, the advice to choose *Swap X / Y*.
+
 ### Documentation
 - README front page: a one-line summary, three figures from the demonstration data and the highlights before the details. The validation notes of versions 1.5.0 to 1.9.1 moved to `HISTORY.md`.
 
