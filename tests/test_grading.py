@@ -590,3 +590,61 @@ class FootprintLineTests(unittest.TestCase):
             self.assertTrue(np.allclose(line[:, 2], 100 + line[:, 0]))
         self.assertEqual(len(footprint_lines(xyz, np.array(faces), depth, min_length=10.0)), 1)
         self.assertEqual(footprint_lines(xyz, np.array(faces), np.zeros(len(xyz))), [])
+
+
+def _grid_tin(xs, ys, level):
+    X, Y = np.meshgrid(np.asarray(xs, float), np.asarray(ys, float))
+    xyz = np.column_stack([X.ravel(), Y.ravel(), level(X.ravel(), Y.ravel())])
+    n = len(xs)
+    faces = []
+    for r in range(len(ys) - 1):
+        for c in range(n - 1):
+            a, b, d, e = r * n + c, r * n + c + 1, (r + 1) * n + c, (r + 1) * n + c + 1
+            faces += [(a, b, e), (a, e, d)]
+    return xyz, np.array(faces)
+
+
+class EdgeAnalysisTests(unittest.TestCase):
+    def _depth(self, design):
+        from landxml_plugin.landxml.tin_overlay import depth_tin
+
+        ground = (np.array([[-100, -100, 100], [200, -100, 100], [200, 200, 100], [-100, 200, 100]], float),
+                  np.array([[0, 1, 2], [0, 2, 3]]))
+        xyz, faces, stats = depth_tin(design, ground, with_design=True)
+        levels = xyz.copy()
+        levels[:, 2] = stats["design_z"]
+        return levels, faces, xyz[:, 2]
+
+    def test_batters_tie_in_and_an_open_side_is_a_retained_edge(self):
+        from landxml_plugin.landxml.edges import edge_analysis
+
+        def level(x, y):  # platform at 103 over 20..40, 1V:2H batters to the ground west, south and east; cut off at y = 40
+            return np.maximum(100.0, 103.0 - 0.5 * np.maximum.reduce([np.zeros_like(x), 20 - x, x - 40, 20 - y]))
+
+        steps = [14, 15, 16, 17, 18, 19, 20, 30, 40, 41, 42, 43, 44, 45, 46]
+        design = _grid_tin(steps, [14, 15, 16, 17, 18, 19, 20, 30, 40], level)
+        result = edge_analysis(*self._depth(design))
+        sched = result["schedule"]
+        self.assertAlmostEqual(sched["retained_fill"]["max"], 3.0, places=6)
+        self.assertAlmostEqual(sched["retained_fill"]["total"], 32.0, delta=0.5)   # the open north side
+        self.assertAlmostEqual(sched["batter_fill"]["max"], 3.0, places=6)
+        self.assertAlmostEqual(sched["batter_fill"]["total"], 32.0 + 2 * 26.0, delta=1.0)
+        self.assertAlmostEqual(result["perimeter"], 32 * 2 + 26 * 2, delta=1.0)   # an at-grade corner triangle is cut off
+        self.assertNotIn("retained_cut", sched)
+        self.assertEqual(result["steps"], [])
+
+    def test_wall_between_platforms_is_an_internal_step(self):
+        from landxml_plugin.landxml.edges import edge_analysis
+
+        xs = [0, 10, 24.95, 25, 35, 35.05, 50, 60]
+        design = _grid_tin(xs, xs, lambda x, y: np.where((x >= 25) & (x <= 35) & (y >= 25) & (y <= 35), 105.0, 103.0))
+        result = edge_analysis(*self._depth(design))
+        self.assertAlmostEqual(result["schedule"]["retained_fill"]["total"], 240.0, places=6)
+        self.assertAlmostEqual(result["schedule"]["retained_fill"]["max"], 3.0, places=6)
+        (step,) = result["steps"]
+        self.assertEqual(step["type"], "wall")
+        self.assertAlmostEqual(step["height"], 2.0, places=6)
+        self.assertAlmostEqual(step["length"], 40.1, delta=0.2)
+        self.assertAlmostEqual(step["x"], 30.0, delta=0.1)
+        with self.assertRaises(ValueError):
+            edge_analysis(design[0], design[1], np.zeros(len(design[0])))

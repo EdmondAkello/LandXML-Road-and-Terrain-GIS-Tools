@@ -21,6 +21,7 @@ from .grading_algorithm import (
     RevisionComparisonAlgorithm,
 )
 from .inspect_algorithm import InspectLandXMLAlgorithm
+from .site_tools_algorithm import EdgeAnalysisAlgorithm
 from .prepare_algorithm import PrepareLandXMLAlgorithm
 from .sections_algorithm import CrossSectionSheetsAlgorithm
 from .design_report_algorithm import DesignReportAlgorithm
@@ -77,6 +78,7 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
         self.addAlgorithm(BasinStorageAlgorithm())
         self.addAlgorithm(EarthworkBalanceAlgorithm())
         self.addAlgorithm(RevisionComparisonAlgorithm())
+        self.addAlgorithm(EdgeAnalysisAlgorithm())
         self.addAlgorithm(CrossSectionSheetsAlgorithm())
         self.addAlgorithm(DesignReportAlgorithm())
         self.addAlgorithm(DesignReviewAlgorithm())

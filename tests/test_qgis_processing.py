@@ -56,6 +56,7 @@ GRADING = str(ROOT / "tests" / "fixtures" / "generic" / "grading_volume.xml")
 PLATFORMS = str(ROOT / "tests" / "fixtures" / "generic" / "platforms.xml")
 BASIN = str(ROOT / "tests" / "fixtures" / "generic" / "basin.xml")
 BALANCE = str(ROOT / "tests" / "fixtures" / "generic" / "balance.xml")
+EDGES = str(ROOT / "tests" / "fixtures" / "generic" / "edges.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
@@ -81,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 23)
+        self.assertEqual(len(self.algorithms), 24)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
@@ -649,6 +650,31 @@ class QgisProcessingTests(unittest.TestCase):
             ring = np.array(water[0].points)
             self.assertTrue(np.allclose(ring[0], ring[-1]))
             self.assertTrue(np.allclose(ring[:, 2], 2.5))
+
+    def test_grading_edge_analysis_layers_report_and_schedule(self):
+        algorithm = self.algorithms["landxml_grading_edges"]
+        with tempfile.TemporaryDirectory() as directory:
+            params = dict(self._params(EDGES, "EPSG:26915"), DESIGN_SURFACE="Site FG", EXISTING_SURFACE="Site EG",
+                          OUTPUT=str(Path(directory) / "edges.gpkg"), STEPS=str(Path(directory) / "steps.gpkg"),
+                          REPORT=str(Path(directory) / "edges.html"), SCHEDULE_CSV=str(Path(directory) / "edges.csv"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertAlmostEqual(result["RETAINED_LENGTH"], 240.0, places=6)
+            self.assertAlmostEqual(result["MAX_RETAINED_HEIGHT"], 3.0, places=6)
+            self.assertEqual((result["BATTER_LENGTH"], result["STEP_COUNT"]), (0, 1))
+            package = ogr.Open(result["OUTPUT"])
+            runs = [(f.GetField("edge"), f.GetField("side"), f.GetField("height_band"), round(f.GetField("length"), 6))
+                    for f in package.GetLayer(0)]
+            self.assertEqual(sorted(runs), [("retained", "fill", "3–4", 240.0)])
+            package = ogr.Open(result["STEPS"])
+            (step,) = list(package.GetLayer(0))
+            self.assertEqual((step.GetField("type"), round(step.GetField("height"), 6)), ("wall", 2.0))
+            step = package = None
+            rows = Path(directory, "edges.csv").read_text(encoding="utf-8").splitlines()
+            self.assertTrue(rows[1].startswith("retained,fill,240.000,3.000"))
+            self.assertIn("Grading edge analysis", Path(directory, "edges.html").read_text(encoding="utf-8"))
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(self._params(EDGES, "EPSG:26915"), DESIGN_SURFACE="Site FG",
+                                            EXISTING_SURFACE="Site FG", OUTPUT="memory:"), self.context, self.feedback)
 
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]

@@ -93,6 +93,24 @@ def _chain(segments, decimals):
     return lines
 
 
+def weld(xyz, faces, decimals=6):
+    """Merge vertices at the same plan position (to ``decimals``) and drop zero-area faces.
+
+    Returns (vertices, faces, source index of each vertex)."""
+    xyz = np.asarray(xyz, float)
+    faces = np.asarray(faces, np.int64)
+    used = np.unique(faces)
+    keys = np.round(xyz[used, :2], decimals)
+    _unique, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
+    welded = xyz[used[first]]
+    remap = np.empty(int(used.max()) + 1, np.int64)
+    remap[used] = inverse.reshape(-1)
+    welded_faces = remap[faces]
+    area2 = np.cross(welded[welded_faces[:, 1], :2] - welded[welded_faces[:, 0], :2],
+                     welded[welded_faces[:, 2], :2] - welded[welded_faces[:, 0], :2])
+    return welded, welded_faces[np.abs(area2) > 0], used[first]
+
+
 def footprint_lines(xyz, faces, depth, tolerance=0.01, min_length=1.0, decimals=6):
     """Outline of the earthworks footprint of a depth surface: closed lines around the
     triangles where |depth| exceeds ``tolerance``, with elevations from ``xyz[:, 2]``
@@ -108,16 +126,7 @@ def footprint_lines(xyz, faces, depth, tolerance=0.01, min_length=1.0, decimals=
     worked = faces[np.abs(depth[faces]).max(axis=1) > tolerance]
     if not len(worked):
         return []
-    used = np.unique(worked)
-    keys = np.round(xyz[used, :2], decimals)
-    _unique, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
-    welded = xyz[used[first]]
-    remap = np.empty(int(used.max()) + 1, np.int64)
-    remap[used] = inverse.reshape(-1)
-    welded_faces = remap[worked]
-    area2 = np.cross(welded[welded_faces[:, 1], :2] - welded[welded_faces[:, 0], :2],
-                     welded[welded_faces[:, 2], :2] - welded[welded_faces[:, 0], :2])
-    welded_faces = welded_faces[np.abs(area2) > 0]
+    welded, welded_faces, _first = weld(xyz, worked, decimals)
     lines = []
     for line in ring_lines(outline_polygons(welded, welded_faces, dims=3)):
         if np.hypot(*np.diff(line[:, :2], axis=0).T).sum() >= min_length:
