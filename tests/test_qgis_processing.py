@@ -198,7 +198,7 @@ class QgisProcessingTests(unittest.TestCase):
             if parameter is None:
                 continue
             checked.append(name)
-            self.assertIn("OpenRoads: usually Swap X / Y", parameter.description(), name)
+            self.assertIn("store Northing first: choose Swap X / Y", parameter.description(), name)
             for text in ("Northing, Easting", "Civil 3D", "X = Easting", "known control point"):
                 self.assertIn(text, parameter.help(), name)
             self.assertEqual(parameter.defaultValue(), 0, name)
@@ -1952,3 +1952,39 @@ class RefineNearTests(unittest.TestCase):
         longest = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
         centroid_x = tri[:, :, 0].mean(axis=1)
         self.assertTrue((longest[(centroid_x > 45) & (centroid_x < 55)] <= 10.0 + 1e-9).all())
+
+
+class RasterCoverageMessageTests(unittest.TestCase):
+    def test_a_raster_that_misses_the_area_names_the_extents_and_the_swap(self):
+        from qgis.core import QgsCoordinateReferenceSystem, QgsRasterLayer
+        from landxml_plugin.scene_algorithm import Area, _coverage_message
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "dem.tif")
+            ds = gdal.GetDriverByName("GTiff").Create(path, 10, 10, 1, gdal.GDT_Float32)
+            ds.SetGeoTransform((200_000, 100, 0, 9_900_000, 0, -100))            # easting, northing
+            from osgeo import osr
+            srs = osr.SpatialReference(); srs.ImportFromEPSG(21037); ds.SetProjection(srs.ExportToWkt())
+            ds = None
+            layer = QgsRasterLayer(path, "dem")
+            crs = QgsCoordinateReferenceSystem("EPSG:21037")
+            swapped = _coverage_message(layer, crs, Area((9_899_200, 200_200, 9_899_500, 200_500)))   # northing first
+            self.assertIn("Swap X / Y", swapped)
+            elsewhere = _coverage_message(layer, crs, Area((500_000, 100_000, 500_100, 100_100)))
+            self.assertNotIn("Swap X / Y", elsewhere)
+            self.assertIn("raster covers X 200,000–201,000", elsewhere)
+
+
+class CoordinateOrderAdviceTests(unittest.TestCase):
+    def test_area_of_use_advice_points_to_the_other_axis_order_without_choosing(self):
+        from qgis.core import QgsCoordinateReferenceSystem
+        from landxml_plugin.processing_common import area_of_use_hint, remembered_method
+
+        crs = QgsCoordinateReferenceSystem("EPSG:21037")
+        northing_first = (9_886_035.0, 202_951.0, 9_898_762.0, 211_672.0)
+        self.assertIn("Swap X / Y", area_of_use_hint(northing_first, crs, "stored"))
+        self.assertIsNone(area_of_use_hint(northing_first, crs, "swap"))
+        easting_first = (202_951.0, 9_886_035.0, 211_672.0, 9_898_762.0)
+        self.assertIsNone(area_of_use_hint(easting_first, crs, "stored"))
+        self.assertIn("Use stored coordinates", area_of_use_hint(easting_first, crs, "swap"))
+        self.assertEqual(remembered_method(), 0)          # nothing remembered outside the desktop

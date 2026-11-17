@@ -13,10 +13,39 @@ from .landxml.catalog import match_name, read_catalog
 from .landxml.parser import load_document
 
 
+PROJECT_SCOPE, METHOD_KEY = "LandXMLTools", "coordinateMethod"
+
+
+def remembered_method():
+    """The coordinate interpretation last used in this QGIS project (0 = stored order when none)."""
+    try:
+        from qgis.core import QgsProject
+
+        value, found = QgsProject.instance().readNumEntry(PROJECT_SCOPE, METHOD_KEY, 0)
+        return int(value) if found else 0
+    except Exception:  # pragma: no cover - outside a QGIS project
+        return 0
+
+
+def remember_method(index):
+    """Keep the user's choice in the project file, so the next dialog in this project starts from it.
+
+    Only interactive runs are remembered (QGIS desktop); scripts, models and tests are not affected, and
+    nothing is ever chosen for the user: the dialog shows the remembered choice and can be changed."""
+    try:
+        from qgis.core import QgsProject
+        from qgis.utils import iface
+    except ImportError:  # pragma: no cover
+        return
+    if iface is None:
+        return
+    QgsProject.instance().writeEntry(PROJECT_SCOPE, METHOD_KEY, int(index))
+
+
 def coordinate_param(name, options):
     parameter = QgsProcessingParameterEnum(
-        name, "Coordinate interpretation (OpenRoads: usually Swap X / Y)",
-        options=options, defaultValue=0,
+        name, "Coordinate order (Civil 3D and OpenRoads store Northing first: choose Swap X / Y)",
+        options=options, defaultValue=remembered_method() if remembered_method() < len(options) else 0,
     )
     parameter.setHelp(
         "Standard LandXML plan coordinates are Northing, Easting (Y, X), with elevation third. "
@@ -24,7 +53,8 @@ def coordinate_param(name, options):
         "so choose Swap X / Y for these exports to produce X = Easting, Y = Northing. "
         "Use stored coordinates only when the file is verified to contain Easting, Northing already. "
         "Check a known control point and use the same interpretation for matching geometry and terrains. "
-        "Prepare LandXML preserves axis order. Swapping does not identify the CRS or convert units."
+        "Prepare LandXML preserves axis order. Swapping does not identify the CRS or convert units. "
+        "The choice made in a QGIS project is offered again by the next tool you open in that project."
     )
     return parameter
 
@@ -67,6 +97,37 @@ def northing_first_warning(bounds):
     return None
 
 
+def area_of_use_hint(bounds, crs, method):
+    """A warning when the coordinates, as interpreted, fall outside the output CRS's area of use but would
+    fall inside it in the other axis order. Only advice: the interpretation is never changed automatically."""
+    if bounds is None or crs is None or not crs.isValid():
+        return None
+    try:
+        from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY, QgsProject
+
+        area = crs.bounds()
+        if area.isEmpty():
+            return None
+        to_geographic = QgsCoordinateTransform(crs, QgsCoordinateReferenceSystem("EPSG:4326"), QgsProject.instance())
+
+        def inside(x0, y0, x1, y1):
+            try:
+                return all(area.contains(to_geographic.transform(QgsPointXY(x, y)))
+                           for x, y in ((x0, y0), (x1, y1), ((x0 + x1) / 2, (y0 + y1) / 2)))
+            except Exception:
+                return False
+    except Exception:  # pragma: no cover
+        return None
+    x0, y0, x1, y1 = bounds
+    as_stored, swapped = (x0, y0, x1, y1), (y0, x0, y1, x1)
+    used, other = (as_stored, swapped) if method == "stored" else (swapped, as_stored)
+    if not inside(*used) and inside(*other):
+        choice = "Swap X / Y" if method == "stored" else "Use stored coordinates"
+        return (f"As interpreted, the coordinates fall outside the area of use of {crs.authid()}; in the other axis order "
+                f"they fall inside it. Choose '{choice}' unless you know otherwise (the choice is never made for you).")
+    return None
+
+
 def coordinate_choices(algorithm, parameters, context, feedback, path):
     """Read explicitly supplied CRS/transform settings; never infer source CRS."""
     document = load_document(path)
@@ -104,10 +165,15 @@ def coordinate_choices(algorithm, parameters, context, feedback, path):
             f"Unknown coordinate interpretation option {method_index}."
         )
     method = methods[method_index]
+    remember_method(method_index)
     if method in ("stored", "offset"):
         warning = northing_first_warning(report["bounds"])
         if warning:
             feedback.pushWarning(warning)
+    if method in ("stored", "swap"):
+        hint = area_of_use_hint(report["bounds"], out, method)
+        if hint:
+            feedback.pushWarning(hint)
     src = algorithm.parameterAsCrs(parameters, "SOURCE_CRS", context)
     if method == "reproject" and (
         parameters.get("SOURCE_CRS") in (None, "") or not src.isValid()

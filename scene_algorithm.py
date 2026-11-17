@@ -41,6 +41,7 @@ from .landxml.scene import SceneWriter, extrude, parse_views, station_offset, wa
 from .landxml.scene_viewer import write_viewer
 from .landxml.tin_overlay import TinIndex, sample_tin
 from .params import number_param
+from .processing_widgets import name_param, names_param, style_param, surfaces_param
 from .processing_common import coordinate_choices
 from .project_settings import ProjectSettingsAlgorithm
 from .road_features import _alignment_parts, _param_coordinates, centerlines_3d, merge_parts
@@ -96,6 +97,10 @@ def _inverse_box(box, method, params):
         return (y0 - dy, x0 - dx, y1 - dy, x1 - dx)
     return None
 
+
+
+class _OutsideArea(QgsProcessingException):
+    """A synthetic road with no part inside the scene area."""
 
 class Area:
     """The area to render, in output coordinates: a box, optionally with polygon rings."""
@@ -175,6 +180,24 @@ def _densify(points, step):
     return np.asarray(out)
 
 
+def _coverage_message(layer, crs, area):
+    """Why a raster misses the scene area, with the extents, and a hint when swapped LandXML axes would fit."""
+    extent = layer.extent()
+    if layer.crs() != crs:
+        extent = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance()).transformBoundingBox(extent)
+    x0, y0, x1, y1 = area.box[:4]
+    text = (f"Raster '{layer.name()}' does not cover the scene area. In the output CRS the area is "
+            f"X {x0:,.0f}–{x1:,.0f}, Y {y0:,.0f}–{y1:,.0f}; the raster covers X {extent.xMinimum():,.0f}–"
+            f"{extent.xMaximum():,.0f}, Y {extent.yMinimum():,.0f}–{extent.yMaximum():,.0f}.")
+    swapped = QgsRectangle(y0, x0, y1, x1)
+    if swapped.intersects(extent):
+        text += (" With the LandXML's X and Y swapped the area would fall on the raster: choose Coordinate "
+                 "interpretation 'Swap X / Y' (Civil 3D and OpenRoads usually store northing first).")
+    else:
+        text += " Check the raster's CRS and the scene's output CRS, or choose a raster that covers the design."
+    return text
+
+
 def raster_mesh(layer, crs, area, budget, feedback):
     """(xyz, faces) of a single-band DEM raster in the output CRS, inside the area, thinned to ``budget`` triangles."""
     from osgeo import gdal, osr
@@ -196,7 +219,7 @@ def raster_mesh(layer, crs, area, budget, feedback):
     r0 = max(int((box.yMaximum() - gt[3]) / gt[5]) - 1, 0)
     r1 = min(int((box.yMinimum() - gt[3]) / gt[5]) + 2, dataset.RasterYSize)
     if c1 - c0 < 2 or r1 - r0 < 2:
-        raise QgsProcessingException(f"Raster '{layer.name()}' does not cover the area.")
+        raise QgsProcessingException(_coverage_message(layer, crs, area))
     cells = (c1 - c0) * (r1 - r0)
     stride = max(1, int(math.ceil(math.sqrt(2 * cells / max(budget, 1000)))))
     if stride > 1:
@@ -263,22 +286,27 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             "Rasters: single-band DEMs, thinned to stay within the triangle budget.\n"
             "Linework: alignments (3D where a profile covers them, otherwise draped), station labels, LandXML "
             "feature lines and breaklines, and any QGIS line or polygon layers (their own Z, or draped on the first "
-            "surface). Roads stay lines over the terrain; nothing is cut into it.\n"
+            "surface). A road style ('TOP = road: 7, 1.5, 2') is painted as a finished road and cuts the ground under it.\n"
+            "Synthetic road (feasibility): choose alignments with a profile but no corridor; a concept road is built "
+            "on the profile (widths, crossfalls and slopes under Advanced) with side slopes run out to the chosen ground "
+            "(surfaces or DEMs; the first wins). Structures come from a CSV schedule or typed entries such as "
+            "'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9, skew 15; 1+364-2+293 = bridge, spans 7'. DEMs can be "
+            "shifted or fitted to the alignment's surveyed ground profile.\n"
             "Views: 'name: dx, dy, dz; ...' (direction from the area towards the camera). Coordinates are in the "
             "output CRS relative to the scene origin.")
 
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterFile("INPUT", "LandXML file (optional)", extension="xml", optional=True))
-        self.addParameter(QgsProcessingParameterString("SURFACES", "LandXML surfaces and styles", defaultValue="", optional=True))
+        self.addParameter(surfaces_param("SURFACES", "LandXML surfaces and styles"))
         self.addParameter(QgsProcessingParameterString("CONTOURS", "Contour intervals (source vertical units)", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterMultipleLayers("RASTERS", "DEM rasters", QgsProcessing.SourceType.TypeRaster, optional=True))
-        self.addParameter(QgsProcessingParameterString("RASTER_STYLE", "Raster style", defaultValue="elevation"))
+        self.addParameter(style_param("RASTER_STYLE", "Raster style", default="elevation"))
         self.addParameter(QgsProcessingParameterNumber("RASTER_CONTOURS", "Raster contour interval (0 = none)",
                                                        QgsProcessingParameterNumber.Type.Double, 0.0, minValue=0.0))
         self.addParameter(QgsProcessingParameterExtent("AREA", "Area (map extent)", optional=True))
         self.addParameter(QgsProcessingParameterFeatureSource("AREA_LAYER", "Area (polygons)",
                                                               [QgsProcessing.SourceType.TypeVectorPolygon], optional=True))
-        self.addParameter(QgsProcessingParameterString("CORRIDOR", "Corridor: alignment name", defaultValue="", optional=True))
+        self.addParameter(name_param("CORRIDOR", "Corridor: alignment name", "alignments"))
         self.addParameter(number_param("CORRIDOR_WIDTH", "Corridor width either side (output units)", 60.0, 1.0, 1e5, decimals=1))
         self.addParameter(QgsProcessingParameterNumber("STATION_FROM", "Corridor from station (blank = start)",
                                                        QgsProcessingParameterNumber.Type.Double, optional=True))
@@ -290,37 +318,38 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(QgsProcessingParameterMultipleLayers("VECTORS", "Other line or polygon layers",
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
         self.addParameter(number_param("STRETCH", "Long corridors: a view every (stations; 0 = none)", 1000.0, 0.0, 1e6, decimals=0))
-        self.addParameter(QgsProcessingParameterString(
-            "SYNTHETIC", "Synthetic corridor along alignments (concept road where no corridor is designed; separate names with ;)", defaultValue="", optional=True))
+        self.addParameter(names_param(
+            "SYNTHETIC", "Synthetic road: alignments (concept road on the profile)", "alignments", ";"))
         for key, label, default, lo, hi in (
-                ("SYN_CARRIAGEWAY", "Synthetic: carriageway width", 7.0, 2.0, 60.0),
-                ("SYN_SHOULDER", "Synthetic: shoulder width each side", 1.5, 0.0, 10.0),
-                ("SYN_LANES", "Synthetic: lanes", 2.0, 1.0, 8.0),
-                ("SYN_CAMBER", "Synthetic: carriageway crossfall (%)", 2.5, 0.0, 10.0),
-                ("SYN_SHOULDER_FALL", "Synthetic: shoulder crossfall (%)", 4.0, 0.0, 15.0),
-                ("SYN_CUT_SLOPE", "Synthetic: cut slope (horizontal per 1 vertical)", 1.5, 0.1, 10.0),
-                ("SYN_FILL_SLOPE", "Synthetic: fill slope (horizontal per 1 vertical)", 2.0, 0.1, 10.0),
-                ("SYN_MAX_WIDTH", "Synthetic: longest side slope (output units)", 40.0, 1.0, 500.0)):
+                ("SYN_CARRIAGEWAY", "Synthetic road: carriageway width", 7.0, 2.0, 60.0),
+                ("SYN_SHOULDER", "Synthetic road: shoulder width each side", 1.5, 0.0, 10.0),
+                ("SYN_LANES", "Synthetic road: lanes", 2.0, 1.0, 8.0),
+                ("SYN_CAMBER", "Synthetic road: carriageway crossfall (%)", 2.5, 0.0, 10.0),
+                ("SYN_SHOULDER_FALL", "Synthetic road: shoulder crossfall (%)", 4.0, 0.0, 15.0),
+                ("SYN_CUT_SLOPE", "Synthetic road: cut slope (horizontal per 1 vertical)", 1.5, 0.1, 10.0),
+                ("SYN_FILL_SLOPE", "Synthetic road: fill slope (horizontal per 1 vertical)", 2.0, 0.1, 10.0),
+                ("SYN_MAX_WIDTH", "Synthetic road: longest side slope (output units)", 40.0, 1.0, 500.0)):
             self.addParameter(number_param(key, label, default, lo, hi, decimals=2))
-        self.addParameter(QgsProcessingParameterString(
-            "SYN_GROUND", "Synthetic: ground surfaces or DEMs, first wins where they overlap (blank = the first in the scene; separate with ,)", defaultValue="", optional=True))
+        self.addParameter(names_param(
+            "SYN_GROUND", "Synthetic road: ground (first wins; blank = first surface)",
+            "surfaces", ",", layers_param="RASTERS"))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_BRIDGES", "Synthetic: bridges where the side slopes do not reach the ground", defaultValue=True))
-        self.addParameter(number_param("SYN_BRIDGE_SPAN", "Synthetic: bridge span", 25.0, 5.0, 200.0, decimals=1))
+            "SYN_BRIDGES", "Synthetic road: bridges where slopes miss the ground", defaultValue=True))
+        self.addParameter(number_param("SYN_BRIDGE_SPAN", "Synthetic road: bridge span", 25.0, 5.0, 200.0, decimals=1))
         self.addParameter(QgsProcessingParameterFile(
-            "SYN_STRUCTURES_CSV", "Synthetic: culvert and bridge schedule (CSV)", extension="csv", optional=True))
+            "SYN_STRUCTURES_CSV", "Synthetic road: culvert and bridge schedule (CSV)", extension="csv", optional=True))
         self.addParameter(QgsProcessingParameterString(
-            "SYN_STRUCTURES", "Synthetic: structures typed in (e.g. 1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9)",
+            "SYN_STRUCTURES", "Synthetic road: structures typed in (1+250 = box 3 x 2 x 2)",
             defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_FIT_PROFILE", "Synthetic: fit DEMs to the surveyed ground profile along the road (valleys at crossings)",
+            "SYN_FIT_PROFILE", "Synthetic road: fit DEMs to the surveyed ground profile",
             defaultValue=False))
-        self.addParameter(number_param("SYN_FIT_WIDTH", "Synthetic: profile fit fades out over (each side)", 60.0, 5.0, 1000.0,
+        self.addParameter(number_param("SYN_FIT_WIDTH", "Synthetic road: profile fit fades out over", 60.0, 5.0, 1000.0,
                                        decimals=1))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_CHANNELS", "Synthetic: cut a channel into the ground at each culvert", defaultValue=True))
+            "SYN_CHANNELS", "Synthetic road: cut a channel at each culvert", defaultValue=True))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_MATCH_PROFILE", "Synthetic: shift DEMs to match the alignment's surveyed ground profile", defaultValue=False))
+            "SYN_MATCH_PROFILE", "Synthetic road: shift DEMs to the surveyed ground profile", defaultValue=False))
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
         self.addParameter(number_param("EXTRUDE_HEIGHT", "Or raise all polygons by (0 = outlines only)", 0.0, 0.0, 1000.0, decimals=2))
@@ -487,13 +516,13 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         lines = centerlines_3d(path, 2.0, name, fb.pushInfo, fb.isCanceled, max_step=2.0)
         if not lines:
             raise QgsProcessingException(f"Alignment '{name}' has no vertical profile; a synthetic corridor follows the profile.")
-        _n, first, _e, stored = lines[0]
+        _n, start_station, _e, stored = lines[0]
         centre = transform_vertices(stored, method=method, **params)
-        stations = first + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
+        stations = start_station + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
         if area is not None:
             inside = area.keep_points(centre)
             if inside.sum() < 2:
-                raise QgsProcessingException(f"Alignment '{name}' is outside the area.")
+                raise _OutsideArea(f"Alignment '{name}' is outside the area.")
             idx = np.flatnonzero(inside)
             centre, stations = centre[idx[0]:idx[-1] + 1], stations[idx[0]:idx[-1] + 1]
         grounds = [m for m in meshes if m[2] in ("surface", "raster")]
@@ -908,10 +937,20 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 area = Area((e.xMinimum(), e.yMinimum(), e.xMaximum(), e.yMaximum()))
             xyz, faces = raster_mesh(layer, crs, area, max(budget // max(len(rasters) + len(meshes), 1), 10_000), fb)
             meshes.append((f"r{k + 1}", layer.name(), "raster", xyz, faces, raster_style, None))
-        for order, synthetic_name in enumerate(n.strip() for n in self.parameterAsString(p, "SYNTHETIC", c).split(";")):
-            if synthetic_name:
+        wanted_roads = [n.strip() for n in self.parameterAsString(p, "SYNTHETIC", c).split(";") if n.strip()]
+        built, outside = 0, []
+        for synthetic_name in wanted_roads:
+            try:
                 self._synthetic(p, c, fb, path, method, params, area, meshes, unders, vertical_factor, synthetic_name,
-                                first=not order)
+                                first=not built)
+                built += 1
+            except _OutsideArea as error:          # one of several roads may lie beyond a limited area
+                outside.append(str(error))
+        if outside:
+            if not built:
+                raise QgsProcessingException(" ".join(outside) + " Widen the area, or check the coordinate order.")
+            fb.pushWarning("Skipped: " + " ".join(outside) + " (the scene area is limited by the stations, "
+                           "corridor or extent chosen).")
         self._cut_synthetic(meshes, unders)
         if not meshes:
             raise QgsProcessingException("Nothing to render in the area.")

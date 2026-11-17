@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Fixed (renders and long roads)
+- Flat faces now shade flat right up to their edges: the viewer splits vertex normals where faces meet at
+  more than 30°, so a platform no longer picks up the slope of the batter or wall beside it.
+- Edge lines draw cleanly: daylight lines, platform outlines and retained edges that share an edge layer
+  on top of each other instead of z-fighting into a speckled band, and a retained edge follows the top of
+  its wall instead of stepping down and up the face (a comb of ticks). Designs also draw in front of the
+  ground where the two meet.
+- Callout labels stay inside the model area on high-density screens (their width was measured in CSS
+  pixels but placed in device pixels).
+- With several synthetic roads, one that lies outside a limited scene area is skipped with a warning
+  instead of failing the run.
+- A synthetic road that started at chainage 0 skipped the DEM fit to the surveyed ground profile (the
+  start chainage shadowed the first-road flag).
+- Long corridors are much faster: a 36 km synthetic road on a 30 m DEM took 280 s, now about 105 s. The point-in-polygon test sorts the points once and tests each edge only against its own band,
+  and ground refinement first skips triangles nowhere near the road.
+
+### Changed (coordinate order)
+- The coordinate option now reads **Coordinate order (Civil 3D and OpenRoads store Northing first: choose Swap X / Y)**.
+- When the coordinates, as interpreted, fall outside the output CRS's area of use but inside it in the other axis order, the log says so and names the option to choose. The order is still never changed automatically.
+- In QGIS desktop, the order chosen in a project is offered by the next tool you open in that project (stored in the project file). Scripts, models and batch runs are unaffected.
+
+### Added (A3 sheets)
+- **A3 sheets from the viewer.** The panel's *A3 sheet* section puts the current view on an A3 landscape sheet at 200 dpi: a single border, the title box bottom right (title, project / drawing no. / revision, "3D view, not to scale", vertical exaggeration, CRS and date), and a column on the left with the north arrow, the legend (surfaces with the same classes share one entry) and numbered notes. The model has its own viewport beside the column and above the title box, fitted to the design, so nothing on the sheet covers it; callouts are kept. **Save A3 PNG**, or **Print / PDF** (the browser's print dialog, A3 landscape, no margins; choose *Save as PDF*). It needs no QGIS 3D, so it works anywhere the viewer opens; `viewer.html#a3preview` shows the sheet for checking.
+
+### Added (viewer on phones and tablets)
+- **The viewer works on phones and tablets.** On narrow screens the model fills the screen and the panel becomes a sheet from the bottom (☰ Layers and tools; `viewer.html#panel` opens it). One finger rotates, two fingers pinch to zoom and move to pan, a tap reads a surface. Saved views step back on portrait screens so the same width fits; the drawing buffer is capped at about 4 million pixels; station ticks give way to the callouts on small screens; a notice suggests a lower triangle budget when a scene is heavy for a phone.
+
+### Added (choosing instead of typing)
+- **Pickers from the file.** Names that were typed can now be chosen from the LandXML: the 3D scene's corridor alignment (dropdown), synthetic-road alignments and the synthetic ground (checklists, which also list the chosen DEM layers), Earthwork Balance's volume surfaces, and Grading Revision Comparison's second-revision surfaces (read from the second file). The fields stay plain text, so models, scripts and batch runs are unchanged.
+- **Surfaces and styles table.** The 3D scene's *LandXML surfaces and styles* field has an **Edit…** table: surface (from the file), style, and the surface it is drawn over.
+- **Style chooser with your own styles.** Style fields (raster style, site-scene design and ground styles, Surface Classes) list the built-in styles (elevation classes, slope classes, cut/fill depth, aspect, plain colours, finished roads) and the user's saved styles; **★** saves the current style under a name (checked first), **−** removes one. Saved styles live in the QGIS settings and are written into the field as text, so a model never depends on them.
+- A DEM that does not cover the scene area now gets a message with both extents in the output CRS and, when the LandXML's X and Y swapped would fall on the DEM, the advice to choose *Swap X / Y*.
+
 ### Documentation
 - README front page: a one-line summary, three figures from the demonstration data and the highlights before the details. The validation notes of versions 1.5.0 to 1.9.1 moved to `HISTORY.md`.
 

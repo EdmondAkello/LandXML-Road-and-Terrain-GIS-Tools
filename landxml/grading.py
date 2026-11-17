@@ -679,15 +679,28 @@ def balance_report_html(balance, units, source_file="", warnings=()):
 
 # ------------------------------------------------------- revision comparison
 def _inside_many(points, ring):
-    """Vectorised even-odd test of many (n, 2) points against one closed ring."""
-    x, y = points[:, 0], points[:, 1]
+    """Vectorised even-odd test of many (n, 2) points against one closed ring.
+
+    Points are sorted by y once, so each edge only tests the points inside its own y-band
+    (the half-open band [min y, max y) used by the crossing rule).
+    """
+    points = np.asarray(points, dtype=float)
     inside = np.zeros(len(points), dtype=bool)
-    xs, ys = ring[:, 0], ring[:, 1]
-    for (x0, y0), (x1, y1) in zip(zip(xs, ys), zip(np.roll(xs, -1), np.roll(ys, -1))):
-        if y0 == y1:
+    if not len(points) or len(ring) < 3:
+        return inside
+    order = np.argsort(points[:, 1], kind="stable")
+    x, y = points[order, 0], points[order, 1]
+    parity = np.zeros(len(points), dtype=bool)
+    x0s, y0s = ring[:, 0], ring[:, 1]
+    x1s, y1s = np.roll(x0s, -1), np.roll(y0s, -1)
+    lows = np.searchsorted(y, np.minimum(y0s, y1s), side="left")
+    highs = np.searchsorted(y, np.maximum(y0s, y1s), side="left")
+    for x0, y0, x1, y1, lo, hi in zip(x0s, y0s, x1s, y1s, lows, highs):
+        if y0 == y1 or lo >= hi:
             continue
-        crosses = ((y0 > y) != (y1 > y)) & (x < (x1 - x0) * (y - y0) / (y1 - y0) + x0)
-        inside ^= crosses
+        band_x, band_y = x[lo:hi], y[lo:hi]
+        parity[lo:hi] ^= band_x < (x1 - x0) * (band_y - y0) / (y1 - y0) + x0
+    inside[order] = parity
     return inside
 
 
