@@ -1040,11 +1040,19 @@ class SurfaceCutFillAlgorithm(ProjectSettingsAlgorithm):
         resolution = self.parameterAsDouble(p, "RESOLUTION", c)
         nodata = self.parameterAsDouble(p, "NODATA", c)
         surfaces = []
+        first_bounds = None
         for name in (base_name, compare_name):
             try:
-                xyz, faces, meta = read_tin(path, name, cancel=fb.isCanceled)
+                # Cells outside the first surface are no data, so the second is read only where it can matter.
+                xyz, faces, meta = read_tin(path, name, cancel=fb.isCanceled, bounds=first_bounds)
             except ValueError as exc:
-                raise QgsProcessingException(str(exc)) from exc
+                raise QgsProcessingException(
+                    f"'{name}' does not overlap '{base_name}'." if first_bounds else str(exc)) from exc
+            if first_bounds is None:
+                first_bounds = meta["bounds"]
+            if meta.get("cropped"):
+                fb.pushInfo(f"{name}: read {meta['face_count']:,} of {meta['source_face_count']:,} triangles "
+                            f"where it overlaps '{base_name}'.")
             if meta["invisible_face_count"]:
                 fb.pushInfo(f"{name}: skipped {meta['invisible_face_count']:,} invisible triangles.")
             surfaces.append((transform_vertices(xyz, method=method, **params), faces))
