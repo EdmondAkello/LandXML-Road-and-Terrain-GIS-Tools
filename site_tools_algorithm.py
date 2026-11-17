@@ -411,3 +411,278 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         fb.pushInfo(f"Scene written: {scene} ({len(writer.scene['surfaces'])} surfaces, {len(writer.scene['lines'])} "
                     f"lines, {len(writer.scene['labels'])} labels, {len(writer.scene['views'])} views).")
         return {"OUTPUT_FOLDER": os.path.dirname(scene), "SCENE": scene}
+
+
+def _class_fields():
+    fields = QgsFields()
+    for name, kind in (("class", FIELD_STRING), ("low", FIELD_DOUBLE), ("high", FIELD_DOUBLE), ("area", FIELD_DOUBLE)):
+        fields.append(QgsField(name, kind))
+    return fields
+
+
+def _style_classes_layer(resolved):
+    """A post-processor applying the style's colours to a class polygon layer."""
+    def apply(layer):
+        from qgis.PyQt.QtGui import QColor
+        from qgis.core import QgsCategorizedSymbolRenderer, QgsRendererCategory, QgsSymbol
+
+        categories = []
+        for item in resolved["classes"]:
+            symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+            symbol.setColor(QColor(item["color"]))
+            symbol.symbolLayer(0).setStrokeStyle(0)        # no outline between classes
+            categories.append(QgsRendererCategory(item["label"], symbol, item["label"]))
+        layer.setRenderer(QgsCategorizedSymbolRenderer("class", categories))
+    return apply
+
+
+class SurfaceStyleAlgorithm(ProjectSettingsAlgorithm):
+    def createInstance(self):
+        return SurfaceStyleAlgorithm()
+
+    def name(self):
+        return "landxml_surface_style"
+
+    def displayName(self):
+        return "Surface Classes (Slope, Elevation, Depth or Aspect)"
+
+    def group(self):
+        return GROUP
+
+    def groupId(self):
+        return GROUP_ID
+
+    def shortHelpString(self):
+        return (
+            "Classes a TIN surface by elevation, slope (%), cut/fill depth or aspect and writes one polygon per "
+            "class (triangles of a class merged), styled with the class colours, with each class's plan area. "
+            "Depth needs an existing-ground surface. The style is the same text the 3D scene and the Site Grading "
+            "Report use: a preset (elevation, slope, depth, aspect), 'attribute: break, break, ...' with an optional "
+            "'| colours or palette' (cut_fill, slope_classes, terrain, greys, aspect), 'elevation: equal 9' or "
+            "'elevation: quantile 6', or 'plain #rrggbb'. Slope classes default to the platform classes: flat below "
+            "2 %, sloping to 30 %, batter to 250 % and near-vertical above.")
+
+    def initAlgorithm(self, config=None):
+        _input_param(self)
+        self.addParameter(name_param("SURFACE", "Surface", "surfaces"))
+        self.addParameter(QgsProcessingParameterFile(
+            "EXISTING_FILE", "Existing-ground LandXML for depth (blank = the same file)", extension="xml", optional=True))
+        self.addParameter(name_param("EXISTING_SURFACE", "Existing-ground surface (depth only)", "surfaces",
+                                     file_param="EXISTING_FILE", fallback_file_param="INPUT"))
+        self.addParameter(QgsProcessingParameterString("STYLE", "Style", defaultValue="slope"))
+        _param_coordinates(self)
+        _vertical_unit_param(self)
+        self.addParameter(QgsProcessingParameterFeatureSink("OUTPUT", "Surface classes", type=QgsProcessing.SourceType.TypeVectorPolygon))
+
+    def processAlgorithm(self, p, c, fb):
+        from .core import read_tin
+        from .landxml import surface_style as ss
+        from .processing_common import attach_post_processor
+
+        path = self.parameterAsFile(p, "INPUT", c)
+        if not path or not os.path.isfile(path):
+            raise QgsProcessingException("Input LandXML file does not exist.")
+        method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
+        horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
+        if horizontal is None:
+            raise QgsProcessingException("Surface classes require an output CRS in metres, feet or US survey feet.")
+        try:
+            style = ss.parse_style(self.parameterAsString(p, "STYLE", c), "slope")
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        existing_path, existing_doc = _existing_file(self, p, c, doc, fb)
+        surface = _resolve(read_catalog(path).surfaces, self.parameterAsString(p, "SURFACE", c), "surface")
+        if not surface:
+            raise QgsProcessingException("Choose the surface to class.")
+        depth = None
+        if style["attribute"] == "depth":
+            existing = _resolve(read_catalog(existing_path or path).surfaces,
+                                self.parameterAsString(p, "EXISTING_SURFACE", c), "existing-ground surface")
+            if not existing:
+                raise QgsProcessingException("A depth style needs an existing-ground surface.")
+            keep = {}
+            _depth_surface(path, surface, existing, method, params, fb, existing_path, keep, overlay=False)
+            raw, faces, depth = _design_depth(keep)
+        else:
+            try:
+                raw, faces, meta = read_tin(path, surface, cancel=fb.isCanceled)
+            except ValueError as exc:
+                raise QgsProcessingException(str(exc)) from exc
+        units, vertical = _grading_units(self, p, c, [doc] + ([existing_doc] if existing_doc else []), fb, horizontal)
+        vertical_factor = LINEAR_UNITS[vertical.lower()][0] / LINEAR_UNITS[horizontal.lower()][0]
+        xyz = transform_vertices(raw, method=method, **params)
+        try:
+            values = ss.triangle_values(xyz, faces, style["attribute"], depth, vertical_factor)
+            resolved = ss.resolve(style, values, units.depth)
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        index = ss.classify(values, resolved)
+        count = len(resolved["classes"])
+        areas = ss.class_areas(xyz, faces, index, count)
+        fields = _class_fields()
+        sink, dest = self.parameterAsSink(p, "OUTPUT", c, fields, QgsWkbTypes.Type.MultiPolygon, crs)
+        if sink is None:
+            raise QgsProcessingException("Could not create the surface classes output.")
+        for k, polygons in ss.class_regions(xyz, faces, index, count).items():
+            item = resolved["classes"][k]
+            feature = QgsFeature(fields)
+            parts = [[[QgsPointXY(float(x), float(y)) for x, y in ring[:, :2]] + [QgsPointXY(float(ring[0][0]), float(ring[0][1]))]
+                      for ring in [outer, *holes]] for outer, holes in polygons]
+            feature.setGeometry(QgsGeometry.fromMultiPolygonXY(parts))
+            feature.setAttributes([item["label"], item["low"], item["high"], float(areas[k])])
+            sink.addFeature(feature)
+            fb.pushInfo(f"{item['label']}: {areas[k]:,.1f} {units.area}")
+        attach_post_processor(c, dest, _style_classes_layer(resolved))
+        return {"OUTPUT": dest}
+
+
+class GradingReportAlgorithm(ProjectSettingsAlgorithm):
+    def createInstance(self):
+        return GradingReportAlgorithm()
+
+    def name(self):
+        return "landxml_grading_report"
+
+    def displayName(self):
+        return "Site Grading Report (HTML)"
+
+    def group(self):
+        return GROUP
+
+    def groupId(self):
+        return GROUP_ID
+
+    def shortHelpString(self):
+        return (
+            "One HTML report of a graded site from its design and existing-ground surfaces: exact cut and fill "
+            "(the depth surface built from both TINs), plan maps in the chosen surface styles with the daylight "
+            "line and platform labels, the platforms with their levels and falls, the edge schedule (retained edges "
+            "and batters by height band) and internal steps. Each part matches the corresponding single tool: "
+            "Grading Quantities, Platform Levels and Falls and Grading Edge Analysis. The map styles use the same "
+            "text as Surface Classes and the 3D scene, for example 'depth', 'slope' or 'elevation: equal 8'.")
+
+    def initAlgorithm(self, config=None):
+        from .grading_algorithm import _volume_parameter
+
+        _design_and_existing_params(self)
+        self.addParameter(QgsProcessingParameterString("TITLE", "Report title", defaultValue="Site grading report"))
+        self.addParameter(QgsProcessingParameterString("MAP_STYLES", "Plan map styles (separated by semicolons)",
+                                                       defaultValue="depth; slope"))
+        self.addParameter(_volume_parameter())
+        self.addParameter(number_param("FLAT_PCT", "Flat (platform) threshold (% slope)", 2.0, 0.01, 30.0, decimals=2))
+        self.addParameter(number_param("MIN_FALL_PCT", "Minimum platform fall (%)", 0.5, 0.0, 30.0, decimals=2))
+        _param_coordinates(self)
+        _vertical_unit_param(self)
+        self.addParameter(QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)"))
+        for name, label in (("CUT_VOLUME", "Cut volume"), ("FILL_VOLUME", "Fill volume"), ("PLAN_AREA", "Plan area")):
+            self.addOutput(QgsProcessingOutputNumber(name, label))
+
+    def processAlgorithm(self, p, c, fb):
+        import html as html_module
+
+        from .grading_algorithm import _volume_unit, outline_polygons, platform_summary
+        from .landxml import surface_style as ss
+        from .landxml.grading import volume_summary
+        from .landxml.plan_features import footprint_lines
+        from .landxml.reports import _cards, _document, _table
+        from .landxml.tin_overlay import depth_tin
+
+        path = self.parameterAsFile(p, "INPUT", c)
+        if not path or not os.path.isfile(path):
+            raise QgsProcessingException("Input LandXML file does not exist.")
+        method, crs, _src, params, doc = coordinate_choices(self, p, c, fb, path)
+        horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
+        if horizontal is None:
+            raise QgsProcessingException("The grading report requires an output CRS in metres, feet or US survey feet.")
+        try:
+            styles = [ss.parse_style(text) for text in self.parameterAsString(p, "MAP_STYLES", c).split(";") if text.strip()]
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        existing_path, existing_doc = _existing_file(self, p, c, doc, fb)
+        units, vertical = _grading_units(self, p, c, [doc] + ([existing_doc] if existing_doc else []), fb, horizontal,
+                                         _volume_unit(self, p, c))
+        vertical_factor = LINEAR_UNITS[vertical.lower()][0] / LINEAR_UNITS[horizontal.lower()][0]
+        catalog = read_catalog(path)
+        design = _resolve(catalog.surfaces, self.parameterAsString(p, "DESIGN_SURFACE", c), "design surface")
+        existing = _resolve(read_catalog(existing_path or path).surfaces,
+                            self.parameterAsString(p, "EXISTING_SURFACE", c), "existing-ground surface")
+        if not design or not existing:
+            raise QgsProcessingException("Choose the design surface and the existing-ground surface.")
+        keep = {}
+        _depth_surface(path, design, existing, method, params, fb, existing_path, keep, overlay=False)
+        try:
+            dxyz, dfaces, _stats = depth_tin(keep["design"], keep["existing"])
+            summary = units.volumes(volume_summary(transform_vertices(dxyz, method=method, **params), dfaces))
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        raw, faces, depth = _design_depth(keep)
+        xyz = transform_vertices(raw, method=method, **params)
+        platforms = platform_summary(xyz, faces, vertical_factor, self.parameterAsDouble(p, "FLAT_PCT", c) / 100.0,
+                                     self.parameterAsDouble(p, "MIN_FALL_PCT", c) / 100.0)
+        try:
+            edges = edge_analysis(xyz, faces, depth, vertical_factor, flat=self.parameterAsDouble(p, "FLAT_PCT", c) / 100.0)
+        except ValueError:
+            edges = None
+        daylight = [transform_vertices(line, method=method, **params) for line in footprint_lines(raw, faces, depth)]
+        labels = []
+        for item in platforms["platforms"]:
+            outer = outline_polygons(xyz, faces[item["members"]])[0][0]
+            labels.append((outer[:, 0].mean(), outer[:, 1].mean(), f"{item['id']} {item['level_mean']:.2f}"))
+
+        v, a, d, length = units.volume, units.area, units.depth, units.length
+        body = [f"<p class='meta'>Source: {html_module.escape(os.path.basename(path))} · design {html_module.escape(design)} "
+                f"on {html_module.escape(existing)}"
+                + (f" ({html_module.escape(os.path.basename(existing_path))})" if existing_path else "") + "</p>",
+                _cards([(f"Cut ({v})", f"{summary['cut_volume']:,.1f}"), (f"Fill ({v})", f"{summary['fill_volume']:,.1f}"),
+                        (f"Net, fill − cut ({v})", f"{summary['net_volume']:+,.1f}"), (f"Plan area ({a})", f"{summary['plan_area']:,.1f}"),
+                        ("Platforms", str(len(platforms["platforms"])))])]
+        for style in styles:
+            try:
+                values = ss.triangle_values(xyz, faces, style["attribute"], depth, vertical_factor)
+                resolved = ss.resolve(style, values, units.depth)
+            except ValueError as exc:
+                raise QgsProcessingException(str(exc)) from exc
+            index = ss.classify(values, resolved)
+            regions = ss.class_regions(xyz, faces, index, len(resolved["classes"]))
+            titles = {"depth": "Cut and fill depth", "slope": "Slope classes", "elevation": "Design levels", "aspect": "Aspect"}
+            body += [f"<h2>{titles[style['attribute']]}</h2>",
+                     ss.plan_svg([(regions, resolved)], legend=resolved, lines=[(line, "#222", 1.2) for line in daylight],
+                                 labels=labels if style["attribute"] != "depth" else ())]
+            areas = ss.class_areas(xyz, faces, index, len(resolved["classes"]))
+            body.append(_table(["Class", f"Area ({a})", "Share (%)"],
+                               [(item["label"], areas[k], 100 * areas[k] / max(areas.sum(), 1e-12))
+                                for k, item in enumerate(resolved["classes"]) if areas[k] > 0], 1))
+        body += ["<h2>Quantities</h2>", "<p class='note'>Exact prism volumes of the depth surface built from the two TINs "
+                 "(design − existing; positive is fill). In place, with no shrinkage or bulking.</p>",
+                 _table(["Quantity", "Value"], [
+                     (f"Cut ({v})", summary["cut_volume"]), (f"Fill ({v})", summary["fill_volume"]),
+                     (f"Net, fill − cut ({v})", summary["net_volume"]), (f"Plan area ({a})", summary["plan_area"]),
+                     (f"Cut area ({a})", summary["cut_area"]), (f"Fill area ({a})", summary["fill_area"]),
+                     (f"Maximum cut ({d})", summary["max_cut"]), (f"Maximum fill ({d})", summary["max_fill"])], 2),
+                 "<h2>Platforms</h2>",
+                 _table(["Platform", f"Area ({a})", f"Mean level ({d})", f"Min ({d})", f"Max ({d})", "Overall fall (%)",
+                         "Falls towards", "Flag"],
+                        [(item["id"], item["area"], item["level_mean"], item["level_min"], item["level_max"],
+                          100 * item["fall"], "–" if item["fall_bearing"] is None else f"{item['fall_bearing']:.0f}°",
+                          "below minimum fall" if item["below_min_fall"] else "") for item in platforms["platforms"]], 2)
+                 if platforms["platforms"] else "<p>No platforms.</p>"]
+        if edges:
+            sched = edges["schedule"]
+            labels_ = list(next(iter(sched.values()))["bands"]) if sched else []
+            body += ["<h2>Edges</h2>",
+                     f"<p class='note'>Footprint edge {edges['perimeter']:,.1f} {length}, of which tie-ins "
+                     f"{edges['tie_in_length']:,.1f} {length}. See Grading Edge Analysis for the method.</p>",
+                     _table(["Edge", "Side", f"Length ({length})", f"Max ({d})", *[f"{b} {d}" for b in labels_],
+                             f"Face over 1 {d} ({a})"],
+                            [(key.split("_")[0], key.split("_")[1], e["total"], e["max"], *e["bands"].values(), e["face_over_1"])
+                             for key, e in sched.items()], 1) if sched else "<p>No retained edges or batters.</p>"]
+            if edges["steps"]:
+                body += ["<h3>Internal steps</h3>", _table(
+                    ["Step", "Type", f"Height ({d})", f"Top ({d})", f"Bottom ({d})", f"Length ({length})"],
+                    [(s["id"], s["type"], s["height"], s["top"], s["bottom"], s["length"]) for s in edges["steps"]], 2)]
+        report = self.parameterAsFileOutput(p, "REPORT", c)
+        _write_text(report, _document(self.parameterAsString(p, "TITLE", c) or "Site grading report", "".join(body)))
+        fb.pushInfo(f"Cut {summary['cut_volume']:,.2f} {v}; fill {summary['fill_volume']:,.2f} {v}; "
+                    f"{len(platforms['platforms'])} platforms.")
+        return {"REPORT": report, "CUT_VOLUME": summary["cut_volume"], "FILL_VOLUME": summary["fill_volume"],
+                "PLAN_AREA": summary["plan_area"]}

@@ -71,11 +71,11 @@ def triangle_values(xyz, faces, attribute, depth=None, vertical_factor=1.0):
     raise ValueError(f"Unknown surface attribute: {attribute}")
 
 
-def _nice(value):
-    if not math.isfinite(value) or value == 0:
+def _nice(value, step):
+    """``value`` rounded to two significant figures of the class width ``step``."""
+    if not math.isfinite(value) or step <= 0:
         return value
-    digits = 2 - int(math.floor(math.log10(abs(value))))
-    return round(value, max(digits, 0))
+    return round(value, max(1 - int(math.floor(math.log10(step))), 0))
 
 
 def resolve(style, values=None, vertical_unit="m"):
@@ -90,10 +90,12 @@ def resolve(style, values=None, vertical_unit="m"):
         if count < 2 or not len(data):
             breaks = []
         elif spec.get("method", "equal") == "quantile":
-            breaks = sorted(set(_nice(v) for v in np.quantile(data, np.linspace(0, 1, count + 1)[1:-1])))
+            step = (float(data.max()) - float(data.min())) / count
+            breaks = sorted(set(_nice(v, step) for v in np.quantile(data, np.linspace(0, 1, count + 1)[1:-1])))
         else:
             low, high = float(data.min()), float(data.max())
-            breaks = [_nice(low + (high - low) * k / count) for k in range(1, count)] if high > low else []
+            step = (high - low) / count
+            breaks = sorted(set(_nice(low + step * k, step) for k in range(1, count))) if high > low else []
     breaks = [float(b) for b in breaks]
     if breaks != sorted(breaks) or len(set(breaks)) != len(breaks):
         raise ValueError("Style breaks must be increasing.")

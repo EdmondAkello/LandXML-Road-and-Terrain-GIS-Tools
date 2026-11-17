@@ -82,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 25)
+        self.assertEqual(len(self.algorithms), 27)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
@@ -727,6 +727,37 @@ class QgisProcessingTests(unittest.TestCase):
             algorithm.processAlgorithm(dict(params, VIEWS="sw: 0, 0, 0"), self.context, self.feedback)
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, LABELS="no position"), self.context, self.feedback)
+
+    def test_surface_classes_and_site_grading_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = dict(self._params(EDGES, "EPSG:26915"))
+            result = self.algorithms["landxml_surface_style"].processAlgorithm(
+                dict(base, SURFACE="Site FG", STYLE="slope", OUTPUT=str(Path(directory) / "slope.gpkg")),
+                self.context, self.feedback)
+            package = ogr.Open(result["OUTPUT"])
+            areas = {f.GetField("class"): round(f.GetField("area"), 3) for f in package.GetLayer(0)}
+            package = None
+            self.assertAlmostEqual(areas["Flat (platforms) < 2 %"], 3600 - 4 * 10.05 * 0.05 + 0.0, delta=0.05)
+            self.assertIn("Near-vertical > 250 %", areas)
+            depth = self.algorithms["landxml_surface_style"].processAlgorithm(
+                dict(base, SURFACE="Site FG", EXISTING_SURFACE="Site EG", STYLE="depth: 4", OUTPUT=str(Path(directory) / "d.gpkg")),
+                self.context, self.feedback)
+            package = ogr.Open(depth["OUTPUT"])
+            areas = {f.GetField("class"): round(f.GetField("area"), 3) for f in package.GetLayer(0)}
+            package = None
+            self.assertAlmostEqual(areas["≥ 4 m"], 100.0, delta=1.5)   # the pad and half of its thin wall strip
+            with self.assertRaises(QgsProcessingException):
+                self.algorithms["landxml_surface_style"].processAlgorithm(
+                    dict(base, SURFACE="Site FG", STYLE="depth", OUTPUT="memory:"), self.context, self.feedback)
+            report = self.algorithms["landxml_grading_report"].processAlgorithm(
+                dict(base, DESIGN_SURFACE="Site FG", EXISTING_SURFACE="Site EG", MAP_STYLES="depth; slope; elevation: equal 3",
+                     REPORT=str(Path(directory) / "site.html")), self.context, self.feedback)
+            self.assertAlmostEqual(report["FILL_VOLUME"], 3600 * 3 + 100 * 2 + 40 * 0.05 * 2 * 0.5 + 0.005, places=6)   # pad wall wedges
+            self.assertAlmostEqual(report["CUT_VOLUME"], 0.0, places=6)
+            text = Path(report["REPORT"]).read_text(encoding="utf-8")
+            for part in ("Site grading report", "Cut and fill depth", "Slope classes", "Design levels", "<svg",
+                         "Platforms", "Internal steps", "retained"):
+                self.assertIn(part, text)
 
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]
