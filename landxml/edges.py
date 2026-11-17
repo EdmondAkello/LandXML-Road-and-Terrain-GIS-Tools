@@ -46,10 +46,11 @@ def _band_label(height, bands):
     return f"≥{low:g}"
 
 
-def _nearest_level(points, targets, levels, chunk=512):
+def _nearest_level(points, targets, levels, budget=4_000_000):
     """Level of the nearest target (plan distance) for each point; NaN without targets."""
     if not len(targets):
         return np.full(len(points), np.nan)
+    chunk = max(1, budget // len(targets))
     out = np.empty(len(points))
     for start in range(0, len(points), chunk):
         p = points[start:start + chunk, None, :]
@@ -119,7 +120,14 @@ def edge_analysis(xyz, faces, depth, vertical_factor=1.0, tolerance=0.01, tie=0.
     slope = triangle_slopes(w_xyz, w_faces, vertical_factor)
     steep, batter = slope >= STEEP_FROM, (slope >= BATTER_FROM) & (slope < STEEP_FROM)
     flat_faces = slope < flat
-    flat_vertices = np.unique(w_faces[flat_faces]) if flat_faces.any() else np.array([], np.int64)
+    # the nearest flat point to an edge lies on the edge of a flat area, so only those vertices are searched
+    if flat_faces.any():
+        sub = np.sort(np.concatenate([w_faces[flat_faces][:, [0, 1]], w_faces[flat_faces][:, [1, 2]],
+                                      w_faces[flat_faces][:, [2, 0]]]), axis=1)
+        unique, counts = np.unique(sub, axis=0, return_counts=True)
+        flat_vertices = np.unique(unique[counts == 1])
+    else:
+        flat_vertices = np.array([], np.int64)
     targets, target_levels = w_xyz[flat_vertices, :2], w_xyz[flat_vertices, 2]
 
     runs, edges_on_boundary = [], set()
