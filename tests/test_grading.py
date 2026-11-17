@@ -700,3 +700,16 @@ class SurfaceStyleTests(unittest.TestCase):
         svg = ss.plan_svg([(regions, resolved)], legend=resolved)
         self.assertIn("<svg", svg)
         self.assertIn("Batter 30–250 %", svg)
+
+
+class BandPieceTests(unittest.TestCase):
+    def test_bands_are_exact_on_a_plane(self):
+        from landxml_plugin.landxml import surface_style as ss
+
+        xyz = np.array([[0, 0, 0], [10, 0, 10], [10, 10, 10], [0, 10, 0]], float)   # value = x
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        resolved = ss.resolve(ss.parse_style("elevation: 2.5, 5"))
+        pieces = ss.band_pieces(xyz, faces, xyz[:, 2], resolved)
+        self.assertTrue(np.allclose(ss.piece_areas(pieces, 3), [25.0, 25.0, 50.0]))
+        svg = ss.plan_svg([(pieces, resolved)], legend=resolved)
+        self.assertIn("stroke-width='0.4'", svg)

@@ -160,6 +160,71 @@ def parse_style(text, attribute=None):
     return style
 
 
+def _clip(polygon, values, level, keep_above):
+    """Part of a planar polygon (points with a linear ``values``) on one side of ``level``."""
+    out_p, out_v = [], []
+    n = len(polygon)
+    for k in range(n):
+        p, q = polygon[k], polygon[(k + 1) % n]
+        a, b = values[k], values[(k + 1) % n]
+        inside_a = a >= level if keep_above else a <= level
+        inside_b = b >= level if keep_above else b <= level
+        if inside_a:
+            out_p.append(p)
+            out_v.append(a)
+        if inside_a != inside_b:
+            t = (level - a) / (b - a)
+            out_p.append(p + t * (q - p))
+            out_v.append(level)
+    return out_p, out_v
+
+
+def band_pieces(xyz, faces, values, resolved):
+    """Exact class pieces of a surface whose ``values`` vary linearly on each triangle (elevation, depth).
+
+    Every triangle is cut at the class breaks, so class areas are exact, like the depth bands of
+    Grading Quantities. Returns {class: [(n, 2) polygons]}; pieces meet at T-junctions, so merge
+    them with a geometry union where one outline per class is needed."""
+    xyz = np.asarray(xyz, float)
+    faces = np.asarray(faces, np.int64)
+    values = np.asarray(values, float)
+    breaks = [item["high"] for item in resolved["classes"][:-1]]
+    tri_v = values[faces]
+    lo_index = classify(tri_v.min(axis=1), resolved)
+    hi_index = classify(tri_v.max(axis=1), resolved)
+    pieces = {}
+    same = lo_index == hi_index
+    for k in np.unique(lo_index[same]):
+        member = faces[same & (lo_index == k)]
+        pieces.setdefault(int(k), []).extend(list(xyz[member][:, :, :2]))
+    for t in np.flatnonzero(~same):
+        corners = list(xyz[faces[t], :2])
+        vals = list(tri_v[t])
+        for k in range(lo_index[t], hi_index[t] + 1):
+            polygon, pv = corners, vals
+            if k > 0:
+                polygon, pv = _clip([np.asarray(c) for c in polygon], pv, breaks[k - 1], True)
+            if k < len(breaks) and len(polygon) >= 3:
+                polygon, pv = _clip([np.asarray(c) for c in polygon], pv, breaks[k], False)
+            if len(polygon) >= 3:
+                pieces.setdefault(int(k), []).append(np.asarray(polygon))
+    return pieces
+
+
+def piece_areas(pieces, count):
+    areas = np.zeros(count)
+    for k, polygons in pieces.items():
+        for ring in polygons:
+            x, y = ring[:, 0], ring[:, 1]
+            areas[k] += 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y)))
+    return areas
+
+
+def is_linear(attribute):
+    """Elevation and depth vary linearly on a triangle, so they can be banded exactly."""
+    return attribute in ("elevation", "depth")
+
+
 def class_regions(xyz, faces, index, count):
     """Merged plan polygons per class: {class: [(outer, [holes]), ...]}."""
     from .grading import outline_polygons
@@ -203,12 +268,20 @@ def mesh_colors(xyz, faces, resolved, depth=None, vertical_factor=1.0):
             None if depth is None else np.asarray(depth, float)[faces].reshape(-1))
 
 
-def plan_svg(layers, width=760, height=None, legend=None, lines=(), labels=(), north=True):
-    """An SVG plan: ``layers`` is a list of (regions, resolved) as from ``class_regions``/``resolve``,
-    drawn in order; ``lines`` are (points (n, ≥2), colour, width); ``labels`` (x, y, text)."""
+def plan_svg(layers, width=760, height=None, legend=None, lines=(), labels=(), north=True, max_height=620):
+    """An SVG plan: ``layers`` is a list of (regions, resolved), drawn in order. ``regions`` maps a class to
+    merged polygons [(outer, [holes])] (``class_regions``) or to plain pieces [(n, 2)] (``band_pieces``).
+    ``lines`` are (points (n, ≥2), colour, width); ``labels`` (x, y, text). The map fits ``width`` × ``max_height``."""
     import html
 
-    rings = [ring for regions, _ in layers for polys in regions.values() for outer, holes in polys for ring in [outer, *holes]]
+    def rings_of(polys):
+        for item in polys:
+            if isinstance(item, tuple):
+                yield from [item[0], *item[1]]
+            else:
+                yield item
+
+    rings = [ring for regions, _ in layers for polys in regions.values() for ring in rings_of(polys)]
     rings += [np.asarray(points)[:, :2] for points, _c, _w in lines]
     if not rings:
         return ""
@@ -218,8 +291,9 @@ def plan_svg(layers, width=760, height=None, legend=None, lines=(), labels=(), n
     span = max(x1 - x0, y1 - y0, 1e-9)
     pad = 0.03 * span
     x0, y0, x1, y1 = x0 - pad, y0 - pad, x1 + pad, y1 + pad
-    scale = width / (x1 - x0)
-    height = height or int(math.ceil((y1 - y0) * scale))
+    scale = min(width / (x1 - x0), (height or max_height) / (y1 - y0))
+    width = int(math.ceil((x1 - x0) * scale))
+    height = int(math.ceil((y1 - y0) * scale))
 
     def path(ring):
         pts = " ".join(f"{(x - x0) * scale:.1f},{(y1 - y) * scale:.1f}" for x, y in ring[:, :2])
@@ -229,8 +303,13 @@ def plan_svg(layers, width=760, height=None, legend=None, lines=(), labels=(), n
              f"style='max-width:{width}px;background:#fff;border:1px solid #ddd'>"]
     for regions, resolved in layers:
         for k, polys in regions.items():
-            d = " ".join(path(ring) for outer, holes in polys for ring in [outer, *holes])
-            parts.append(f"<path d='{d}' fill='{resolved['classes'][k]['color']}' fill-rule='evenodd' stroke='none'/>")
+            color = resolved["classes"][k]["color"]
+            if polys and isinstance(polys[0], tuple):
+                d = " ".join(path(ring) for ring in rings_of(polys))
+                parts.append(f"<path d='{d}' fill='{color}' fill-rule='evenodd' stroke='none'/>")
+            else:                  # pieces: outlined in their own colour so no seams show between them
+                d = " ".join(path(ring) for ring in polys)
+                parts.append(f"<path d='{d}' fill='{color}' stroke='{color}' stroke-width='0.4' stroke-linejoin='round'/>")
     for points, color, line_width in lines:
         pts = " ".join(f"{(x - x0) * scale:.1f},{(y1 - y) * scale:.1f}" for x, y in np.asarray(points)[:, :2])
         parts.append(f"<polyline points='{pts}' fill='none' stroke='{color}' stroke-width='{line_width}'/>")

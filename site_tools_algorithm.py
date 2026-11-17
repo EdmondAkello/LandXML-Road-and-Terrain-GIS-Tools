@@ -413,6 +413,27 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         return {"OUTPUT_FOLDER": os.path.dirname(scene), "SCENE": scene}
 
 
+def _classes(ss, xyz, faces, resolved, depth, vertical_factor):
+    """(regions, areas): exact bands for elevation and depth, merged triangle classes for slope and aspect."""
+    count = len(resolved["classes"])
+    if ss.is_linear(resolved["attribute"]):
+        values = xyz[:, 2] if resolved["attribute"] == "elevation" else depth
+        pieces = ss.band_pieces(xyz, faces, values, resolved)
+        return pieces, ss.piece_areas(pieces, count)
+    index = ss.classify(ss.triangle_values(xyz, faces, resolved["attribute"], depth, vertical_factor), resolved)
+    return ss.class_regions(xyz, faces, index, count), ss.class_areas(xyz, faces, index, count)
+
+
+def _class_geometry(polygons):
+    def ring(points):
+        return [QgsPointXY(float(x), float(y)) for x, y in points[:, :2]] + [QgsPointXY(float(points[0][0]), float(points[0][1]))]
+
+    if polygons and isinstance(polygons[0], tuple):
+        return QgsGeometry.fromMultiPolygonXY([[ring(r) for r in [outer, *holes]] for outer, holes in polygons])
+    merged = QgsGeometry.unaryUnion([QgsGeometry.fromPolygonXY([ring(piece)]) for piece in polygons])
+    return merged
+
+
 def _class_fields():
     fields = QgsFields()
     for name, kind in (("class", FIELD_STRING), ("low", FIELD_DOUBLE), ("high", FIELD_DOUBLE), ("area", FIELD_DOUBLE)):
@@ -516,19 +537,15 @@ class SurfaceStyleAlgorithm(ProjectSettingsAlgorithm):
             resolved = ss.resolve(style, values, units.depth)
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
-        index = ss.classify(values, resolved)
-        count = len(resolved["classes"])
-        areas = ss.class_areas(xyz, faces, index, count)
+        regions, areas = _classes(ss, xyz, faces, resolved, depth, vertical_factor)
         fields = _class_fields()
         sink, dest = self.parameterAsSink(p, "OUTPUT", c, fields, QgsWkbTypes.Type.MultiPolygon, crs)
         if sink is None:
             raise QgsProcessingException("Could not create the surface classes output.")
-        for k, polygons in ss.class_regions(xyz, faces, index, count).items():
+        for k, polygons in sorted(regions.items()):
             item = resolved["classes"][k]
             feature = QgsFeature(fields)
-            parts = [[[QgsPointXY(float(x), float(y)) for x, y in ring[:, :2]] + [QgsPointXY(float(ring[0][0]), float(ring[0][1]))]
-                      for ring in [outer, *holes]] for outer, holes in polygons]
-            feature.setGeometry(QgsGeometry.fromMultiPolygonXY(parts))
+            feature.setGeometry(_class_geometry(polygons))
             feature.setAttributes([item["label"], item["low"], item["high"], float(areas[k])])
             sink.addFeature(feature)
             fb.pushInfo(f"{item['label']}: {areas[k]:,.1f} {units.area}")
@@ -642,13 +659,11 @@ class GradingReportAlgorithm(ProjectSettingsAlgorithm):
                 resolved = ss.resolve(style, values, units.depth)
             except ValueError as exc:
                 raise QgsProcessingException(str(exc)) from exc
-            index = ss.classify(values, resolved)
-            regions = ss.class_regions(xyz, faces, index, len(resolved["classes"]))
+            regions, areas = _classes(ss, xyz, faces, resolved, depth, vertical_factor)
             titles = {"depth": "Cut and fill depth", "slope": "Slope classes", "elevation": "Design levels", "aspect": "Aspect"}
             body += [f"<h2>{titles[style['attribute']]}</h2>",
                      ss.plan_svg([(regions, resolved)], legend=resolved, lines=[(line, "#222", 1.2) for line in daylight],
                                  labels=labels if style["attribute"] != "depth" else ())]
-            areas = ss.class_areas(xyz, faces, index, len(resolved["classes"]))
             body.append(_table(["Class", f"Area ({a})", "Share (%)"],
                                [(item["label"], areas[k], 100 * areas[k] / max(areas.sum(), 1e-12))
                                 for k, item in enumerate(resolved["classes"]) if areas[k] > 0], 1))
