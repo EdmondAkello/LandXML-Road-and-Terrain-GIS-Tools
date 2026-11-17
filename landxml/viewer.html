@@ -115,7 +115,7 @@
   <input id="sheetref" placeholder="Project, drawing no., revision" style="width:100%;box-sizing:border-box;font:inherit;padding:2px 4px;margin:2px 0">
   <textarea id="sheetnotes" rows="3" placeholder="Notes (one per line)" style="width:100%;box-sizing:border-box;font:inherit;margin:2px 0"></textarea>
   <div class="row"><button id="a3png">Save A3 PNG</button><button id="a3print">Print / PDF</button></div>
-  <div class="meta">The current view on an A3 landscape sheet: single border, title box bottom right, legend, notes and north arrow (200 dpi).</div>
+  <div class="meta">The current view, fitted to the design, on an A3 landscape sheet (200 dpi): single border, title box bottom right, north arrow, legend and notes in a column beside the model, so nothing covers it.</div>
   <h2>Save image</h2>
   <div class="row">Size <select id="scale"><option value="1">screen</option><option value="2" selected>2 ×</option><option value="3">3 ×</option></select>
     <button id="png">Save PNG</button></div>
@@ -620,8 +620,8 @@ function legendRows() {
   for (const s of S.surfaces) {
     const st = s.style; if (!st || !st.classes || layerHidden(s)) continue;
     const key = JSON.stringify(st.classes.map(c => [c.color, c.label]));
-    if (seen.has(key)) { const head = seen.get(key); head.head += ", " + s.name; continue; }
-    const head = { head: s.name }; seen.set(key, head); rows.push(head);
+    if (seen.has(key)) { rows.splice(rows.indexOf(seen.get(key)) + 1 + (seen.get(key).extra++), 0, { head: s.name }); continue; }
+    const head = { head: s.name, extra: 0 }; seen.set(key, head); rows.push(head);
     for (const c of st.classes.slice().reverse()) rows.push({ swatch: c.color, text: c.label });
   }
   const shown = Object.entries(kinds).filter(([, v]) => v.visible);
@@ -668,27 +668,87 @@ document.getElementById("png").onclick = () => {
   resize();
 };
 // ---------------------------------------------------------------- A3 sheet: the current view at 200 dpi with the sheet furniture
+// Layout: a left column (north arrow, legend, notes) and the model's viewport to its right, above the title box,
+// so nothing on the sheet covers the model. The view is fitted so the design (or, without one, everything shown)
+// fills the viewport.
+function contentPoints() {
+  const pts = [];
+  const shown = surfaces.filter(sf => sf.visible);
+  const design = shown.filter(sf => ["design", "solid"].includes(sf.info.role));
+  for (const sf of (design.length ? design : shown)) {
+    const P = sf.pos, step = Math.max(3, Math.floor(P.length / 3 / 3000) * 3);
+    for (let i = 0; i < P.length; i += step) pts.push([P[i], P[i + 1], P[i + 2]]);
+  }
+  for (const line of S.lines) if (kinds[line.kind] && kinds[line.kind].visible) {
+    const step = Math.max(1, Math.floor(line.points.length / 50));
+    for (let i = 0; i < line.points.length; i += step) pts.push(line.points[i]);
+  }
+  return pts;
+}
+function fitTo(w, h, margin = 0.06) {
+  if (cam.free) return;
+  const pts = contentPoints(); if (!pts.length) return;
+  for (let pass = 0; pass < 4; pass++) {
+    const { mvp } = matrices(w, h);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { const q = project(mvp, p, w, h); if (!q) continue; x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); }
+    if (!isFinite(x0)) return;
+    const scale = Math.max((x1 - x0) / (w * (1 - 2 * margin)), (y1 - y0) / (h * (1 - 2 * margin)));
+    const k = cam.distance * Math.tan(cam.fov * Math.PI / 360) * 2 / h;
+    const dx = (x0 + x1) / 2 - w / 2, dy = (y0 + y1) / 2 - h / 2;
+    const right = [-Math.cos(cam.azimuth), Math.sin(cam.azimuth)], fwd = [-Math.sin(cam.azimuth), -Math.cos(cam.azimuth)];
+    cam.target[0] += (dx * right[0] - dy * fwd[0]) * k; cam.target[1] += (dx * right[1] - dy * fwd[1]) * k;
+    cam.distance *= Math.max(scale, 0.05);
+  }
+}
 function composeA3() {
   const dpi = 200, mm = dpi / 25.4, W = Math.round(420 * mm), H = Math.round(297 * mm), k = dpi / 96 * 1.15;
   const out = document.createElement("canvas"); out.width = W; out.height = H;
   const g = out.getContext("2d");
   g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
-  const m = 10 * mm, iw = Math.round(W - 2 * m), ih = Math.round(H - 2 * m);
-  const saved = [canvas.width, canvas.height];
-  canvas.width = iw; canvas.height = ih; render(iw, ih);           // the model fills the frame
-  g.drawImage(canvas, m, m);
-  drawCallouts(g, iw, ih, k, m, m);
-  canvas.width = saved[0]; canvas.height = saved[1];
+  const m = 10 * mm, gap = 6 * mm, pad = 4 * mm;
+  const notes = document.getElementById("sheetnotes").value.split("\n").map(t => t.trim()).filter(Boolean);
+  g.font = `400 ${3 * mm}px system-ui, Arial`;
+  const notesW = notes.length ? Math.max(...notes.map((t, i) => g.measureText(`${i + 1}. ${t}`).width), 0) + 2 * pad : 0;
+  const hasLegend = legendRows().length > 0;
+  const colW = Math.min(Math.max(hasLegend ? legendWidth(g, k) + 2 * pad : 0, notesW, 44 * mm), 120 * mm);
+  const colX = m + gap;
+  // the model's viewport: right of the column, above the title box
+  const th = 42 * mm, tw = 130 * mm;
+  const vx = Math.round(colX + colW + gap), vy = Math.round(m + gap);
+  const vw = Math.round(W - m - gap - vx), vh = Math.round(H - m - th - 2 * gap - vy);
+  const savedCam = JSON.parse(JSON.stringify(cam)), saved = [canvas.width, canvas.height];
+  canvas.width = vw; canvas.height = vh;
+  fitTo(vw, vh);
+  render(vw, vh);
+  g.drawImage(canvas, vx, vy);
+  drawCallouts(g, vw, vh, k, vx, vy);
+  const compassAzimuth = cam.azimuth;
+  Object.assign(cam, savedCam); canvas.width = saved[0]; canvas.height = saved[1];
   // single border
-  g.strokeStyle = "#111"; g.lineWidth = 0.5 * mm; g.strokeRect(m, m, iw, ih);
-  const box = (x, y, w, h) => { g.fillStyle = "rgba(255,255,255,.94)"; g.fillRect(x, y, w, h); g.strokeStyle = "#555"; g.lineWidth = 0.25 * mm; g.strokeRect(x, y, w, h); };
-  // floating legend, top left
-  const pad = 4 * mm, lw = Math.min(legendWidth(g, k) + 2 * pad, 120 * mm), lh = Math.min(legendHeight(k) + 2 * pad, ih * 0.62);
-  if (legendRows().length) { box(m + 6 * mm, m + 6 * mm, lw, lh); drawLegend(g, m + 6 * mm + pad, m + 6 * mm + pad, k, m + 6 * mm + lh - 20 * k); }
-  // north arrow, top right
-  drawCompass(g, W - m - 22 * mm, m + 22 * mm, 13 * mm, k * 1.3);
+  g.strokeStyle = "#111"; g.lineWidth = 0.5 * mm; g.strokeRect(m, m, W - 2 * m, H - 2 * m);
+  // left column: north arrow, legend, notes
+  const keep = cam.azimuth; cam.azimuth = compassAzimuth;
+  drawCompass(g, colX + 16 * mm, m + gap + 16 * mm, 12 * mm, k * 1.3);
+  cam.azimuth = keep;
+  let y = m + gap + 36 * mm;
+  const notesH = notes.length ? (notes.length + 1) * 5 * mm + 5 * mm : 0;
+  const frame = (x, yy, w, h) => { g.fillStyle = "#fff"; g.fillRect(x, yy, w, h); g.strokeStyle = "#555"; g.lineWidth = 0.25 * mm; g.strokeRect(x, yy, w, h); };
+  if (hasLegend) {
+    const room = H - m - gap - notesH - (notes.length ? gap : 0) - y;
+    const lh = Math.min(legendHeight(k) + 2 * pad, room);
+    frame(colX, y, colW, lh); drawLegend(g, colX + pad, y + pad, k, y + lh - 20 * k);
+  }
+  if (notes.length) {
+    const ny = H - m - gap - notesH;
+    frame(colX, ny, colW, notesH);
+    g.fillStyle = "#111"; g.textAlign = "left"; g.textBaseline = "middle";
+    g.font = `700 ${3 * mm}px system-ui, Arial`; g.fillText("NOTES", colX + pad, ny + 5 * mm);
+    g.font = `400 ${3 * mm}px system-ui, Arial`;
+    notes.forEach((t, i) => g.fillText(`${i + 1}. ${t}`, colX + pad, ny + 10.5 * mm + i * 5 * mm));
+  }
   // title box, bottom right
-  const tw = 130 * mm, th = 42 * mm, tx = W - m - tw, ty = H - m - th;
+  const tx = W - m - tw, ty = H - m - th;
   g.fillStyle = "#fff"; g.fillRect(tx, ty, tw, th); g.strokeStyle = "#111"; g.lineWidth = 0.35 * mm; g.strokeRect(tx, ty, tw, th);
   g.beginPath(); g.moveTo(tx, ty + 17 * mm); g.lineTo(tx + tw, ty + 17 * mm); g.moveTo(tx, ty + 29 * mm); g.lineTo(tx + tw, ty + 29 * mm); g.stroke();
   const title = document.getElementById("sheettitle").value || document.getElementById("title").textContent;
@@ -701,17 +761,6 @@ function composeA3() {
   const facts = [`3D view, not to scale · vertical exaggeration × ${ve.toFixed(1)}`,
                  [S.crs && S.crs.authid ? `CRS ${S.crs.authid}` : "", new Date().toISOString().slice(0, 10)].filter(Boolean).join(" · ")];
   facts.forEach((t, i) => g.fillText(t, tx + 4 * mm, ty + 32.5 * mm + i * 4.6 * mm));
-  // floating notes, bottom left
-  const notes = document.getElementById("sheetnotes").value.split("\n").map(t => t.trim()).filter(Boolean);
-  if (notes.length) {
-    g.font = `400 ${3 * mm}px system-ui, Arial`;
-    const nw = Math.min(Math.max(...notes.map(t => g.measureText(t).width), g.measureText("NOTES").width) + 8 * mm, W - 2 * m - tw - 20 * mm);
-    const nh = (notes.length + 1) * 5 * mm + 5 * mm, nx = m + 6 * mm, ny = H - m - 6 * mm - nh;
-    box(nx, ny, nw, nh);
-    g.fillStyle = "#111"; g.font = `700 ${3 * mm}px system-ui, Arial`; g.fillText("NOTES", nx + 4 * mm, ny + 5 * mm);
-    g.font = `400 ${3 * mm}px system-ui, Arial`;
-    notes.forEach((t, i) => g.fillText(`${i + 1}. ${t}`, nx + 4 * mm, ny + 10.5 * mm + i * 5 * mm));
-  }
   resize();
   return out;
 }
