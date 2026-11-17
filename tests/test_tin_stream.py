@@ -333,3 +333,53 @@ class TestDocumentSharing(StreamBase):
         del first, changed
         gc.collect()
         self.assertEqual(load_document(path).inspect()["source_file"], Path(path).name)
+
+
+class TestTinCache(StreamBase):
+    def setUp(self):
+        super().setUp()
+        from unittest.mock import patch
+        from landxml_plugin.landxml import tin_cache
+
+        self.cache = tin_cache
+        self.folder = Path(self.tmp.name) / "cache"
+        for target, value in (("MIN_BYTES", 0), ("folder", lambda: str(self.folder))):
+            patcher = patch.object(tin_cache, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_cached_reads_equal_file_reads_and_follow_file_changes(self):
+        import os
+        from unittest.mock import patch
+
+        points, faces = grid(12, first_id=5, step=3)
+        path = self.write(tin_xml(points, faces))
+        box = (1010.0, 2010.0, 1022.0, 2031.0)
+        with patch.object(self.cache, "enabled", return_value=False):
+            plain, plain_crop = core.read_tin(path), core.read_tin(path, bounds=box)
+        first = core.read_tin(path)
+        self.assertEqual(len(list(self.folder.glob("*.json"))), 1)
+        with patch.object(core.tin_stream, "read_tin_arrays", side_effect=AssertionError("file read")):
+            cached, cached_crop = core.read_tin(path), core.read_tin(path, bounds=box)
+        for got, expected in ((first, plain), (cached, plain), (cached_crop, plain_crop)):
+            self.assertTrue(np.array_equal(got[0], expected[0]) and np.array_equal(got[1], expected[1]))
+            self.assertEqual(got[2], expected[2])
+        stat = os.stat(path)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
+        core.read_tin(path)
+        self.assertEqual(len(list(self.folder.glob("*.json"))), 2)   # a changed file is read again
+        self.cache.trim(0)
+        self.assertEqual(list(self.folder.iterdir()), [])
+        with patch.dict(os.environ, {"LANDXMLTOOLS_TIN_CACHE": "0"}):
+            self.assertFalse(self.cache.enabled())
+            core.read_tin(path)
+        self.assertEqual(list(self.folder.iterdir()), [])
+
+    def test_damaged_entry_is_ignored(self):
+        points, faces = grid(5)
+        path = self.write(tin_xml(points, faces))
+        expected = core.read_tin(path)
+        for entry in self.folder.glob("*.faces.npy"):
+            entry.write_bytes(b"broken")
+        got = core.read_tin(path)
+        self.assertTrue(np.array_equal(got[1], expected[1]))

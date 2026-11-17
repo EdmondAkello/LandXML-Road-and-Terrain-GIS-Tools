@@ -14,7 +14,7 @@ import numpy as np
 from osgeo import gdal, osr
 
 from .landxml.common import child, descendants, first_descendant
-from .landxml import tin_stream
+from .landxml import tin_cache, tin_stream
 from .landxml.parser import load_document
 
 
@@ -119,11 +119,29 @@ def read_tin(
             if progress:
                 progress(2 + 10 * fraction, message)
 
-        try:
-            xyz, farr, info = tin_stream.read_tin_arrays(
-                path, spans[0], spans[1], surface_name, include_invisible, bounds, stage, cancel)
-        except tin_stream.TinError as exc:
-            raise ValueError(str(exc)) from exc
+        cached = tin_cache.load(path, spans, include_invisible) if tin_cache.wanted(spans) else None
+        if cached is None and tin_cache.wanted(spans):
+            # Read the whole surface once and keep a binary copy; later runs (any crop) start from it.
+            try:
+                full_xyz, full_faces, full_info = tin_stream.read_tin_arrays(
+                    path, spans[0], spans[1], surface_name, include_invisible, None, stage, cancel)
+            except tin_stream.TinError as exc:
+                raise ValueError(str(exc)) from exc
+            tin_cache.store(path, spans, include_invisible, full_xyz, full_faces, full_info)
+            cached = (full_xyz, full_faces, full_info)
+        if cached is not None:
+            full_xyz, full_faces, info = cached
+            info = dict(info, cropped=bounds is not None)
+            if bounds is not None:
+                xyz, farr = crop_tin(full_xyz, full_faces, bounds)
+            else:
+                xyz, farr = np.array(full_xyz), np.array(full_faces)
+        else:
+            try:
+                xyz, farr, info = tin_stream.read_tin_arrays(
+                    path, spans[0], spans[1], surface_name, include_invisible, bounds, stage, cancel)
+            except tin_stream.TinError as exc:
+                raise ValueError(str(exc)) from exc
         meta = _tin_meta(xyz, farr, surface_name, info["invisible_face_count"], epsg, {
             "source_point_count": info["source_point_count"],
             "source_face_count": info["source_face_count"],
