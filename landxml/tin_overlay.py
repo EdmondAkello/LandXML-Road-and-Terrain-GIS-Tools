@@ -200,3 +200,27 @@ def depth_tin(design, existing, with_design=False):
     if with_design:
         stats["design_z"] = np.concatenate(levels).reshape(-1)
     return triangles, faces, stats
+
+
+def sample_tin(tin, points, tolerance=1e-9):
+    """Elevation of the TIN ``(xyz, faces)`` at each plan point of ``points`` (NaN outside it)."""
+    xyz, faces = np.asarray(tin[0], float), np.asarray(tin[1], np.int64)
+    points = np.asarray(points, float)[:, :2]
+    out = np.full(len(points), np.nan)
+    px, py, q, boxes, corners = _planes(xyz, faces)
+    if not len(points) or not len(boxes):
+        return out
+    first, second = candidate_pairs(np.concatenate([points, points], axis=1), boxes)
+    for start in range(0, len(first), CHUNK):
+        i, j = first[start:start + CHUNK], second[start:start + CHUNK]
+        x, y = points[i, 0], points[i, 1]
+        c = corners[j]
+        scale = np.abs(c).max(axis=(1, 2)) + 1.0
+        inside = np.ones(len(i), bool)
+        for k in range(3):
+            e0, e1 = c[:, k], c[:, (k + 1) % 3]
+            cross = (e1[:, 0] - e0[:, 0]) * (y - e0[:, 1]) - (e1[:, 1] - e0[:, 1]) * (x - e0[:, 0])
+            inside &= cross >= -tolerance * scale * np.hypot(e1[:, 0] - e0[:, 0], e1[:, 1] - e0[:, 1])
+        i, j, x, y = i[inside], j[inside], x[inside], y[inside]
+        out[i] = px[j] * x + py[j] * y + q[j]
+    return out

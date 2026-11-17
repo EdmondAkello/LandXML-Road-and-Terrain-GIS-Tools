@@ -30,6 +30,7 @@ from .grading_algorithm import (
     GROUP_ID,
     HORIZONTAL_UNITS,
     _depth_surface,
+    _design_depth,
     _existing_file,
     _grading_units,
     _vertical_unit_param,
@@ -69,10 +70,9 @@ def _design_and_existing(algorithm, p, c, fb, path, doc, method, params):
     if not design or not existing:
         raise QgsProcessingException("Choose the design surface and the existing-ground surface.")
     keep = {}
-    _xyz, faces, _meta = _depth_surface(path, design, existing, method, params, fb, existing_path, keep)
-    levels = keep["raw"].copy()
-    levels[:, 2] = keep["design_z"]
-    return design, existing, existing_path, existing_doc, transform_vertices(levels, method=method, **params), faces, keep["raw"][:, 2]
+    _depth_surface(path, design, existing, method, params, fb, existing_path, keep)
+    xyz, faces, depth = _design_depth(keep)
+    return design, existing, existing_path, existing_doc, transform_vertices(xyz, method=method, **params), faces, depth
 
 
 def _bands(text):

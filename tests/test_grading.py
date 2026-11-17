@@ -606,14 +606,11 @@ def _grid_tin(xs, ys, level):
 
 class EdgeAnalysisTests(unittest.TestCase):
     def _depth(self, design):
-        from landxml_plugin.landxml.tin_overlay import depth_tin
+        from landxml_plugin.landxml.tin_overlay import sample_tin
 
         ground = (np.array([[-100, -100, 100], [200, -100, 100], [200, 200, 100], [-100, 200, 100]], float),
                   np.array([[0, 1, 2], [0, 2, 3]]))
-        xyz, faces, stats = depth_tin(design, ground, with_design=True)
-        levels = xyz.copy()
-        levels[:, 2] = stats["design_z"]
-        return levels, faces, xyz[:, 2]
+        return design[0], design[1], design[0][:, 2] - sample_tin(ground, design[0])
 
     def test_batters_tie_in_and_an_open_side_is_a_retained_edge(self):
         from landxml_plugin.landxml.edges import edge_analysis
@@ -648,3 +645,15 @@ class EdgeAnalysisTests(unittest.TestCase):
         self.assertAlmostEqual(step["x"], 30.0, delta=0.1)
         with self.assertRaises(ValueError):
             edge_analysis(design[0], design[1], np.zeros(len(design[0])))
+
+
+class SampleTinTests(unittest.TestCase):
+    def test_plane_values_inside_nan_outside(self):
+        from landxml_plugin.landxml.tin_overlay import sample_tin
+
+        xyz = np.array([[0, 0, 0], [10, 0, 10], [10, 10, 20], [0, 10, 10]], float)
+        tin = (xyz, np.array([[0, 1, 2], [0, 2, 3]]))
+        points = np.array([[5, 5], [2, 7], [10, 10], [0, 0], [11, 5], [5, -0.5]], float)
+        got = sample_tin(tin, points)
+        self.assertTrue(np.allclose(got[:4], points[:4, 0] + points[:4, 1]))
+        self.assertTrue(np.isnan(got[4:]).all())

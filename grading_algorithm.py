@@ -57,7 +57,7 @@ from .earthworks_algorithm import (
 from .landxml.catalog import read_catalog
 from .landxml.parser import load_document
 from .landxml.plan_features import footprint_lines, level_lines, write_plan_features
-from .landxml.tin_overlay import depth_tin
+from .landxml.tin_overlay import depth_tin, sample_tin
 from .landxml.quantity_units import LINEAR_UNITS, quantity_units
 from .landxml.grading import (
     depth_warning,
@@ -197,7 +197,9 @@ def _depth_surface(path, surface, existing, method, params, feedback, existing_p
             raise QgsProcessingException(f"'{surface}' is both the design and the existing-ground surface.")
         try:
             exyz, efaces, emeta = read_tin(source, existing, cancel=feedback.isCanceled, bounds=meta["bounds"])
-            xyz, faces, stats = depth_tin((xyz, faces), (exyz, efaces), with_design=keep is not None)
+            if keep is not None:
+                keep.update(design=(xyz, faces), existing=(exyz, efaces))
+            xyz, faces, stats = depth_tin((xyz, faces), (exyz, efaces))
         except ValueError as exc:
             if "touch the requested area" in str(exc):
                 raise QgsProcessingException(
@@ -214,8 +216,6 @@ def _depth_surface(path, surface, existing, method, params, feedback, existing_p
         if uncovered > 1e-6 * max(stats["design_area"], 1.0):
             feedback.pushWarning(f"{uncovered:,.2f} source units² of '{surface}' lie outside '{existing}' and are not counted.")
         meta = dict(meta, depth_from=(surface, existing))
-        if keep is not None:
-            keep.update(raw=xyz, design_z=stats["design_z"])
     if feedback.isCanceled():
         raise QgsProcessingException("Cancelled.")
     return transform_vertices(xyz, method=method, **params), faces, meta
@@ -249,6 +249,18 @@ def _write_feature_lines(out, doc, vertical, features, feedback, group):
         raise QgsProcessingException(f"Could not write '{out}': {exc}") from exc
     feedback.pushInfo(f"{count} feature lines written to {os.path.basename(out)} (source coordinates).")
     return out
+
+
+def _design_depth(keep):
+    """Design vertices (stored coordinates), faces and depth (design − existing) at each vertex.
+
+    Edges and daylight lines are traced on the design TIN itself, whose triangles share edges;
+    the overlay of the two surfaces is exact for volumes but its pieces meet at T-junctions."""
+    xyz, faces = keep["design"]
+    depth = xyz[:, 2] - sample_tin(keep["existing"], xyz)
+    covered = np.isfinite(depth)
+    faces = faces[covered[faces].all(axis=1)]
+    return xyz, faces, np.where(covered, depth, 0.0)
 
 
 def _split_pair(text):
@@ -370,12 +382,11 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         daylight = []
         if lines_out:
             if keep:
-                levels = keep["raw"].copy()
-                levels[:, 2] = keep["design_z"]
+                dxyz, dfaces, ddepth = _design_depth(keep)
                 daylight = [{"name": f"Daylight {k}", "points": line,
                              "description": f"Earthworks limit of {surface} on {existing}",
                              "properties": {"source": "daylight"}}
-                            for k, line in enumerate(footprint_lines(levels, faces, keep["raw"][:, 2]), 1)]
+                            for k, line in enumerate(footprint_lines(dxyz, dfaces, ddepth), 1)]
             else:
                 fb.pushWarning("Daylight feature lines need the design and existing-ground surfaces (a volume "
                                "surface holds depths, not levels); none were written.")
