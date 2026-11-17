@@ -114,5 +114,38 @@ def trim(limit=None):
         pass
 
 
+def _regions_key(path):
+    info = os.stat(path)
+    text = json.dumps([VERSION, "regions", os.path.realpath(path), info.st_size, info.st_mtime_ns])
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
+
+
+def load_regions(path):
+    """Cached TIN block positions of a large file (skips scanning it), or None."""
+    try:
+        if not enabled() or os.path.getsize(path) < MIN_BYTES:
+            return None
+        name = os.path.join(folder(), _regions_key(path) + ".regions.json")
+        with open(name, encoding="utf-8") as stream:
+            regions = [(item[0].encode("ascii"), *map(int, item[1:])) for item in json.load(stream)]
+        os.utime(name)
+        return regions
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return None
+
+
+def store_regions(path, regions):
+    try:
+        if not enabled() or os.path.getsize(path) < MIN_BYTES:
+            return
+        os.makedirs(folder(), exist_ok=True)
+        name = os.path.join(folder(), _regions_key(path) + ".regions.json")
+        with open(name + ".part", "w", encoding="utf-8") as stream:
+            json.dump([[region[0].decode("ascii"), *region[1:]] for region in regions], stream)
+        os.replace(name + ".part", name)
+    except (OSError, ValueError):
+        pass
+
+
 def clear():
     trim(0)

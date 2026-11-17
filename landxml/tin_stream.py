@@ -109,10 +109,24 @@ def _find_regions(mm):
         yield name, tag_start, gt, content_start, end[0], end[1]
 
 
+def regions_of(path, mm):
+    """TIN block regions of ``path`` (open as ``mm``), from the cache when the file is large and unchanged."""
+    from . import tin_cache
+
+    regions = tin_cache.load_regions(path)
+    if regions is not None and all(mm[r[1]:r[1] + 1] == b"<" and mm[r[2]:r[2] + 1] == b">" and
+                                   mm[r[5] - 1:r[5]] == b">" for r in regions):
+        return regions
+    regions = list(_find_regions(mm))
+    tin_cache.store_regions(path, regions)
+    return regions
+
+
 class _SkeletonReader:
     """File-like object for the hardened parser: the file minus TIN contents."""
 
     def __init__(self, path):
+        self._path = path
         self._fh = open(path, "rb")
         try:
             self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
@@ -123,11 +137,14 @@ class _SkeletonReader:
         self._buffer = b""
         self.regions = 0
 
+    def _regions(self):
+        return regions_of(self._path, self._mm)
+
     def _generate(self):
         mm = self._mm
         emit = 0
         step = 1 << 20
-        for name, _start, gt, content_start, content_end, end_close in _find_regions(mm):
+        for name, _start, gt, content_start, content_end, end_close in self._regions():
             self.regions += 1
             for k in range(emit, gt, step):
                 yield mm[k:min(k + step, gt)]

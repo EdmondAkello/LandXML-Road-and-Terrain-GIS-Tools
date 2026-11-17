@@ -335,7 +335,7 @@ class TestDocumentSharing(StreamBase):
         self.assertEqual(load_document(path).inspect()["source_file"], Path(path).name)
 
 
-class TestTinCache(StreamBase):
+class CacheBase(StreamBase):
     def setUp(self):
         super().setUp()
         from unittest.mock import patch
@@ -348,6 +348,8 @@ class TestTinCache(StreamBase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+
+class TestTinCache(CacheBase):
     def test_cached_reads_equal_file_reads_and_follow_file_changes(self):
         import os
         from unittest.mock import patch
@@ -358,7 +360,7 @@ class TestTinCache(StreamBase):
         with patch.object(self.cache, "enabled", return_value=False):
             plain, plain_crop = core.read_tin(path), core.read_tin(path, bounds=box)
         first = core.read_tin(path)
-        self.assertEqual(len(list(self.folder.glob("*.json"))), 1)
+        self.assertEqual(len(list(self.folder.glob("*.faces.npy"))), 1)
         with patch.object(core.tin_stream, "read_tin_arrays", side_effect=AssertionError("file read")):
             cached, cached_crop = core.read_tin(path), core.read_tin(path, bounds=box)
         for got, expected in ((first, plain), (cached, plain), (cached_crop, plain_crop)):
@@ -367,7 +369,7 @@ class TestTinCache(StreamBase):
         stat = os.stat(path)
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
         core.read_tin(path)
-        self.assertEqual(len(list(self.folder.glob("*.json"))), 2)   # a changed file is read again
+        self.assertEqual(len(list(self.folder.glob("*.faces.npy"))), 2)   # a changed file is read again
         self.cache.trim(0)
         self.assertEqual(list(self.folder.iterdir()), [])
         with patch.dict(os.environ, {"LANDXMLTOOLS_TIN_CACHE": "0"}):
@@ -383,3 +385,21 @@ class TestTinCache(StreamBase):
             entry.write_bytes(b"broken")
         got = core.read_tin(path)
         self.assertTrue(np.array_equal(got[1], expected[1]))
+
+
+class TestRegionCache(CacheBase):
+    def test_block_positions_are_reused_and_checked(self):
+        from unittest.mock import patch
+
+        points, faces = grid(6)
+        path = self.write(tin_xml(points, faces, surfaces=2))
+        expected = load_document(path, full=True).inspect()
+        load_document(path)
+        self.assertEqual(len(list(self.folder.glob("*.regions.json"))), 1)
+        with patch.object(core.tin_stream, "_find_regions", side_effect=AssertionError("scanned")):
+            again = core.tin_stream.regions_of(path, Path(path).read_bytes())
+        self.assertEqual(len(again), 4)
+        for entry in self.folder.glob("*.regions.json"):      # positions that no longer fit are rescanned
+            entry.write_text('[["Pnts", 0, 1, 2, 3, 4]]')
+        self.assertEqual(dict(load_document(path, full=False).inspect(), source_file=None),
+                         dict(expected, source_file=None))

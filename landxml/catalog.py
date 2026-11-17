@@ -75,10 +75,10 @@ def _attributes(raw):
     return result
 
 
-def _scan_tags(data):
+def _scan_tags(data, path=None):
     """Tag matches outside the TIN point/face and source-contour blocks (which hold no catalogued tags)."""
     position = 0
-    for _name, _start, _gt, content_start, content_end, end_close in tin_stream._find_regions(data):
+    for _name, _start, _gt, content_start, content_end, end_close in (tin_stream.regions_of(path, data) if path else tin_stream._find_regions(data)):
         yield from _TAG.finditer(data, position, content_start)
         position = content_end
     yield from _TAG.finditer(data, position)
@@ -104,7 +104,7 @@ def read_catalog(path):
         with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
             if data.find(b"<LandXML", 0, 65536) < 0 and data.find(b":LandXML", 0, 65536) < 0:
                 raise ValueError(f"'{path}' does not look like a LandXML file")
-            for match in _scan_tags(data):
+            for match in _scan_tags(data, path):
                 closing, name, raw = match.group(1), match.group(2).decode(), match.group(3)
                 if closing:
                     if name == "Alignment":
