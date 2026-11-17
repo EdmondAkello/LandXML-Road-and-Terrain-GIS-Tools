@@ -652,6 +652,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 if len(rows) < 2:
                     continue
                 item = next((given[k] for k in given if first_row <= k < after), None) or {}
+                middle_row = rows[len(rows) // 2]
+                self._synthetic_labels.append((f"Bridge {stations[rows[0]]:.0f}–{stations[rows[-1]]:.0f}",
+                                               tuple(centre[middle_row])))
                 text, _piers = bridge(builder, centre, stations, normal, rows, 2 * edge + 1.0,
                                       item.get("span") or default_span, ground_at,
                                       spans=item.get("spans"), piers=item.get("piers"))
@@ -678,6 +681,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             try:
                 notes.append(culvert(builder, item, point, normal[i - 1], edge + reach[0] + 0.5, edge + reach[1] + 0.5,
                                      ground_at, record=channels))
+                size = (f"{item['cells']} x {item['span']:g} m pipe" if item["kind"] == "pipe"
+                        else f"{item['cells']} x {item['span']:g} x {item['rise']:g} m box")
+                self._synthetic_labels.append((f"{item['id']} {size}", (point[0], point[1], point[2])))
                 culverts.append(s)
                 n = normal[i - 1]
                 along = np.array([n[1], -n[0]])
@@ -800,6 +806,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self._synthetic_structures = None
         self._synthetic_views = []
         self._synthetic_cuts = []
+        self._synthetic_labels = []
         area = self._area(p, c, path, method, params, crs, fb)
         corridor_axis = self._axis
         budget = int(self.parameterAsDouble(p, "MAX_TRIANGLES", c))
@@ -1179,6 +1186,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 writer.view(name, (-ay, ax, 0.45), centre, 1.3 * max(np.hypot(*chord), 50.0))
         for view_name, direction, target, distance in self._synthetic_views:
             writer.view(view_name, direction, target, distance)
+        for text, point in self._synthetic_labels:            # structures get callouts like platforms do
+            writer.label(text, point, 2.0, "structure")
         scene = writer.write()
         viewer = write_viewer(os.path.dirname(scene), writer.scene, title=title)
         fb.pushInfo(f"Scene: {len(writer.scene['surfaces'])} surfaces ({total:,} triangles), {len(writer.scene['lines']):,} lines, "
