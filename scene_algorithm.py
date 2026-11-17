@@ -98,6 +98,10 @@ def _inverse_box(box, method, params):
     return None
 
 
+
+class _OutsideArea(QgsProcessingException):
+    """A synthetic road with no part inside the scene area."""
+
 class Area:
     """The area to render, in output coordinates: a box, optionally with polygon rings."""
 
@@ -512,13 +516,13 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         lines = centerlines_3d(path, 2.0, name, fb.pushInfo, fb.isCanceled, max_step=2.0)
         if not lines:
             raise QgsProcessingException(f"Alignment '{name}' has no vertical profile; a synthetic corridor follows the profile.")
-        _n, first, _e, stored = lines[0]
+        _n, start_station, _e, stored = lines[0]
         centre = transform_vertices(stored, method=method, **params)
-        stations = first + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
+        stations = start_station + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
         if area is not None:
             inside = area.keep_points(centre)
             if inside.sum() < 2:
-                raise QgsProcessingException(f"Alignment '{name}' is outside the area.")
+                raise _OutsideArea(f"Alignment '{name}' is outside the area.")
             idx = np.flatnonzero(inside)
             centre, stations = centre[idx[0]:idx[-1] + 1], stations[idx[0]:idx[-1] + 1]
         grounds = [m for m in meshes if m[2] in ("surface", "raster")]
@@ -933,10 +937,20 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 area = Area((e.xMinimum(), e.yMinimum(), e.xMaximum(), e.yMaximum()))
             xyz, faces = raster_mesh(layer, crs, area, max(budget // max(len(rasters) + len(meshes), 1), 10_000), fb)
             meshes.append((f"r{k + 1}", layer.name(), "raster", xyz, faces, raster_style, None))
-        for order, synthetic_name in enumerate(n.strip() for n in self.parameterAsString(p, "SYNTHETIC", c).split(";")):
-            if synthetic_name:
+        wanted_roads = [n.strip() for n in self.parameterAsString(p, "SYNTHETIC", c).split(";") if n.strip()]
+        built, outside = 0, []
+        for synthetic_name in wanted_roads:
+            try:
                 self._synthetic(p, c, fb, path, method, params, area, meshes, unders, vertical_factor, synthetic_name,
-                                first=not order)
+                                first=not built)
+                built += 1
+            except _OutsideArea as error:          # one of several roads may lie beyond a limited area
+                outside.append(str(error))
+        if outside:
+            if not built:
+                raise QgsProcessingException(" ".join(outside) + " Widen the area, or check the coordinate order.")
+            fb.pushWarning("Skipped: " + " ".join(outside) + " (the scene area is limited by the stations, "
+                           "corridor or extent chosen).")
         self._cut_synthetic(meshes, unders)
         if not meshes:
             raise QgsProcessingException("Nothing to render in the area.")

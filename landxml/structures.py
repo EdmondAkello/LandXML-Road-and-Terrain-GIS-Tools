@@ -375,6 +375,32 @@ def carve_channels(xyz, faces, channels, apron=30.0, bank=1.5, bed_rise=0.05):
     return xyz, faces, lowered
 
 
+def _near_cells(tri, longest, footprint):
+    """Cheap pre-test for :func:`refine`: True for triangles that may touch ``footprint``, from a coarse grid
+    of the cells the footprint's triangles cover (grown by one cell, so any triangle no longer than a cell
+    that touches the footprint has a corner in a marked cell)."""
+    cell = max(float(np.percentile(longest, 99)), 1e-6)
+    fxyz, ffaces = footprint
+    corners = np.asarray(fxyz, float)[np.asarray(ffaces, np.int64)][:, :, :2]
+    origin = corners.reshape(-1, 2).min(axis=0) - cell
+    lo = np.floor((corners.min(axis=1) - origin) / cell).astype(np.int64) - 1
+    hi = np.floor((corners.max(axis=1) - origin) / cell).astype(np.int64) + 1
+    span = hi - lo + 1
+    if int(np.prod(span, axis=1).sum()) > 40_000_000:              # footprint triangles far larger than these: skip
+        return np.ones(len(tri), bool)
+    width = np.int64(1) << 31
+    count = span[:, 0] * span[:, 1]
+    owner = np.repeat(np.arange(len(span)), count)
+    step = np.arange(count.sum()) - np.repeat(np.cumsum(count) - count, count)
+    cx = lo[owner, 0] + step % span[owner, 0]
+    cy = lo[owner, 1] + step // span[owner, 0]
+    marked = np.unique(cy * width + cx)
+    vertex = np.floor((tri - origin) / cell).astype(np.int64)
+    keys = vertex[:, :, 1] * width + vertex[:, :, 0]
+    position = np.clip(np.searchsorted(marked, keys), 0, len(marked) - 1)
+    return (marked[position] == keys).any(axis=1) | (longest > cell)
+
+
 def refine(xyz, faces, footprint, target, rounds=5, boundary=False):
     """Split triangles touching ``footprint`` (a TIN) into four at their edge midpoints until their edges are at most
     ``target`` long; the midpoints lie on the original planes, so the surface keeps its shape. With ``boundary``,
@@ -387,6 +413,8 @@ def refine(xyz, faces, footprint, target, rounds=5, boundary=False):
         tri = xyz[faces]
         longest = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
         near = ((tri[:, :, :2].max(axis=1) >= low) & (tri[:, :, :2].min(axis=1) <= high)).all(axis=1) & (longest > target)
+        if near.any():
+            near[near] = _near_cells(tri[near, :, :2], longest[near], footprint)
         touch = np.zeros(len(faces), bool)
         if near.any():
             sub = tri[near]

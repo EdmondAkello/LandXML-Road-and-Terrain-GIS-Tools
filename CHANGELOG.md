@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed (renders and long roads)
+- Flat faces now shade flat right up to their edges: the viewer splits vertex normals where faces meet at
+  more than 30°, so a platform no longer picks up the slope of the batter or wall beside it.
+- Edge lines draw cleanly: daylight lines, platform outlines and retained edges that share an edge layer
+  on top of each other instead of z-fighting into a speckled band, and a retained edge follows the top of
+  its wall instead of stepping down and up the face (a comb of ticks). Designs also draw in front of the
+  ground where the two meet.
+- Callout labels stay inside the model area on high-density screens (their width was measured in CSS
+  pixels but placed in device pixels).
+- With several synthetic roads, one that lies outside a limited scene area is skipped with a warning
+  instead of failing the run.
+- A synthetic road that started at chainage 0 skipped the DEM fit to the surveyed ground profile (the
+  start chainage shadowed the first-road flag).
+- Long corridors are much faster: a 36 km synthetic road on a 30 m DEM took 280 s, now about 105 s. The point-in-polygon test sorts the points once and tests each edge only against its own band,
+  and ground refinement first skips triangles nowhere near the road.
+
 ### Changed (coordinate order)
 - The coordinate option now reads **Coordinate order (Civil 3D and OpenRoads store Northing first: choose Swap X / Y)**.
 - When the coordinates, as interpreted, fall outside the output CRS's area of use but inside it in the other axis order, the log says so and names the option to choose. The order is still never changed automatically.

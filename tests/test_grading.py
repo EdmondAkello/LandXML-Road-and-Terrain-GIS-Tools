@@ -888,6 +888,51 @@ class BridgeLayoutTests(unittest.TestCase):
         self.assertIn("longest 40 m", text)
 
 
+class RenderEdgeTests(unittest.TestCase):
+    def test_banded_point_in_polygon_matches_the_plain_even_odd_rule(self):
+        from landxml_plugin.landxml.grading import _inside_many
+
+        def plain(points, ring):
+            x, y = points[:, 0], points[:, 1]
+            inside = np.zeros(len(points), bool)
+            for (x0, y0), (x1, y1) in zip(ring, np.roll(ring, -1, axis=0)):
+                if y0 != y1:
+                    inside ^= ((y0 > y) != (y1 > y)) & (x < (x1 - x0) * (y - y0) / (y1 - y0) + x0)
+            return inside
+
+        rng = np.random.default_rng(3)
+        for trial in range(20):
+            angles = np.sort(rng.uniform(0, 2 * np.pi, rng.integers(3, 40)))
+            radii = rng.uniform(2, 10, len(angles))
+            ring = np.c_[radii * np.cos(angles), radii * np.sin(angles)]
+            points = rng.uniform(-11, 11, (2000, 2))
+            if trial % 2:                       # shared levels: vertices and points on band edges
+                ring, points = np.round(ring), np.round(points)
+            np.testing.assert_array_equal(_inside_many(points, ring), plain(points, ring))
+
+    def test_wall_top_merges_the_steps_down_a_wall_face(self):
+        from landxml_plugin.site_tools_algorithm import wall_top
+
+        comb = np.array([[0, 0, 10], [5, 0, 10], [5.01, 0, 7], [5.02, 0, 10], [10, 0, 10], [10.01, 0, 7], [15, 0, 10]])
+        top = wall_top(comb)
+        self.assertEqual(len(top), 4)
+        self.assertTrue((top[:, 2] == 10).all())
+
+    def test_refine_pretest_keeps_every_triangle_near_the_footprint(self):
+        from landxml_plugin.landxml.structures import _near_cells
+
+        footprint = (np.array([[100.0, 100, 0], [104, 100, 0], [100, 104, 0]]), np.array([[0, 1, 2]]))
+        tri = np.array([[[99.0, 99], [109, 99], [99, 109]],          # overlaps it
+                        [[500.0, 500], [510, 500], [500, 510]]])    # far away
+        longest = np.array([np.hypot(10, 10)] * 2)
+        np.testing.assert_array_equal(_near_cells(tri, longest, footprint), [True, False])
+
+    def test_viewer_splits_normals_at_creases_and_layers_shared_edges(self):
+        html = (Path(__file__).resolve().parents[1] / "landxml" / "viewer.html").read_text(encoding="utf-8")
+        for needle in ("function creaseNormals", "linesByWidth", 'includes(s.info.role) ? 4 : 1'):
+            self.assertIn(needle, html)
+
+
 class ViewerTemplateTests(unittest.TestCase):
     def test_viewer_has_the_phone_layout_touch_gestures_and_a3_sheet(self):
         from pathlib import Path

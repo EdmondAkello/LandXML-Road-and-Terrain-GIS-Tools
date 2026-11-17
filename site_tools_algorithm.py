@@ -388,7 +388,7 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
                 result = {"runs": []}
             for run in result["runs"]:
                 if run["type"] in ("retained", "batter"):
-                    writer.line(f"{run['type']}_edge", f"{run['type']} {run['kind']} {run['band']}", run["points"],
+                    writer.line(f"{run['type']}_edge", f"{run['type']} {run['kind']} {run['band']}", wall_top(run["points"]),
                                 {"side": run["kind"], "height_max": round(run["height_max"], 3),
                                  "length": round(run["length"], 3)})
         if self.parameterAsBool(p, "ROADS", c) and read_catalog(path).alignments:
@@ -705,3 +705,20 @@ class GradingReportAlgorithm(ProjectSettingsAlgorithm):
                     f"{len(platforms['platforms'])} platforms.")
         return {"REPORT": report, "CUT_VOLUME": summary["cut_volume"], "FILL_VOLUME": summary["fill_volume"],
                 "PLAN_AREA": summary["plan_area"]}
+
+
+def wall_top(points, tolerance=0.15):
+    """A drawn edge along the top of a wall: a footprint outline steps down and back up a near-vertical
+    face at points that almost coincide in plan, which draws as a comb of ticks; such neighbours are
+    merged into one point at their highest level. Only the drawing uses this, not the schedule."""
+    points = np.asarray(points, float)
+    if len(points) < 3:
+        return points
+    out = [points[0].copy()]
+    for point in points[1:]:
+        if np.hypot(*(point[:2] - out[-1][:2])) <= tolerance:
+            if point[2] > out[-1][2]:
+                out[-1] = point.copy()
+        else:
+            out.append(point.copy())
+    return np.array(out)

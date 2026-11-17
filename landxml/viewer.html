@@ -234,17 +234,17 @@ const lineProgram = program(`#version 300 es
 const surfaces = [];
 for (const s of S.surfaces) {
   const m = S.meshes[s.id]; if (!m) continue;
-  const pos = decode(m.positions, Float32Array), col = decode(m.colors, Uint8Array), idx = decode(m.indices, Uint32Array);
-  const depth = m.depth ? decode(m.depth, Float32Array) : null;
-  const roadAttr = m.road ? decode(m.road, Float32Array) : new Float32Array(pos.length / 3 * 2);
-  const nrm = new Float32Array(pos.length);
-  for (let t = 0; t < idx.length; t += 3) {
-    const i = idx[t] * 3, j = idx[t + 1] * 3, k = idx[t + 2] * 3;
-    const ux = pos[j] - pos[i], uy = pos[j + 1] - pos[i + 1], uz = pos[j + 2] - pos[i + 2];
-    const vx = pos[k] - pos[i], vy = pos[k + 1] - pos[i + 1], vz = pos[k + 2] - pos[i + 2];
-    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
-    for (const v of [i, j, k]) { nrm[v] += nx; nrm[v + 1] += ny; nrm[v + 2] += nz; }
+  let pos = decode(m.positions, Float32Array), col = decode(m.colors, Uint8Array), idx = decode(m.indices, Uint32Array);
+  let depth = m.depth ? decode(m.depth, Float32Array) : null;
+  let roadAttr = m.road ? decode(m.road, Float32Array) : new Float32Array(pos.length / 3 * 2);
+  const split = creaseNormals(pos, idx, S.crease ?? 30);
+  let nrm = split.normals;
+  if (split.extra.length) {               // corners on the far side of a crease get their own vertex
+    const from = split.extra, n0 = pos.length / 3, n1 = n0 + from.length;
+    const grow = (a, w, T) => { const b = new T(n1 * w); b.set(a); for (let e = 0; e < from.length; e++) for (let c = 0; c < w; c++) b[(n0 + e) * w + c] = a[from[e] * w + c]; return b; };
+    pos = grow(pos, 3, Float32Array); col = grow(col, 3, Uint8Array); roadAttr = grow(roadAttr, 2, Float32Array);
+    if (depth) depth = grow(depth, 1, Float32Array);
+    idx = split.indices;
   }
   const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
   for (const [name, data, size, type, normalized] of [["p", pos, 3, gl.FLOAT, false], ["n", nrm, 3, gl.FLOAT, false], ["c", col, 3, gl.UNSIGNED_BYTE, true], ["r", roadAttr, 2, gl.FLOAT, false]]) {
@@ -256,6 +256,49 @@ for (const s of S.surfaces) {
   gl.bindVertexArray(null);
   surfaces.push({ info: s, vao, count: idx.length, pos, idx, depth, visible: s.visible !== false, opacity: s.opacity ?? 1,
                   road: !!(m.road && s.style && s.style.attribute === "road") });
+}
+function creaseNormals(pos, idx, angle) {
+  // Smooth normals within each group of faces round a vertex that meet at less than `angle` degrees;
+  // faces across a sharper crease (a platform edge, a batter crest) get a separate vertex, so flat
+  // faces shade flat right up to the edge instead of picking up the slope next to them.
+  const nv = pos.length / 3, nt = idx.length / 3, limit = Math.cos(angle * Math.PI / 180);
+  const fn = new Float32Array(nt * 3);
+  for (let t = 0; t < nt; t++) {
+    const i = idx[3 * t] * 3, j = idx[3 * t + 1] * 3, k = idx[3 * t + 2] * 3;
+    const ux = pos[j] - pos[i], uy = pos[j + 1] - pos[i + 1], uz = pos[j + 2] - pos[i + 2];
+    const vx = pos[k] - pos[i], vy = pos[k + 1] - pos[i + 1], vz = pos[k + 2] - pos[i + 2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    fn[3 * t] = nx; fn[3 * t + 1] = ny; fn[3 * t + 2] = nz;   // area-weighted
+  }
+  const start = new Uint32Array(nv + 1);
+  for (let c = 0; c < idx.length; c++) start[idx[c] + 1]++;
+  for (let v = 0; v < nv; v++) start[v + 1] += start[v];
+  const fill = start.slice(0, nv), corner = new Uint32Array(idx.length);
+  for (let c = 0; c < idx.length; c++) corner[fill[idx[c]]++] = c;
+  const normals = new Float32Array(pos.length), extra = [], extraN = [], out = idx.slice();
+  const group = new Int32Array(64), unit = (t) => { const x = fn[3 * t], y = fn[3 * t + 1], z = fn[3 * t + 2], l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l]; };
+  for (let v = 0; v < nv; v++) {
+    const a = start[v], b = start[v + 1];
+    if (b - a > 64) { let sx = 0, sy = 0, sz = 0; for (let q = a; q < b; q++) { const t = (corner[q] / 3) | 0; sx += fn[3 * t]; sy += fn[3 * t + 1]; sz += fn[3 * t + 2]; } normals[3 * v] = sx; normals[3 * v + 1] = sy; normals[3 * v + 2] = sz; continue; }
+    group.fill(-1, 0, b - a); let groups = 0;
+    for (let q = a; q < b; q++) {
+      if (group[q - a] >= 0) continue;
+      const seed = unit((corner[q] / 3) | 0); let sx = 0, sy = 0, sz = 0;
+      for (let r = q; r < b; r++) {
+        if (group[r - a] >= 0) continue;
+        const t = (corner[r] / 3) | 0, u = unit(t);
+        if (u[0] * seed[0] + u[1] * seed[1] + u[2] * seed[2] < limit) continue;
+        group[r - a] = groups; sx += fn[3 * t]; sy += fn[3 * t + 1]; sz += fn[3 * t + 2];
+      }
+      if (groups === 0) { normals[3 * v] = sx; normals[3 * v + 1] = sy; normals[3 * v + 2] = sz; }
+      else { const id = nv + extra.length; extra.push(v); extraN.push(sx, sy, sz); for (let r = q; r < b; r++) if (group[r - a] === groups) out[corner[r]] = id; }
+      groups++;
+    }
+  }
+  if (!extra.length) return { normals, extra, indices: idx };
+  const all = new Float32Array(pos.length + extraN.length); all.set(normals); all.set(extraN, pos.length);
+  return { normals: all, extra, indices: out };
 }
 const cornerBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuf);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -1, 1, -1, 1, 1, 0, -1, 1, 1, 0, 1]), gl.STATIC_DRAW);
@@ -280,6 +323,7 @@ for (const g of Object.values(lineGroups)) {
   gl.bindVertexArray(null);
   lines.push({ kind: g.kind, color: hex(g.color), css: g.color, width: g.width, lift: g.lift, vao, count: n });
 }
+const linesByWidth = lines.slice().sort((a, b) => b.width - a.width);
 // boxes of the surfaces the labels belong to (design surfaces, or all when there is none)
 const focus = surfaces.filter(s => s.info.role === "design");
 const focusBoxes = (focus.length ? focus : surfaces).map(s => {
@@ -332,7 +376,10 @@ function render(width, height) {
   for (const s of ordered) {
     const translucent = s.opacity < 1;
     if (translucent) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
-    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 1);
+    // ground (existing, context) sits a step further back than designs, so where the two meet at a
+    // daylight line or platform edge the design wins cleanly instead of flickering in a saw-tooth
+    const back = ["existing", "context"].includes(s.info.role) ? 4 : 1;
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(back, back);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "lift"), s.info.lift || 0);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "alpha"), s.opacity);
     gl.uniform1i(gl.getUniformLocation(meshProgram, "road"), s.road ? 1 : 0);
@@ -352,7 +399,11 @@ function render(width, height) {
   gl.uniform2f(gl.getUniformLocation(lineProgram, "screen"), width / 2, height / 2);
   const px = width / canvas.clientWidth;
   gl.uniform1f(gl.getUniformLocation(lineProgram, "alpha"), 1.0);
-  for (const l of lines) {
+  // Lines that share an edge (daylight line, platform outline, retained edge) would z-fight into a
+  // speckled band: they test depth against the surfaces but do not write it, widest first, so each
+  // coincident line lies cleanly on top of the wider one under it.
+  gl.depthMask(false);
+  for (const l of linesByWidth) {
     if (!kinds[l.kind].visible || (cam.free && XRAY.has(l.kind))) continue;     // the driver sees the road, not its centreline
     gl.uniform1f(gl.getUniformLocation(lineProgram, "lift"), l.lift);
     gl.uniform1f(gl.getUniformLocation(lineProgram, "width"), l.width * 0.5 * px);
@@ -360,7 +411,7 @@ function render(width, height) {
     gl.bindVertexArray(l.vao); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, l.count);
   }
   // Alignments and roads stay readable where the ground hides them (in cuts or tunnels): faint, behind it.
-  gl.depthFunc(gl.GREATER); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthFunc(gl.GREATER); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.uniform1f(gl.getUniformLocation(lineProgram, "alpha"), 0.35);
   for (const l of lines) {
     if (!kinds[l.kind].visible || !XRAY.has(l.kind) || cam.free) continue;
@@ -389,13 +440,13 @@ for (const l of S.labels) { const e = document.createElement("div"); e.className
 let showLabels = true;
 // Callouts: labels sit in columns left and right of the labelled points, joined to them by leaders,
 // so they never cover the model where the points are.
-function labelPositions(mvp, width, height, k = 1) {
+function labelPositions(mvp, width, height, k = 1, screen = false) {
   const pts = [], out = [], taken = [];
   S.labels.forEach((l, i) => {
     const p = project(mvp, [l.position[0], l.position[1], l.position[2]], width, height);
     if (!p || p[0] < 0 || p[1] < 0 || p[0] > width || p[1] > height) return;
     const w = (l.text.length * 6.2 + 10) * k;
-    if (l.kind === "station" && narrow() && k === 1) return;    // small screens: callouts only, no station ticks
+    if (l.kind === "station" && narrow() && screen) return;    // small screens: callouts only, no station ticks
     if (l.kind === "station") {            // small labels at their point, skipped where they would overlap
       const box = [p[0] + 4 * k, p[1] - 9 * k, p[0] + 4 * k + w, p[1] + 9 * k];
       if (taken.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) return;
@@ -434,7 +485,7 @@ function placeLabels(mvp, width, height) {
   svg.innerHTML = "";
   if (!showLabels || cam.free) return;
   let lines = "";
-  for (const c of labelPositions(mvp, width, height)) {
+  for (const c of labelPositions(mvp, width, height, width / Math.max(canvas.clientWidth, 1), true)) {
     const e = labelEls[c.i]; e.style.display = "block";
     e.style.left = c.x * scale + "px"; e.style.top = c.y * scale + "px";
     if (c.side === "point") { lines += `<circle cx="${c.anchor[0] * scale}" cy="${c.anchor[1] * scale}" r="2" fill="#555"/>`; continue; }
