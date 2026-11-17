@@ -891,13 +891,17 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertTrue(any(s["role"] == "existing_under" for s in concept_scene["surfaces"]))
             # structures: a typed box culvert and a bridge stretch, drawn as concept solids with their own views
             built = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", WATER="", SURFACES="EG",
-                                                    SYNTHETIC="Main", SYN_STRUCTURES="1+030 = box 2 x 1.5 x 1.0; 1+060-1+080 = bridge, span 10",
+                                                    SYNTHETIC="Main", SYN_GROUND="EG", SYN_STRUCTURES="1+030 = box 2 x 1.5 x 1.0; 1+060-1+080 = bridge, span 10",
                                                     OUTPUT_FOLDER=str(Path(directory) / "structures")), self.context, self.feedback)
             built_scene, _built_folder = load_scene(built["SCENE"])
             self.assertTrue(any(s["name"] == "Structures (concept)" for s in built_scene["surfaces"]))
             names = [v["name"] for v in built_scene["views"]]
             self.assertTrue(any(n.startswith("box 1+030") for n in names), names)
             self.assertTrue(any(n.startswith("Bridge 10") for n in names), names)
+            with self.assertRaises(QgsProcessingException):
+                algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", WATER="", SURFACES="EG",
+                                                SYNTHETIC="Main", SYN_GROUND="Nothing", OUTPUT_FOLDER=str(Path(directory) / "x")),
+                                           self.context, self.feedback)
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
 

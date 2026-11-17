@@ -682,7 +682,7 @@ if (paths.length) {
 window.sceneViewer = { setView, render, cam, get ve() { return ve; } };
 resize();
 if (S.views.length) setView(S.views[0]);
-// viewer.html#view=NS3A opens the first view whose name starts with that text
+// viewer.html#view=C3 opens the first view whose name starts with that text
 const startView = /view=([^&]+)/.exec(location.hash);
 if (startView) {
   const wanted = decodeURIComponent(startView[1]).toLowerCase();
