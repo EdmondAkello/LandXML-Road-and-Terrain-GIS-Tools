@@ -276,12 +276,18 @@ let showLabels = true;
 // Callouts: labels sit in columns left and right of the labelled points, joined to them by leaders,
 // so they never cover the model where the points are.
 function labelPositions(mvp, width, height, k = 1) {
-  const pts = [];
+  const pts = [], out = [], taken = [];
   S.labels.forEach((l, i) => {
     const p = project(mvp, [l.position[0], l.position[1], l.position[2]], width, height);
-    if (p && p[0] >= 0 && p[1] >= 0 && p[0] <= width && p[1] <= height) pts.push({ i, p, w: (l.text.length * 7 + 12) * k });
+    if (!p || p[0] < 0 || p[1] < 0 || p[0] > width || p[1] > height) return;
+    const w = (l.text.length * 6.2 + 10) * k;
+    if (l.kind === "station") {            // small labels at their point, skipped where they would overlap
+      const box = [p[0] + 4 * k, p[1] - 9 * k, p[0] + 4 * k + w, p[1] + 9 * k];
+      if (taken.some(b => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) return;
+      taken.push(box); out.push({ i, anchor: p, x: p[0] + 4 * k, y: p[1], w, side: "point" });
+    } else pts.push({ i, p, w: (l.text.length * 7 + 12) * k });
   });
-  if (!pts.length) return [];
+  if (!pts.length) return out;
   // keep the label columns clear of the model: outside the screen box of the focus surfaces where there is room
   let minx = Math.min(...pts.map(q => q.p[0])), maxx = Math.max(...pts.map(q => q.p[0]));
   const mid = (minx + maxx) / 2;
@@ -289,7 +295,7 @@ function labelPositions(mvp, width, height, k = 1) {
     const q = project(mvp, [x, y, z], width, height); if (!q) continue;
     minx = Math.min(minx, q[0]); maxx = Math.max(maxx, q[0]);
   }
-  const gap = 46 * k, row = 22 * k, edge = 8 * k, out = [];
+  const gap = 46 * k, row = 22 * k, edge = 8 * k;
   for (const side of ["left", "right"]) {
     const group = pts.filter(q => side === "left" ? q.p[0] < mid || (pts.length === 1) : q.p[0] >= mid && pts.length > 1)
       .sort((a, b) => a.p[1] - b.p[1]);
@@ -316,6 +322,7 @@ function placeLabels(mvp, width, height) {
   for (const c of labelPositions(mvp, width, height)) {
     const e = labelEls[c.i]; e.style.display = "block";
     e.style.left = c.x * scale + "px"; e.style.top = c.y * scale + "px";
+    if (c.side === "point") { lines += `<circle cx="${c.anchor[0] * scale}" cy="${c.anchor[1] * scale}" r="2" fill="#555"/>`; continue; }
     const ex = (c.side === "left" ? c.x + c.w : c.x) * scale, ey = c.y * scale, ax = c.anchor[0] * scale, ay = c.anchor[1] * scale;
     const pts = `${ax},${ay} ${ex + (c.side === "left" ? 10 : -10)},${ey} ${ex},${ey}`;
     lines += `<polyline points="${pts}" fill="none" stroke="#fff" stroke-width="3" stroke-opacity=".8"/>` +
@@ -437,6 +444,10 @@ document.getElementById("png").onclick = () => {
     g.font = `600 ${12 * k}px system-ui, Arial`; g.textBaseline = "middle"; g.textAlign = "left";
     for (const c of labelPositions(mvp, w, h, k)) {
       const t = S.labels[c.i].text, tw = g.measureText(t).width + 10 * k, x = c.side === "left" ? c.x + c.w - tw : c.x;
+      if (c.side === "point") {
+        g.fillStyle = "rgba(255,255,255,.85)"; g.fillRect(x, c.y - 8 * k, tw, 16 * k); g.fillStyle = "#333"; g.fillText(t, x + 5 * k, c.y + k);
+        continue;
+      }
       const ex = c.side === "left" ? x + tw : x;
       g.strokeStyle = "#333"; g.lineWidth = k; g.beginPath(); g.moveTo(c.anchor[0], c.anchor[1]);
       g.lineTo(ex + (c.side === "left" ? 10 * k : -10 * k), c.y); g.lineTo(ex, c.y); g.stroke();

@@ -82,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 27)
+        self.assertEqual(len(self.algorithms), 28)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
@@ -763,6 +763,85 @@ class QgisProcessingTests(unittest.TestCase):
             for part in ("Site grading report", "Cut and fill depth", "Slope classes", "Design levels", "<svg",
                          "Platforms", "Internal steps", "retained"):
                 self.assertIn(part, text)
+
+    def _road_scene_files(self, directory):
+        xs = list(range(0, 101, 10))
+        ys = list(range(-50, 51, 10))
+        pts, faces = [], []
+        for y in ys:
+            for x in xs:
+                pts.append((x, y, 100 + 0.02 * x + 0.01 * abs(y)))
+        n = len(xs)
+        for r in range(len(ys) - 1):
+            for col in range(n - 1):
+                a, b, d, e = r * n + col + 1, r * n + col + 2, (r + 1) * n + col + 1, (r + 1) * n + col + 2
+                faces += [(a, b, e), (a, e, d)]
+        def tin(name, points, tris):
+            return (f'<Surface name="{name}"><Definition surfType="TIN"><Pnts>'
+                    + "".join(f'<P id="{k}">{y} {x} {z}</P>' for k, (x, y, z) in enumerate(points, 1))
+                    + "</Pnts><Faces>" + "".join(f"<F>{a} {b} {c}</F>" for a, b, c in tris) + "</Faces></Definition></Surface>")
+        design = [(x, y, 102.0) for y in (-10, 10) for x in (0, 100)]
+        text = ('<?xml version="1.0" encoding="UTF-8"?><LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">'
+                '<Units><Metric linearUnit="meter" verticalLinearUnit="meter"/></Units><Surfaces>'
+                + tin("EG", pts, faces) + tin("Road FG", design, [(1, 2, 4), (1, 4, 3)])
+                + '</Surfaces><Alignments><Alignment name="Main" staStart="1000" length="100"><CoordGeom><Line length="100">'
+                '<Start>0 0</Start><End>0 100</End></Line></CoordGeom><Profile><ProfAlign name="FG"><PVI>1000 102</PVI>'
+                '<PVI>1100 102</PVI></ProfAlign></Profile></Alignment></Alignments>'
+                '<PlanFeatures name="F"><PlanFeature name="Kerb"><CoordGeom><Line><Start>5 10 102.1</Start><End>5 90 102.1</End>'
+                '</Line></CoordGeom><Feature code="FeatureLine"/></PlanFeature></PlanFeatures></LandXML>')
+        path = Path(directory) / "road.xml"
+        path.write_text(text, encoding="utf-8")
+        tif = Path(directory) / "dem.tif"
+        ds = gdal.GetDriverByName("GTiff").Create(str(tif), 60, 60, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((-20, 2, 0, 70, 0, -2))
+        from osgeo import osr
+        srs = osr.SpatialReference(); srs.ImportFromEPSG(26915); ds.SetProjection(srs.ExportToWkt())
+        band = ds.GetRasterBand(1); band.SetNoDataValue(-9999)
+        grid = np.fromfunction(lambda r, c: 95 + 0.1 * c, (60, 60), dtype=float); grid[0, 0] = -9999
+        band.WriteArray(grid); ds = None
+        return str(path), str(tif)
+
+    def test_road_scene_with_surfaces_rasters_contours_and_linework(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer
+        from landxml_plugin.landxml.scene import load_scene
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, tif = self._road_scene_files(directory)
+            raster = QgsRasterLayer(tif, "DEM")
+            vector = QgsVectorLayer("LineString?crs=EPSG:26915", "Fence", "memory")
+            feature = QgsFeature(); feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(20, -30), QgsPointXY(80, -30)]))
+            vector.dataProvider().addFeatures([feature])
+            params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG = plain #cfd8c4; Road FG = depth over EG",
+                          CONTOURS="EG = 0.5", RASTERS=[raster], RASTER_CONTOURS=1.0, VECTORS=[vector], STATION_LABELS=20,
+                          TITLE="Test road", OUTPUT_FOLDER=str(Path(directory) / "scene"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            scene, folder = load_scene(result["SCENE"])
+            self.assertEqual(scene["title"], "Test road")
+            self.assertEqual([(s["id"], s["role"]) for s in scene["surfaces"]],
+                             [("s1", "surface"), ("s2", "design"), ("r1", "raster")])
+            kinds = {line["kind"] for line in scene["lines"]}
+            self.assertTrue({"contour", "index_contour", "alignment", "feature_line", "vector"} <= kinds)
+            origin = np.array(scene["origin"])
+            alignment = np.array(next(l for l in scene["lines"] if l["kind"] == "alignment")["points"]) + origin
+            self.assertTrue(np.allclose(alignment[:, 2], 102.0))          # profile level, not draped
+            fence = np.array(next(l for l in scene["lines"] if l["kind"] == "vector")["points"]) + origin
+            self.assertTrue(np.allclose(fence[:, 2], 100 + 0.02 * fence[:, 0] + 0.01 * 30, atol=1e-6))   # draped on EG
+            stations = sorted(l["text"] for l in scene["labels"] if l["kind"] == "station")
+            self.assertEqual(stations[0], "1+000.00")
+            self.assertEqual(len(stations), 6)
+            levels = sorted({l["properties"]["level"] for l in scene["lines"] if l["properties"].get("surface") == "EG"})
+            self.assertEqual(levels[0], 100.5)
+            self.assertTrue(Path(result["VIEWER"]).is_file())
+            # a corridor keeps only the triangles near the alignment
+            narrow = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", CORRIDOR="Main", CORRIDOR_WIDTH=15,
+                                                     OUTPUT_FOLDER=str(Path(directory) / "corridor")), self.context, self.feedback)
+            corridor, _ = load_scene(narrow["SCENE"])
+            eg = next(s for s in corridor["surfaces"] if s["name"] == "EG")
+            self.assertLess(eg["triangles"], 200)
+            self.assertGreater(eg["triangles"], 20)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
 
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]
