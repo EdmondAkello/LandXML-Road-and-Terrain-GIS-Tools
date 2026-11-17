@@ -78,6 +78,7 @@ const gl = canvas.getContext("webgl2", { antialias: true, preserveDrawingBuffer:
 const LINE_NAMES = { daylight: "Daylight line", platform_outline: "Platform outline", retained_edge: "Retained edge",
   batter_edge: "Batter", road: "Road", alignment: "Alignment", feature_line: "Feature line", breakline: "Breakline",
   contour: "Contour", index_contour: "Index contour", section: "Cross-section", vector: "Vector layer", boundary: "Surface boundary" };
+const XRAY = new Set(["alignment", "road"]);
 function fail(text) { const e = document.getElementById("error"); e.textContent = text; e.style.display = "flex"; }
 if (!gl) fail("This browser cannot show WebGL 2 graphics. Open the file in a current Chrome, Edge or Firefox.");
 
@@ -142,7 +143,7 @@ const lineProgram = program(`#version 300 es
     cp.z -= 0.0006 * cp.w;
     gl_Position = cp; }`,
   `#version 300 es
-  precision highp float; uniform vec3 color; out vec4 o; void main() { o = vec4(color, 1.0); }`);
+  precision highp float; uniform vec3 color; uniform float alpha; out vec4 o; void main() { o = vec4(color, alpha); }`);
 
 // ---------------------------------------------------------------- scene objects
 const surfaces = [];
@@ -249,6 +250,7 @@ function render(width, height) {
   gl.uniform1f(gl.getUniformLocation(lineProgram, "ve"), ve);
   gl.uniform2f(gl.getUniformLocation(lineProgram, "screen"), width / 2, height / 2);
   const px = width / canvas.clientWidth;
+  gl.uniform1f(gl.getUniformLocation(lineProgram, "alpha"), 1.0);
   for (const l of lines) {
     if (!kinds[l.kind].visible) continue;
     gl.uniform1f(gl.getUniformLocation(lineProgram, "lift"), l.lift);
@@ -256,6 +258,17 @@ function render(width, height) {
     gl.uniform3fv(gl.getUniformLocation(lineProgram, "color"), l.color);
     gl.bindVertexArray(l.vao); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, l.count);
   }
+  // Alignments and roads stay readable where the ground hides them (in cuts or tunnels): faint, behind it.
+  gl.depthFunc(gl.GREATER); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.uniform1f(gl.getUniformLocation(lineProgram, "alpha"), 0.35);
+  for (const l of lines) {
+    if (!kinds[l.kind].visible || !XRAY.has(l.kind)) continue;
+    gl.uniform1f(gl.getUniformLocation(lineProgram, "lift"), l.lift);
+    gl.uniform1f(gl.getUniformLocation(lineProgram, "width"), l.width * 0.5 * px);
+    gl.uniform3fv(gl.getUniformLocation(lineProgram, "color"), l.color);
+    gl.bindVertexArray(l.vao); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, l.count);
+  }
+  gl.depthFunc(gl.LESS); gl.depthMask(true); gl.disable(gl.BLEND);
   gl.bindVertexArray(null);
   placeLabels(mvp, width, height);
   const az = cam.azimuth * 180 / Math.PI;   // camera bearing from the target; the view looks the opposite way

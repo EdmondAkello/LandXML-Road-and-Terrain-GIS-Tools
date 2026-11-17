@@ -851,6 +851,25 @@ class QgisProcessingTests(unittest.TestCase):
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
 
+    def test_centreline_levels_follow_the_profile_across_near_equal_element_joins(self):
+        from landxml_plugin.road_features import centerlines_3d
+
+        text = ('<?xml version="1.0"?><LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">'
+                '<Units><Metric linearUnit="meter"/></Units><Alignments><Alignment name="A" staStart="0" length="150">'
+                '<CoordGeom><Line><Start>0 0</Start><End>50 0</End></Line>'
+                '<Line><Start>50.00000000001 0</Start><End>100 0</End></Line>'
+                '<Line><Start>100.00000000002 0</Start><End>150 0</End></Line></CoordGeom>'
+                '<Profile><ProfAlign name="FRL"><PVI>0 100</PVI><PVI>150 115</PVI></ProfAlign></Profile>'
+                '</Alignment></Alignments></LandXML>')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "joins.xml"
+            path.write_text(text, encoding="utf-8")
+            ((name, start, end, stored),) = centerlines_3d(str(path), 2.0)
+            self.assertAlmostEqual(end - start, 150.0, places=6)
+            # stored order is northing easting: the alignment runs along the first coordinate
+            self.assertTrue(np.allclose(stored[:, 2], 100 + 0.1 * stored[:, 0], atol=1e-6))
+            self.assertEqual(len(stored), 4)                     # one point per join, not two
+
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]
         with tempfile.TemporaryDirectory() as directory:

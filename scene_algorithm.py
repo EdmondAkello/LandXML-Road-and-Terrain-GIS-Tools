@@ -42,7 +42,7 @@ from .landxml.tin_overlay import sample_tin
 from .params import number_param
 from .processing_common import coordinate_choices
 from .project_settings import ProjectSettingsAlgorithm
-from .road_features import _alignment_parts, _param_coordinates, centerlines_3d
+from .road_features import _alignment_parts, _param_coordinates, centerlines_3d, merge_parts
 
 GROUP = "8. Reports and sheets"
 DEFAULT_VIEWS = "sw: -0.6, -0.8, 0.55; se: 0.8, -0.5, 0.6"
@@ -307,7 +307,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 raise QgsProcessingException("A corridor needs the LandXML file with its alignment.")
             name = match_name(read_catalog(path).alignments, corridor, "alignment")
             parts = _alignment_parts(path, 2.0, name)
-            points = [pt for part in (parts[0][4] if parts else []) for pt in part]
+            points = merge_parts(parts[0][4]) if parts else []
             if not points:
                 raise QgsProcessingException(f"Alignment '{name}' has no geometry.")
             raw = np.array(points, float)
@@ -500,7 +500,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             profiled = {name: stored for name, _s, _e, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled)}
             every = self.parameterAsDouble(p, "STATION_LABELS", c)
             for name, _desc, sta0, _sta1, parts, _unsupported, distances in _alignment_parts(path, 2.0):
-                pts = [pt for part in parts for pt in part]
+                pts = merge_parts(parts)
                 if len(pts) < 2:
                     continue
                 if name in profiled:

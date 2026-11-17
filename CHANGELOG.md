@@ -28,6 +28,7 @@
 - `elevationUnit` on the LandXML `Units` element is accepted as the vertical unit (`verticalLinearUnit` wins when both are present).
 
 ### Fixed
+- **3D Centerlines and Station Points: levels and stations no longer shift after element joins.** Where two alignment elements met at points that agree to 1e-9 but not exactly, the join was kept twice while the stationing kept it once, so every later point took the station, and level, of a point further back (a 42 m step on a 16.7 km road export). Joins now merge exactly as the alignment reader does. 3D centrelines also follow the profile's own samples, so vertical curves on long tangents are no longer cut straight.
 - Civil 3D feature lines (corridor feature lines included) were skipped: Civil 3D writes a feature-line `Curve` as three points on the arc (`Start`, `Center` = the middle of the arc, with its elevation, `End`) with only a `radius` and no `rot`. Such curves are now drawn through those three points, with chords within 5 mm of the arc.
 - Feature-line elevation points (`<Location desc="FeatureLine Elevation Point">`, where Civil 3D keeps levels between PIs) were ignored, so the levels between PIs were a straight grade. They are now inserted into the line, and the points sampled along curves are graded between them, as Civil 3D grades them. Checked against a Civil 3D 2022 export of a 2.7 km corridor: lines read back within 6 mm of Civil 3D's levels.
 
