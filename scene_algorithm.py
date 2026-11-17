@@ -132,6 +132,34 @@ def _compact(xyz, faces):
     return xyz[used], remap[faces], used
 
 
+def refine_near(xyz, faces, footprint, target, rounds=5):
+    """Split ground triangles that touch ``footprint`` (a TIN) until their edges are at most ``target`` long.
+
+    Each chosen triangle is split into four at its edge midpoints, which lie on the original planes, so
+    the ground keeps its shape; a coarse DEM can then be cut cleanly along a narrow road."""
+    xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
+    for _round in range(rounds):
+        tri = xyz[faces]
+        longest = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
+        probes = np.concatenate([tri, (tri + np.roll(tri, 1, axis=1)) / 2, tri.mean(axis=1, keepdims=True)], axis=1)
+        touch = np.isfinite(sample_tin(footprint, probes.reshape(-1, 3)[:, :2])).reshape(len(faces), 7).any(axis=1)
+        chosen = touch & (longest > target)
+        if not chosen.any():
+            break
+        picked = faces[chosen]
+        edges = np.sort(np.concatenate([picked[:, [0, 1]], picked[:, [1, 2]], picked[:, [2, 0]]]), axis=1)
+        unique, inverse = np.unique(edges, axis=0, return_inverse=True)
+        inverse = inverse.reshape(-1)
+        middle = len(xyz) + inverse.reshape(3, -1).T                      # midpoints of edges 01, 12, 20
+        xyz = np.vstack([xyz, (xyz[unique[:, 0]] + xyz[unique[:, 1]]) / 2])
+        a, b, c = picked.T
+        m01, m12, m20 = middle.T
+        new = np.concatenate([np.column_stack([a, m01, m20]), np.column_stack([m01, b, m12]),
+                              np.column_stack([m20, m12, c]), np.column_stack([m01, m12, m20])])
+        faces = np.concatenate([faces[~chosen], new])
+    return xyz, faces
+
+
 def _runs_inside(points, area):
     """Parts of a polyline inside the area (split where it leaves)."""
     inside = area.keep_points(points)
@@ -279,6 +307,14 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 ("SYN_MAX_WIDTH", "Synthetic: longest side slope (output units)", 40.0, 1.0, 500.0)):
             self.addParameter(number_param(key, label, default, lo, hi, decimals=2))
         self.addParameter(QgsProcessingParameterBoolean(
+            "SYN_BRIDGES", "Synthetic: bridges where the side slopes do not reach the ground", defaultValue=True))
+        self.addParameter(number_param("SYN_BRIDGE_SPAN", "Synthetic: bridge span", 25.0, 5.0, 200.0, decimals=1))
+        self.addParameter(QgsProcessingParameterFile(
+            "SYN_STRUCTURES_CSV", "Synthetic: culvert and bridge schedule (CSV)", extension="csv", optional=True))
+        self.addParameter(QgsProcessingParameterString(
+            "SYN_STRUCTURES", "Synthetic: structures typed in (e.g. 1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9)",
+            defaultValue="", optional=True))
+        self.addParameter(QgsProcessingParameterBoolean(
             "SYN_MATCH_PROFILE", "Synthetic: shift DEMs to match the alignment's surveyed ground profile", defaultValue=False))
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
@@ -408,7 +444,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
     def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor):
         """Add a synthetic finished road along an alignment's profile, cut into the ground meshes."""
         from .landxml.grading import volume_summary
-        from .landxml.synthetic_corridor import synthetic_corridor
+        from .landxml.structures import MeshBuilder, bridge, culvert, low_points, read_schedule_csv, read_schedule_text
+        from .landxml.synthetic_corridor import _normals as corridor_normals, synthetic_corridor
         from .landxml.tin_overlay import depth_tin
 
         if not path:
@@ -440,6 +477,13 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                         meshes[index] = (*mesh[:3], moved, *mesh[4:])
                 ground = next((m[3], m[4]) for m in meshes if m[0] == grounds[0][0])
                 fb.pushInfo(f"DEMs raised by {shift:+.2f} to match the alignment's surveyed ground profile.")
+        covered = np.isfinite(sample_tin(ground, centre[:, :2]))
+        if covered.sum() < 2:
+            raise QgsProcessingException(f"The ground does not cover alignment '{name}' in the area.")
+        if not covered.all():
+            idx = np.flatnonzero(covered)
+            centre, stations = centre[idx[0]:idx[-1] + 1], stations[idx[0]:idx[-1] + 1]
+            fb.pushInfo(f"Synthetic corridor limited to {stations[0]:.0f}–{stations[-1]:.0f}, where the ground covers the alignment.")
         width = self.parameterAsDouble(p, "SYN_CARRIAGEWAY", c)
         shoulder = self.parameterAsDouble(p, "SYN_SHOULDER", c)
         lanes = int(self.parameterAsDouble(p, "SYN_LANES", c))
@@ -449,15 +493,65 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             self.parameterAsDouble(p, "SYN_CUT_SLOPE", c), self.parameterAsDouble(p, "SYN_FILL_SLOPE", c),
             self.parameterAsDouble(p, "SYN_MAX_WIDTH", c))
         style = ss.road_style(width, shoulder, lanes)
+        max_width = self.parameterAsDouble(p, "SYN_MAX_WIDTH", c)
+        outer = xyz.reshape(len(centre), 7, 3)[:, [0, 6], :2].reshape(-1, 2)
+        known = np.isfinite(sample_tin(ground, outer)).reshape(len(centre), 2).all(axis=1)
+        short = (daylight.max(axis=1) >= max_width - 1e-6) & known      # no daylight against ground that is there
+        ground_at = lambda points: sample_tin(ground, np.asarray(points, float)[:, :2])
+        normal = corridor_normals(centre[:, :2])
+        edge = width / 2 + shoulder
+
+        # ---- structures: the schedule (CSV and typed), and bridges over the stretches without daylight
+        schedule = []
+        csv_path = self.parameterAsFile(p, "SYN_STRUCTURES_CSV", c)
+        if csv_path:
+            try:
+                items, notes = read_schedule_csv(csv_path)
+            except (OSError, ValueError) as exc:
+                raise QgsProcessingException(f"Structure schedule: {exc}") from exc
+            for note in notes:
+                fb.pushInfo(note)
+            schedule += items
+        try:
+            schedule += read_schedule_text(self.parameterAsString(p, "SYN_STRUCTURES", c))
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        bridge_rows = np.zeros(len(centre), bool)
+        if self.parameterAsBool(p, "SYN_BRIDGES", c) and short.any():
+            edges = np.flatnonzero(np.diff(np.concatenate([[0], short.astype(int), [0]])))
+            for first_row, after in zip(edges[::2], edges[1::2]):
+                bridge_rows[max(first_row - 1, 0):min(after + 1, len(centre))] = True
+        spans = {}
+        for item in schedule:
+            if item["kind"] == "bridge":
+                end = item["end"] if item["end"] is not None else item["station"]
+                rows = (stations >= min(item["station"], end)) & (stations <= max(item["station"], end))
+                bridge_rows |= rows
+                if item["span"]:
+                    spans[float(stations[rows][0]) if rows.any() else item["station"]] = item["span"]
+        quads = len(faces) // 2
+        quad_row = np.arange(quads) // 6
+        quad_col = np.arange(quads) % 6
+        quad_bridge = bridge_rows[quad_row] & bridge_rows[quad_row + 1]
+        face_bridge = np.concatenate([quad_bridge, quad_bridge])
+        face_slope = np.concatenate([quad_col, quad_col])
+        face_slope = (face_slope == 0) | (face_slope == 5)
+        road_faces = faces[~(face_bridge & face_slope)]          # the deck keeps the road, the slopes go
+        earth_faces = faces[~face_bridge]                       # earthworks and ground cutting leave bridges out
+
         sid = f"syn{len(meshes) + 1}"
-        meshes.append((sid, f"{name} (synthetic corridor)", "design", xyz, faces, style, None))
+        meshes.append((sid, f"{name} (synthetic corridor)", "design", xyz, road_faces, style, None))
         self._synthetic_extra = {sid: {"station": station, "offset": offset}}
         # cut the ground under the corridor, as for a designed surface drawn over it
         for index, mesh in enumerate(meshes):
             if mesh[2] not in ("surface", "raster"):
                 continue
+            refined_xyz, refined_faces = refine_near(mesh[3], mesh[4], (xyz, earth_faces), max(width / 4.0, 1.0))
+            if len(refined_faces) != len(mesh[4]):
+                mesh = (*mesh[:3], refined_xyz, refined_faces, *mesh[5:])
+                meshes[index] = mesh
             gxyz, gfaces = mesh[3].copy(), mesh[4]
-            under = sample_tin((xyz, faces), mesh[3])
+            under = sample_tin((xyz, earth_faces), mesh[3])
             inside = np.isfinite(under)
             removed = inside[gfaces].all(axis=1)
             gxyz[inside, 2] = under[inside]
@@ -469,7 +563,63 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                     gxyz, keep, _used = _compact(gxyz, keep)
                     meshes[index] = (*mesh[:3], gxyz, keep, *mesh[5:])
         fb.pushInfo(f"Side slopes run out {np.median(daylight):.1f} (median), up to {daylight.max():.1f} beyond the shoulders.")
-        short = daylight.max(axis=1) >= self.parameterAsDouble(p, "SYN_MAX_WIDTH", c) - 1e-6
+
+        builder = MeshBuilder()
+        notes = []
+        views = self._synthetic_views = []
+        if bridge_rows.any():
+            edges = np.flatnonzero(np.diff(np.concatenate([[0], bridge_rows.astype(int), [0]])))
+            default_span = self.parameterAsDouble(p, "SYN_BRIDGE_SPAN", c)
+            for first_row, after in zip(edges[::2], edges[1::2]):
+                rows = np.arange(first_row, after)
+                if len(rows) < 2:
+                    continue
+                span = spans.get(float(stations[first_row]), default_span)
+                text, _piers = bridge(builder, centre, stations, normal, rows, 2 * edge + 1.0, span, ground_at)
+                notes.append(text)
+                middle = rows[len(rows) // 2]
+                n = normal[middle]
+                views.append((f"Bridge {stations[rows[0]]:.0f}–{stations[rows[-1]]:.0f}", (n[0], n[1], 0.25),
+                              centre[middle] - [0, 0, 5.0], max(1.2 * (stations[rows[-1]] - stations[rows[0]]), 60.0)))
+        culverts = []
+        for item in schedule:
+            if item["kind"] == "bridge":
+                continue
+            s = item["station"]
+            if not stations[0] <= s <= stations[-1]:
+                notes.append(f"{item['id']} at {s:.0f} is outside the corridor; not drawn.")
+                continue
+            i = int(np.clip(np.searchsorted(stations, s), 1, len(stations) - 1))
+            if bridge_rows[i - 1] and bridge_rows[i]:
+                notes.append(f"{item['id']} at {s:.0f} is under a bridge; not drawn.")
+                continue
+            t = (s - stations[i - 1]) / max(stations[i] - stations[i - 1], 1e-9)
+            point = centre[i - 1] + (centre[i] - centre[i - 1]) * t
+            reach = daylight[i - 1] + (daylight[i] - daylight[i - 1]) * t
+            try:
+                notes.append(culvert(builder, item, point, normal[i - 1], edge + reach[0] + 0.5, edge + reach[1] + 0.5,
+                                     ground_at))
+                culverts.append(s)
+                n = normal[i - 1]
+                along = np.array([n[1], -n[0]])
+                views.append((f"{item['id']} ({s:.0f})", (-n[0] * 0.8 + along[0] * 0.6, -n[1] * 0.8 + along[1] * 0.6, 0.55),
+                              (point[0], point[1], point[2] - 1.5), max(3.0 * (2 * edge + reach.sum()), 40.0)))
+            except ValueError as exc:
+                notes.append(str(exc))
+        for note in notes:
+            (fb.pushWarning if "does not fit" in note else fb.pushInfo)(note)
+        sxyz, sfaces = builder.result()
+        self._synthetic_structures = (sxyz, sfaces) if len(sfaces) else None
+        # dips in the ground under fill with no structure near them
+        road = centre[:, 2]
+        surveyed = ground_at(centre)
+        candidates = [s for s in low_points(stations, road, surveyed)
+                      if not bridge_rows[int(np.clip(np.searchsorted(stations, s), 0, len(stations) - 1))]
+                      and all(abs(s - k) > 50.0 for k in culverts)]
+        if candidates:
+            fb.pushWarning("Possible crossings, not sized (ground low point under 1.5 m or more of fill with no culvert or "
+                           "bridge within 50 m): " + ", ".join(f"{s:.0f}" for s in candidates[:20])
+                           + (" …" if len(candidates) > 20 else "") + ". Check them in the drainage design.")
 
         def volumes(face_set):
             try:
@@ -478,20 +628,22 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             except ValueError:
                 return None
 
-        whole = volumes(faces)
-        if whole:
-            fb.pushInfo(f"Synthetic corridor {stations[0]:.0f}–{stations[-1]:.0f}: about {whole['cut_volume']:,.0f} cut and "
-                        f"{whole['fill_volume']:,.0f} fill (cubic output units, concept section, no bulking).")
         if short.any():
             edges = np.flatnonzero(np.diff(np.concatenate([[0], short.astype(int), [0]])))
             runs = [f"{stations[a]:.0f}–{stations[b - 1]:.0f}" for a, b in zip(edges[::2], edges[1::2])]
             fb.pushWarning("Side slopes do not reach the ground within the longest slope at " + ", ".join(runs[:12])
                            + (" …" if len(runs) > 12 else "") + ": a deep crossing or high embankment, likely a structure "
-                           "at design stage. The volumes above count these stretches as fill.")
+                           "at design stage." + (" Drawn as bridges." if self.parameterAsBool(p, "SYN_BRIDGES", c) else ""))
+        whole = volumes(earth_faces if bridge_rows.any() else faces)
+        if whole:
+            fb.pushInfo(f"Synthetic corridor {stations[0]:.0f}–{stations[-1]:.0f}: about {whole['cut_volume']:,.0f} cut and "
+                        f"{whole['fill_volume']:,.0f} fill (cubic output units, concept section, no bulking"
+                        + (", bridges left out" if bridge_rows.any() else "") + ").")
+        if short.any() and not bridge_rows.any():
             rows = faces // 7
             earthworks = volumes(faces[~short[rows].any(axis=1)])
             if earthworks:
-                fb.pushInfo(f"Leaving those stretches out: about {earthworks['cut_volume']:,.0f} cut and "
+                fb.pushInfo(f"Leaving the stretches without daylight out: about {earthworks['cut_volume']:,.0f} cut and "
                             f"{earthworks['fill_volume']:,.0f} fill.")
 
     # ------------------------------------------------------------------ run
@@ -521,6 +673,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self._axis = None
         self._corridor_name = None
         self._synthetic_extra = {}
+        self._synthetic_structures = None
+        self._synthetic_views = []
         area = self._area(p, c, path, method, params, crs, fb)
         corridor_axis = self._axis
         budget = int(self.parameterAsDouble(p, "MAX_TRIANGLES", c))
@@ -820,6 +974,12 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             style["classes"][0]["label"] = "Raised polygons"
             writer.surface("solids", "Buildings and structures", "solid", sxyz, sfaces,
                            np.tile(np.array([0xd9, 0xd4, 0xc7], np.uint8), (len(sxyz), 1)), style)
+        if getattr(self, "_synthetic_structures", None):
+            sxyz, sfaces = self._synthetic_structures
+            style = ss.resolve(ss.parse_style("plain #bdb9b0"), None, unit_label)
+            style["classes"][0]["label"] = "Concept structures"
+            writer.surface("structures", "Structures (concept)", "solid", sxyz, sfaces,
+                           np.tile(np.array([0xbd, 0xb9, 0xb0], np.uint8), (len(sxyz), 1)), style)
         # ---- water at given levels
         for part in (self.parameterAsString(p, "WATER", c) or "").split(";"):
             if not part.strip():
@@ -876,6 +1036,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 unit = doc.horizontal_unit if doc is not None else horizontal
                 name = f"{station_label(a, unit, 2)[:-3]}–{station_label(b, unit, 2)[:-3]}"
                 writer.view(name, (-ay, ax, 0.45), centre, 1.3 * max(np.hypot(*chord), 50.0))
+        for view_name, direction, target, distance in self._synthetic_views:
+            writer.view(view_name, direction, target, distance)
         scene = writer.write()
         viewer = write_viewer(os.path.dirname(scene), writer.scene, title=title)
         fb.pushInfo(f"Scene: {len(writer.scene['surfaces'])} surfaces ({total:,} triangles), {len(writer.scene['lines']):,} lines, "

@@ -682,6 +682,13 @@ if (paths.length) {
 window.sceneViewer = { setView, render, cam, get ve() { return ve; } };
 resize();
 if (S.views.length) setView(S.views[0]);
+// viewer.html#view=NS3A opens the first view whose name starts with that text
+const startView = /view=([^&]+)/.exec(location.hash);
+if (startView) {
+  const wanted = decodeURIComponent(startView[1]).toLowerCase();
+  const v = S.views.find(item => item.name.toLowerCase().startsWith(wanted));
+  if (v) setView(v);
+}
 // viewer.html#station=12+350 looks at that station from the side
 const startStation = /station=([\d.+]+)/.exec(location.hash);
 if (startStation && paths.length) { document.getElementById("gotosta").value = startStation[1]; document.getElementById("gotobtn").click(); }

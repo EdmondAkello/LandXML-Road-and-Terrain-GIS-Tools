@@ -754,3 +754,55 @@ class SyntheticCorridorTests(unittest.TestCase):
         self.assertTrue(np.allclose(station[::7], xs + 1000))
         cut = synthetic_corridor(centre - [0, 0, 6], xs, ground, 7.0, 1.5, 0.025, 0.04, 1.5, 2.0)[4]
         self.assertTrue(np.allclose(cut, 1.5 * (100.0 - (97.0 - 0.025 * 3.5 - 0.04 * 1.5)), atol=1e-6))  # 1V:1.5H cut
+
+
+class ConceptStructureTests(unittest.TestCase):
+    def test_csv_schedule_reads_common_headings(self):
+        from landxml_plugin.landxml.structures import read_schedule_csv
+
+        text = ("site,type,chainage,mode,cell_b_m,cell_d_m,cells,invert_in,invert_out\n"
+                "R1,relief,9+025.00,conventional,3.0,1.5,2,1846.77,1846.71\n"
+                "P1,pipe culvert,9100,,,,2,,\n"
+                "X,box,bad,,1,1,1,,\n")
+        items, notes = read_schedule_csv(text)
+        self.assertEqual([i["id"] for i in items], ["R1", "P1"])
+        self.assertEqual((items[0]["kind"], items[0]["station"], items[0]["cells"], items[0]["span"], items[0]["rise"]),
+                         ("box", 9025.0, 2, 3.0, 1.5))
+        self.assertEqual(items[1]["kind"], "pipe")
+        self.assertIn("cell_b_m → span", notes[0])
+        self.assertIn("mode", notes[1])
+        self.assertTrue(any("Row 4 skipped" in n for n in notes))
+
+    def test_typed_schedule(self):
+        from landxml_plugin.landxml.structures import read_schedule_text
+
+        items = read_schedule_text("1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9, skew 15\n1+364-2+293 = bridge, span 30")
+        self.assertEqual([(i["kind"], i["station"]) for i in items], [("box", 1250.0), ("pipe", 1840.0), ("bridge", 1364.0)])
+        self.assertEqual((items[0]["cells"], items[0]["span"], items[0]["rise"]), (3, 2.0, 2.0))
+        self.assertEqual((items[1]["cells"], items[1]["span"], items[1]["skew"]), (2, 0.9, 15.0))
+        self.assertEqual((items[2]["end"], items[2]["span"]), (2293.0, 30.0))
+        with self.assertRaises(ValueError):
+            read_schedule_text("1+250 = box 3 x 2.0")
+
+    def test_box_culvert_width_cover_and_bridge_piers(self):
+        from landxml_plugin.landxml.structures import MeshBuilder, bridge, culvert, low_points
+
+        flat = lambda points: np.full(len(points), 100.0)
+        builder = MeshBuilder()
+        item = {"id": "C1", "kind": "box", "cells": 3, "span": 2.0, "rise": 2.0, "skew": 0.0,
+                "invert_in": None, "invert_out": None}
+        text = culvert(builder, item, np.array([0.0, 0.0, 101.0]), np.array([0.0, -1.0]), 10.0, 10.0, flat)
+        wide = np.ptp(builder.result()[0][:, 0])
+        single = MeshBuilder()
+        culvert(single, dict(item, cells=1), np.array([0.0, 0.0, 101.0]), np.array([0.0, -1.0]), 10.0, 10.0, flat)
+        self.assertAlmostEqual(wide - np.ptp(single.result()[0][:, 0]), 2 * (2.0 + 0.25), places=6)   # two more cells and walls
+        self.assertIn("does not fit under the road by 2.1 m", text)       # 100 + 2.0 + 2 x 0.25 against 101 - 0.6
+        builder = MeshBuilder()
+        xs = np.arange(0, 101, 2.0)
+        centre = np.column_stack([xs, 0 * xs, np.full_like(xs, 130.0)])
+        normal = np.tile([0.0, -1.0], (len(xs), 1))
+        text, piers = bridge(builder, centre, xs, normal, np.arange(len(xs)), 11.0, 25.0, flat)
+        self.assertEqual(piers, 3)
+        self.assertIn("4 spans", text)
+        ground = 100 - 5 * np.exp(-((xs - 50) / 8) ** 2)
+        self.assertEqual(low_points(xs, np.full_like(xs, 101.0), ground), [50.0])
