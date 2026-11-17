@@ -867,3 +867,22 @@ class FastLookupTests(unittest.TestCase):
                 self.assertEqual(list(descendants(element, name)), walk(element, name))
         root[0].append(safe_xml.Element("{urn:x}c"))          # a change to the tree rebuilds the index
         self.assertEqual(len(list(descendants(root, "c"))), 4)
+
+
+class BridgeLayoutTests(unittest.TestCase):
+    def test_bridge_spans_and_piers_from_the_schedule(self):
+        from landxml_plugin.landxml.structures import MeshBuilder, bridge, read_schedule_text
+
+        items = read_schedule_text("1+000-1+100 = bridge, spans 4; 1+000-1+100 = bridge, piers 1+020 1+050 1+090")
+        self.assertEqual((items[0]["spans"], items[0]["piers"]), (4.0, None))
+        self.assertEqual(items[1]["piers"], [1020.0, 1050.0, 1090.0])
+        xs = np.arange(1000, 1101, 2.0)
+        centre = np.column_stack([xs, 0 * xs, np.full_like(xs, 130.0)])
+        normal = np.tile([0.0, -1.0], (len(xs), 1))
+        flat = lambda points: np.full(len(points), 100.0)
+        text, piers = bridge(MeshBuilder(), centre, xs, normal, np.arange(len(xs)), 11.0, 25.0, flat, spans=4)
+        self.assertEqual((piers, "4 spans" in text), (3, True))
+        text, piers = bridge(MeshBuilder(), centre, xs, normal, np.arange(len(xs)), 11.0, 25.0, flat,
+                             piers=[1020.0, 1050.0, 1090.0])
+        self.assertEqual(piers, 3)
+        self.assertIn("longest 40 m", text)

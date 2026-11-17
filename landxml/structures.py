@@ -26,6 +26,8 @@ FIELDS = {          # field -> accepted headings (compared without case, spaces,
     "rise": ("rise", "celld", "celldm", "cellheight", "height", "risem", "d", "clearheight"),
     "diameter": ("diameter", "dia", "diameterm", "pipediameter", "diametermm"),
     "skew": ("skew", "skewdeg", "skewangle", "skewangledeg"),
+    "spans": ("spans", "noofspans", "numberofspans", "nspans"),
+    "piers": ("piers", "pierchainages", "pierstations", "pierlocations"),
     "invert_in": ("invertin", "inletinvert", "usinvert", "upstreaminvert", "invertus", "inletil"),
     "invert_out": ("invertout", "outletinvert", "dsinvert", "downstreaminvert", "invertds", "outletil"),
 }
@@ -103,7 +105,9 @@ def read_schedule_csv(path_or_text):
             "id": (get("id") or "").strip() or f"{kind} {station:.0f}", "kind": kind, "station": station, "end": end,
             "cells": max(int(_number(get("cells")) or 1), 1), "span": _number(get("span")) or diameter,
             "rise": rise or diameter, "skew": _number(get("skew")) or 0.0,
-            "invert_in": _number(get("invert_in")), "invert_out": _number(get("invert_out"))})
+            "invert_in": _number(get("invert_in")), "invert_out": _number(get("invert_out")),
+            "spans": _number(get("spans")),
+            "piers": [parse_station(t) for t in re.split(r"[\s;/|]+", get("piers").strip())] if get("piers") else None})
     return structures, notes
 
 
@@ -111,7 +115,8 @@ _TYPED = re.compile(r"^\s*(?P<a>[\d+.]+)\s*(?:[-–]\s*(?P<b>[\d+.]+))?\s*=\s*(?
 
 
 def read_schedule_text(text):
-    """'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9; 1+364-2+293 = bridge, span 25; 2+410 = box 1 x 1.5 x 1.5, skew 15'"""
+    """'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9; 2+410 = box 1 x 1.5 x 1.5, skew 15'; bridges:
+    '1+364-2+293 = bridge, span 25', '... = bridge, spans 7' or '... = bridge, piers 1+500 1+640 1+780'."""
     structures = []
     for part in re.split(r"[;\n]", text or ""):
         if not part.strip():
@@ -123,7 +128,9 @@ def read_schedule_text(text):
         kind = match["kind"].lower()
         rest = match["rest"]
         numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", rest.split(",")[0])]
-        options = dict((k.lower(), float(v)) for k, v in re.findall(r"(skew|span)\s*[:=]?\s*(-?\d+(?:\.\d+)?)", rest, re.I))
+        options = dict((k.lower(), float(v)) for k, v in re.findall(r"\b(skew|spans|span)\s*[:=]?\s*(-?\d+(?:\.\d+)?)", rest, re.I))
+        pier_text = re.search(r"\bpiers?\s*[:=]?\s*([\d+.\s/]+)", rest, re.I)
+        piers = [parse_station(t) for t in re.split(r"[\s/]+", pier_text.group(1).strip())] if pier_text else None
         station = parse_station(match["a"])
         item = {"id": f"{kind} {match['a']}", "kind": kind, "station": station,
                 "end": parse_station(match["b"]) if match["b"] else None, "cells": 1, "span": None, "rise": None,
@@ -137,7 +144,7 @@ def read_schedule_text(text):
                 raise ValueError(f"'{part.strip()}': a pipe needs lines x diameter, for example 'pipe 2 x 0.9'.")
             item.update(cells=int(numbers[0]), span=numbers[1], rise=numbers[1])
         else:
-            item["span"] = options.get("span")
+            item.update(span=options.get("span"), spans=options.get("spans"), piers=piers)
         structures.append(item)
     return structures
 
