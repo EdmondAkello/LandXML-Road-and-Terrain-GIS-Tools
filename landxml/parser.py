@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import os
+import weakref
 
 from .. import safe_xml
 from .common import child, descendants, first_descendant, local_name
@@ -58,6 +59,7 @@ def _crs(root):
 
 
 def _bounds(root, path=None):
+    """Raw plan bounds and elevation range of every stored coordinate, in one pass over the tree."""
     xs, ys, zs = [], [], []
     if path:                                   # TIN points kept out of the light tree
         for pnts in descendants(root, "Pnts"):
@@ -67,32 +69,37 @@ def _bounds(root, path=None):
                 xs += [extent[0], extent[3]]
                 ys += [extent[1], extent[4]]
                 zs += [extent[2], extent[5]]
-    for item in descendants(root, "P"):
-        parts = (item.text or "").split()
-        if len(parts) >= 3:
-            try:
-                x, y, z = map(float, parts[:3])
-            except ValueError:
-                continue
-            if all(math.isfinite(v) for v in (x, y, z)):
-                xs.append(x)
-                ys.append(y)
-                zs.append(z)
-    for item in descendants(root, "PntList3D"):
-        values = (item.text or "").split()
-        if len(values) % 3:
+    planar = {"Start", "End", "PI", "Center"}
+    for item in root.iter():
+        tag = item.tag
+        if not isinstance(tag, str):
             continue
-        for index in range(0, len(values), 3):
-            try:
-                x, y, z = map(float, values[index : index + 3])
-            except ValueError:
+        name = tag.rsplit("}", 1)[-1]
+        if name == "P":
+            parts = (item.text or "").split()
+            if len(parts) >= 3:
+                try:
+                    x, y, z = map(float, parts[:3])
+                except ValueError:
+                    continue
+                if math.isfinite(x) and math.isfinite(y) and math.isfinite(z):
+                    xs.append(x)
+                    ys.append(y)
+                    zs.append(z)
+        elif name == "PntList3D":
+            values = (item.text or "").split()
+            if len(values) % 3:
                 continue
-            if all(math.isfinite(value) for value in (x, y, z)):
-                xs.append(x)
-                ys.append(y)
-                zs.append(z)
-    for tag in ("Start", "End", "PI", "Center"):
-        for item in descendants(root, tag):
+            for index in range(0, len(values), 3):
+                try:
+                    x, y, z = map(float, values[index : index + 3])
+                except ValueError:
+                    continue
+                if math.isfinite(x) and math.isfinite(y) and math.isfinite(z):
+                    xs.append(x)
+                    ys.append(y)
+                    zs.append(z)
+        elif name in planar:
             parts = (item.text or "").split()
             if len(parts) >= 2:
                 try:
@@ -275,7 +282,7 @@ def _parse_light(path):
         reader.close()
 
 
-def load_document(path: str, full: bool = False) -> LandXMLDocument:
+def _load_document(path: str, full: bool = False) -> LandXMLDocument:
     """Parse a LandXML file safely and expose only source-backed metadata.
 
     By default the contents of TIN point and face blocks are not loaded into the tree
@@ -315,3 +322,29 @@ def load_document(path: str, full: bool = False) -> LandXMLDocument:
         warnings,
         skeleton,
     )
+
+
+# Documents still in use are shared: one algorithm often opens the same file several times
+# (coordinate checks, alignments, profiles). Entries vanish when no caller holds the document,
+# so nothing stays in memory after a run; a changed file (size or modification time) is re-read.
+_OPEN_DOCUMENTS = weakref.WeakValueDictionary()
+
+
+def load_document(path: str, full: bool = False) -> LandXMLDocument:
+    """Parse a LandXML file safely and expose only source-backed metadata.
+
+    By default the contents of TIN point and face blocks are not loaded into the tree
+    (they can be gigabytes); ``read_tin`` streams them from disk. Pass ``full=True``
+    when every ``<P>`` and ``<F>`` node is needed in the tree. A document still held by
+    another caller is returned again while the file is unchanged; treat it as read-only.
+    """
+    try:
+        info = os.stat(path)
+        key = (os.path.realpath(path), info.st_size, info.st_mtime_ns, bool(full))
+    except OSError:
+        return _load_document(path, full)
+    document = _OPEN_DOCUMENTS.get(key)
+    if document is None or document.path != path:
+        document = _load_document(path, full)
+        _OPEN_DOCUMENTS[key] = document
+    return document

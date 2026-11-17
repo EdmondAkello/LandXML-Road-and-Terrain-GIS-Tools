@@ -313,3 +313,23 @@ class TestCropAndDocument(StreamBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDocumentSharing(StreamBase):
+    def test_held_document_is_shared_until_the_file_changes(self):
+        import gc
+        import os
+
+        points, faces = grid(3)
+        path = self.write(tin_xml(points, faces))
+        first = load_document(path)
+        self.assertIs(load_document(path), first)
+        self.assertIsNot(load_document(path, full=True), first)
+        stat = os.stat(path)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10_000_000))
+        changed = load_document(path)
+        self.assertIsNot(changed, first)
+        self.assertIs(load_document(path), changed)
+        del first, changed
+        gc.collect()
+        self.assertEqual(load_document(path).inspect()["source_file"], Path(path).name)
