@@ -663,6 +663,19 @@ class QgisProcessingTests(unittest.TestCase):
         for key in ("CUT_CHANGE", "FILL_CHANGE", "NET_CHANGE"):
             self.assertAlmostEqual(comparison[key], 0.0, places=6)
 
+    def test_elevation_unit_is_accepted_as_the_vertical_unit(self):
+        from landxml_plugin.landxml.parser import load_document
+
+        text = Path(GRADING).read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "elevation.xml"
+            path.write_text(text.replace(' verticalLinearUnit="meter"', ' elevationUnit="meter"'), encoding="utf-8")
+            self.assertEqual(load_document(str(path)).vertical_unit, "meter")
+            both = Path(directory) / "both.xml"
+            both.write_text(text.replace(' verticalLinearUnit="meter"', ' verticalLinearUnit="meter" elevationUnit="foot"'),
+                            encoding="utf-8")
+            self.assertEqual(load_document(str(both)).vertical_unit, "meter")
+
     def test_grading_tools_read_existing_ground_from_another_file(self):
         import re
 

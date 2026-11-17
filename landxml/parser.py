@@ -23,8 +23,10 @@ def _units(root):
         return None, None, ["LandXML Units has no Imperial or Metric declaration."]
     found = set()
     for item in unit_nodes:
+        # Some writers declare the vertical unit as elevationUnit; verticalLinearUnit wins when both are present.
         found.add(
-            (item.attrib.get("linearUnit"), item.attrib.get("verticalLinearUnit"))
+            (item.attrib.get("linearUnit"),
+             item.attrib.get("verticalLinearUnit") or item.attrib.get("elevationUnit"))
         )
     if len(found) > 1:
         return None, None, ["LandXML has conflicting unit declarations."]
