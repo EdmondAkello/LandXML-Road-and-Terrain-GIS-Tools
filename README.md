@@ -45,6 +45,8 @@ The examined OpenRoads terrain exports contain `Surfaces/Surface/Definition/Pnts
 
 Use **Utilities → Prepare LandXML from Geometry and Terrains** to turn separate exports into one input for the existing tools:
 
+**Large files.** Prepare LandXML is a road-workflow tool: it rewrites the whole file, so it holds the XML in memory and is meant for road-sized exports (tens of MB), not multi-gigabyte survey surfaces. It does index only the terrain near the alignments. The grading and land-development tools, Inspect and the surface and alignment lists read large files directly without that limit; for a very large existing-ground file, give it to the grading tools as the separate Existing-ground LandXML file instead of preparing it.
+
 1. Select the alignment/profile export as **Primary geometry/profile LandXML**. Leave the alignment blank to prepare all supported alignments.
 2. Supply optional **Existing-ground terrain LandXML** and **Proposed terrain LandXML** files. A single surface is selected automatically; choose a surface when a file has several. To use an embedded terrain, leave its file blank and select its surface from the dropdown. Leaving both fields blank supplies no terrain for that role.
 3. Verify that all files already share coordinates, units and vertical datum. Choose explicit shared units where declarations are missing, and confirm coordinate/datum agreement. Conflicting declarations are rejected; the tool does not swap axes, reproject or convert units.
