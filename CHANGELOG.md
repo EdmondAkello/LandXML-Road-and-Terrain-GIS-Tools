@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed (coordinate order)
+- The coordinate option now reads **Coordinate order (Civil 3D and OpenRoads store Northing first: choose Swap X / Y)**.
+- When the coordinates, as interpreted, fall outside the output CRS's area of use but inside it in the other axis order, the log says so and names the option to choose. The order is still never changed automatically.
+- In QGIS desktop, the order chosen in a project is offered by the next tool you open in that project (stored in the project file). Scripts, models and batch runs are unaffected.
+
 ### Added (A3 sheets)
 - **A3 sheets from the viewer.** The panel's *A3 sheet* section puts the current view on an A3 landscape sheet at 200 dpi: a single border, the title box bottom right (title, project / drawing no. / revision, "3D view, not to scale", vertical exaggeration, CRS and date), and a column on the left with the north arrow, the legend (surfaces with the same classes share one entry) and numbered notes. The model has its own viewport beside the column and above the title box, fitted to the design, so nothing on the sheet covers it; callouts are kept. **Save A3 PNG**, or **Print / PDF** (the browser's print dialog, A3 landscape, no margins; choose *Save as PDF*). It needs no QGIS 3D, so it works anywhere the viewer opens; `viewer.html#a3preview` shows the sheet for checking.
 

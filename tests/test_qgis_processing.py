@@ -1973,3 +1973,18 @@ class RasterCoverageMessageTests(unittest.TestCase):
             elsewhere = _coverage_message(layer, crs, Area((500_000, 100_000, 500_100, 100_100)))
             self.assertNotIn("Swap X / Y", elsewhere)
             self.assertIn("raster covers X 200,000–201,000", elsewhere)
+
+
+class CoordinateOrderAdviceTests(unittest.TestCase):
+    def test_area_of_use_advice_points_to_the_other_axis_order_without_choosing(self):
+        from qgis.core import QgsCoordinateReferenceSystem
+        from landxml_plugin.processing_common import area_of_use_hint, remembered_method
+
+        crs = QgsCoordinateReferenceSystem("EPSG:21037")
+        northing_first = (9_886_035.0, 202_951.0, 9_898_762.0, 211_672.0)
+        self.assertIn("Swap X / Y", area_of_use_hint(northing_first, crs, "stored"))
+        self.assertIsNone(area_of_use_hint(northing_first, crs, "swap"))
+        easting_first = (202_951.0, 9_886_035.0, 211_672.0, 9_898_762.0)
+        self.assertIsNone(area_of_use_hint(easting_first, crs, "stored"))
+        self.assertIn("Use stored coordinates", area_of_use_hint(easting_first, crs, "swap"))
+        self.assertEqual(remembered_method(), 0)          # nothing remembered outside the desktop
