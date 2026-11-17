@@ -350,11 +350,11 @@ def _faces_in_block(block, ordinal, surface, include_invisible):
 
 
 def read_faces(path, span, ids, surface_name="", include_invisible=False, progress=None,
-               cancel=None, block_bytes=None, inside=None):
+               cancel=None, block_bytes=None, crop=None):
     """Return (faces int32[m,3] as indices into the id order of ``ids``, hidden count, element count).
 
-    ``inside`` is an optional boolean array over the points; when given only faces with at
-    least one vertex inside are kept (the crop).
+    ``crop`` is an optional ``(xyz, (xmin, ymin, xmax, ymax))``: only triangles whose bounding
+    box touches the box are kept, so a large triangle spanning the box is not lost.
     """
     first = int(ids[0]) if len(ids) else 0
     sequential = bool(len(ids)) and bool(np.array_equal(ids, np.arange(first, first + len(ids))))
@@ -378,9 +378,8 @@ def read_faces(path, span, ids, surface_name="", include_invisible=False, progre
                 index = order[pos]
             if bad.any():
                 _raise_missing(path, span, surface_name, include_invisible, ids, refs, bad)
-            if inside is not None:
-                keep = inside[index].any(axis=1)
-                index = index[keep]
+            if crop is not None:
+                index = index[_touches(crop[0], index, crop[1])]
             kept.append(index.astype(np.int32))
         ordinal += elements
         done += len(block)
@@ -388,6 +387,15 @@ def read_faces(path, span, ids, surface_name="", include_invisible=False, progre
             progress(done / total, f"Reading triangles of {surface_name}: {ordinal:,}")
     faces = np.concatenate(kept) if kept else np.empty((0, 3), np.int32)
     return faces, hidden_total, ordinal
+
+
+def _touches(xyz, index, bounds):
+    """Boolean mask: the bounding box of each triangle (rows of ``index``) meets ``bounds``."""
+    x0, y0, x1, y1 = bounds
+    xs = xyz[:, 0][index]
+    ys = xyz[:, 1][index]
+    return ((xs.max(axis=1) >= x0) & (xs.min(axis=1) <= x1)
+            & (ys.max(axis=1) >= y0) & (ys.min(axis=1) <= y1))
 
 
 def _raise_missing(path, span, surface_name, include_invisible, ids, refs, bad):
@@ -432,13 +440,10 @@ def read_tin_arrays(path, pnts_span, faces_span, surface_name="", include_invisi
     if not len(ids):
         raise TinError(f"Surface '{surface_name}' contains no TIN points.")
     _check_unique(ids, surface_name)
-    inside = None
-    if bounds is not None:
-        x0, y0, x1, y1 = bounds
-        inside = (xyz[:, 0] >= x0) & (xyz[:, 0] <= x1) & (xyz[:, 1] >= y0) & (xyz[:, 1] <= y1)
     faces, hidden, elements = read_faces(
         path, faces_span, ids, surface_name, include_invisible,
-        (lambda f, m: progress(0.3 + 0.65 * f, m)) if progress else None, cancel, block_bytes, inside)
+        (lambda f, m: progress(0.3 + 0.65 * f, m)) if progress else None, cancel, block_bytes,
+        (xyz, bounds) if bounds is not None else None)
     if elements == 0:
         raise TinError(f"Surface '{surface_name}' contains no TIN faces.")
     info = {"invisible_face_count": hidden, "source_point_count": len(ids),

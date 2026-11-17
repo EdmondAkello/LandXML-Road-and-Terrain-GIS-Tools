@@ -233,11 +233,20 @@ class TestCropAndDocument(StreamBase):
         expected_xyz, expected_faces = core.crop_tin(full_xyz, full_faces, box)
         np.testing.assert_array_equal(xyz, expected_xyz)
         np.testing.assert_array_equal(got, expected_faces)
-        # every kept triangle touches the box
-        inside = (xyz[:, 0] <= box[2]) & (xyz[:, 1] <= box[3])
-        self.assertTrue(inside[got].any(axis=1).all())
+        # every kept triangle's bounding box meets the box, and every dropped one misses it
+        keep = tin_stream._touches(full_xyz, full_faces, box)
+        self.assertEqual(int(keep.sum()), len(got))
+        self.assertTrue(tin_stream._touches(xyz, got, box).all())
         with self.assertRaises(ValueError):
             core.read_tin(path, bounds=(0, 0, 1, 1))
+
+    def test_crop_keeps_a_triangle_that_spans_the_area(self):
+        # one huge triangle covers the box although none of its vertices lie inside it
+        pts = [(1, 0.0, 0.0, 1.0), (2, 1000.0, 0.0, 2.0), (3, 0.0, 1000.0, 3.0)]
+        path = self.write(tin_xml(pts, [(1, 2, 3)]))
+        xyz, faces, _ = core.read_tin(path, bounds=(100.0, 100.0, 120.0, 120.0))
+        self.assertEqual(len(faces), 1)
+        self.assertEqual(len(xyz), 3)
 
     def test_light_document_has_no_tin_nodes_but_full_has(self):
         pts, faces = grid(6)

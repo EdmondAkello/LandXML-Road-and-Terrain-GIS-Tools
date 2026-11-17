@@ -663,6 +663,45 @@ class QgisProcessingTests(unittest.TestCase):
         for key in ("CUT_CHANGE", "FILL_CHANGE", "NET_CHANGE"):
             self.assertAlmostEqual(comparison[key], 0.0, places=6)
 
+    def test_grading_tools_read_existing_ground_from_another_file(self):
+        import re
+
+        text = Path(GRADING).read_text(encoding="utf-8")
+        without_ground = re.sub(r'<Surface name="Pad EG">.*?</Surface>', "", text, count=1, flags=re.S)
+        self.assertNotIn('<Surface name="Pad EG">', without_ground)
+        with tempfile.TemporaryDirectory() as directory:
+            design_file = Path(directory) / "design.xml"
+            design_file.write_text(without_ground, encoding="utf-8")
+            ground_file = Path(directory) / "survey.xml"
+            ground_file.write_text(text, encoding="utf-8")
+            params = self._params(str(design_file), "EPSG:26915")
+            quantities = self.algorithms["landxml_grading_quantities"]
+            with self.assertRaises(QgsProcessingException):          # not in the design file
+                quantities.processAlgorithm(dict(params, VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG"),
+                                            self.context, self.feedback)
+            result = quantities.processAlgorithm(
+                dict(params, VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG", EXISTING_FILE=str(ground_file)),
+                self.context, self.feedback)
+            self.assertAlmostEqual(result["CUT_VOLUME"], 100.0, places=6)
+            self.assertAlmostEqual(result["FILL_VOLUME"], 100.0, places=6)
+            balance = self.algorithms["landxml_earthwork_balance"].processAlgorithm(
+                dict(params, VOLUME_SURFACES="Pad FG | Pad EG", EXISTING_FILE=str(ground_file), SHRINKAGE="0.9"),
+                self.context, self.feedback)
+            self.assertAlmostEqual(balance["TOTAL_CUT"], 100.0, places=6)
+            comparison = self.algorithms["landxml_grading_revision_comparison"].processAlgorithm(
+                dict(params, SURFACE_A="Pad Earthworks", SURFACE_B="Pad FG", EXISTING_B="Pad EG",
+                     EXISTING_FILE=str(ground_file), OUTPUT="memory:"), self.context, self.feedback)
+            for key in ("CUT_CHANGE", "FILL_CHANGE", "NET_CHANGE"):
+                self.assertAlmostEqual(comparison[key], 0.0, places=6)
+            # an existing ground in other coordinates is refused rather than silently giving zero
+            far = Path(directory) / "far.xml"
+            far.write_text(re.sub(r"(<P id=\"\d+\">)(\d+)", lambda m: m.group(1) + str(int(m.group(2)) + 9000), text),
+                           encoding="utf-8")
+            with self.assertRaisesRegex(QgsProcessingException, "does not reach"):
+                quantities.processAlgorithm(
+                    dict(params, VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG", EXISTING_FILE=str(far)),
+                    self.context, self.feedback)
+
     def test_earthwork_balance_sites_report_and_table(self):
         algorithm = self.algorithms["landxml_earthwork_balance"]
         with tempfile.TemporaryDirectory() as directory:

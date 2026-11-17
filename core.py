@@ -103,8 +103,8 @@ def read_tin(
 
     Point and face blocks are streamed from disk in bounded chunks, so memory is about
     36 bytes per point plus 12 per triangle whatever the file size. ``bounds`` is an optional
-    ``(xmin, ymin, xmax, ymax)`` box in the file's stored coordinates: only triangles that
-    touch it are returned (vertices renumbered), and ``meta['cropped']`` is set. Pass an
+    ``(xmin, ymin, xmax, ymax)`` box in the file's stored coordinates: only triangles whose
+    bounding box touches it are returned (vertices renumbered), and ``meta['cropped']`` is set. Pass an
     already loaded ``document`` to avoid parsing the file again.
     """
     if progress:
@@ -144,10 +144,8 @@ def read_tin(
 
 
 def crop_tin(xyz, faces, bounds):
-    """Keep triangles with a vertex inside ``(xmin, ymin, xmax, ymax)``; renumber the vertices."""
-    x0, y0, x1, y1 = bounds
-    inside = (xyz[:, 0] >= x0) & (xyz[:, 0] <= x1) & (xyz[:, 1] >= y0) & (xyz[:, 1] <= y1)
-    kept = faces[inside[faces].any(axis=1)]
+    """Keep triangles whose bounding box meets ``(xmin, ymin, xmax, ymax)``; renumber the vertices."""
+    kept = faces[tin_stream._touches(xyz, faces, bounds)]
     if not len(kept):
         raise ValueError("No triangular faces touch the requested area.")
     used = np.unique(kept)
