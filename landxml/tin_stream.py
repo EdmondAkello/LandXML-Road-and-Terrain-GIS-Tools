@@ -307,7 +307,7 @@ def points_extent(path, span, cancel=None):
         low = np.minimum(low, xyz.min(axis=0))
         high = np.maximum(high, xyz.max(axis=0))
         count += len(xyz)
-    return (*low, *high, count) if count else None
+    return (*(float(v) for v in low), *(float(v) for v in high), count) if count else None
 
 
 def _faces_block_slow(block, ordinal, surface, include_invisible):
