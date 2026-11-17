@@ -59,10 +59,14 @@
   <div class="row"><label><input type="checkbox" id="showlabels" checked> Labels</label></div>
   <div id="beforeafter" style="display:none"><h2>Before / after</h2>
     <button id="before">Existing ground</button><button id="after">Design</button></div>
+  <div id="goto" style="display:none"><h2>Along the road</h2>
+    <svg id="minimap" style="width:100%;height:150px;background:#fff;border:1px solid #ddd;cursor:crosshair"></svg>
+    <div class="row"><input id="gotosta" placeholder="Station, e.g. 12+350" style="flex:1;font:inherit;padding:2px 4px"><button id="gotobtn">Go</button></div>
+    <div class="meta">Click the map or give a station to look at that part of the road from its side.</div></div>
   <div id="drive" style="display:none"><h2>Drive through</h2>
     <div class="row"><select id="drivepath" style="flex:1"></select></div>
     <div class="row"><span style="flex:1">Station</span><span id="drivesta"></span></div>
-    <input type="range" id="driveslider" min="0" max="1" step="0.0005" value="0">
+    <input type="range" id="driveslider" min="0" max="1" step="any" value="0">
     <div class="row"><button id="driveplay">Play</button><button id="driveexit">Exit</button>
       <select id="drivespeed" title="Speed"><option value="8">30 km/h</option><option value="14" selected>50 km/h</option><option value="22">80 km/h</option></select></div>
     <div class="row"><label><input type="checkbox" id="driverec"> Record video while playing (WebM)</label></div>
@@ -585,6 +589,7 @@ function placeDriver(path, station) {
   if (Math.hypot(ahead[0] - p[0], ahead[1] - p[1]) < 1) { const back = pathAt(path, station - look); ahead[0] = 2 * p[0] - back[0]; ahead[1] = 2 * p[1] - back[1]; ahead[2] = p[2]; }
   cam.free = { eye: [p[0], p[1], p[2] * ve + eyeHeight], target: [ahead[0], ahead[1], ahead[2] * ve + eyeHeight * 0.8] };
   document.getElementById("drivesta").textContent = stationText(station);
+  markMinimap(p);
   draw();
 }
 function stationText(st) { const k = Math.floor(st / 1000), m = st - 1000 * k; return `${k}+${m.toFixed(0).padStart(3, "0")}`; }
@@ -617,10 +622,10 @@ if (paths.length) {
       rec.start(); drive.recorder = rec;
     }
     document.getElementById("driveplay").textContent = "Pause";
-    let last = performance.now();
+    let last = performance.now(), station = stationOf();      // the station is kept here: the slider would round small steps away
     const tick = now => {
-      const speed = +document.getElementById("drivespeed").value, dt = Math.min((now - last) / 1000, 0.1); last = now;
-      const station = Math.min(stationOf() + speed * dt, b);
+      const speed = +document.getElementById("drivespeed").value, dt = Math.min((now - last) / 1000, 0.25); last = now;
+      station = Math.min(station + speed * dt, b);
       slider.value = (station - a) / Math.max(b - a, 1e-9);
       placeDriver(p, station); render(canvas.width, canvas.height);
       if (station >= b) { stopDrive(false); return; }
@@ -630,12 +635,62 @@ if (paths.length) {
   };
 }
 
+// ---------------------------------------------------------------- along the road: minimap and go to station
+function parseStation(text) {
+  const m = /^\s*(\d+)\s*\+\s*([\d.]+)\s*$/.exec(text); if (m) return +m[1] * 1000 + +m[2];
+  const v = parseFloat(text); return isFinite(v) ? v : null;
+}
+function lookAtStation(path, station) {
+  const st = path.stations; station = Math.max(st[0], Math.min(st[st.length - 1], station));
+  const p = pathAt(path, station), q = pathAt(path, Math.min(station + 20, st[st.length - 1])), r = pathAt(path, Math.max(station - 20, st[0]));
+  const dx = q[0] - r[0], dy = q[1] - r[1], len = Math.hypot(dx, dy) || 1;
+  stopDrive(true);
+  cam.target = [p[0], p[1], p[2]]; cam.distance = 140; cam.elevation = 0.38;
+  cam.azimuth = Math.atan2(-dy / len, dx / len);           // camera on the left of the direction of travel
+  markMinimap(p); draw();
+}
+let minimapPath = null, minimapMap = null;
+function markMinimap(p) {
+  const dot = document.getElementById("minimapdot"); if (!dot || !minimapMap) return;
+  const [x, y] = minimapMap(p); dot.setAttribute("cx", x); dot.setAttribute("cy", y);
+}
+if (paths.length) {
+  document.getElementById("goto").style.display = "block";
+  const svg = document.getElementById("minimap"), W = 270, H = 150;
+  const all = paths.flatMap(p => p.points), xs = all.map(q => q[0]), ys = all.map(q => q[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const k = Math.min((W - 16) / Math.max(x1 - x0, 1), (H - 16) / Math.max(y1 - y0, 1));
+  minimapMap = q => [8 + (q[0] - x0) * k, H - 8 - (q[1] - y0) * k];
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = paths.map(p => `<polyline fill="none" stroke="#c2185b" stroke-width="2" points="${p.points.map(q => minimapMap(q).join(",")).join(" ")}"/>`).join("") +
+    `<circle id="minimapdot" r="4" fill="#1565c0" cx="-10" cy="-10"/>`;
+  svg.onclick = e => {
+    const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) * W / r.width, my = (e.clientY - r.top) * H / r.height;
+    let best = null;
+    paths.forEach(p => p.points.forEach((q, i) => { const [x, y] = minimapMap(q), d = (x - mx) ** 2 + (y - my) ** 2;
+      if (!best || d < best.d) best = { d, p, s: p.stations[i] }; }));
+    if (best) lookAtStation(best.p, best.s);
+  };
+  document.getElementById("gotobtn").onclick = () => {
+    const st = parseStation(document.getElementById("gotosta").value); if (st === null) return;
+    const p = paths.find(q => st >= q.stations[0] && st <= q.stations[q.stations.length - 1]) || paths[0];
+    lookAtStation(p, st);
+  };
+  document.getElementById("gotosta").onkeydown = e => { if (e.key === "Enter") document.getElementById("gotobtn").click(); };
+}
+
 window.sceneViewer = { setView, render, cam, get ve() { return ve; } };
 resize();
 if (S.views.length) setView(S.views[0]);
+// viewer.html#station=12+350 looks at that station from the side
+const startStation = /station=([\d.+]+)/.exec(location.hash);
+if (startStation && paths.length) { document.getElementById("gotosta").value = startStation[1]; document.getElementById("gotobtn").click(); }
 // viewer.html#drive=0.4 opens the drive-through 40 % along the first path (useful for shared links)
 const startDrive = /drive=([\d.]+)/.exec(location.hash);
-if (startDrive && paths.length) { const sl = document.getElementById("driveslider"); sl.value = startDrive[1]; sl.oninput(); }
+if (startDrive && paths.length) {
+  const sl = document.getElementById("driveslider"); sl.value = startDrive[1]; sl.oninput();
+  if (/play/.test(location.hash)) document.getElementById("driveplay").click();   // #drive=0.2&play starts driving
+}
 </script>
 </body>
 </html>

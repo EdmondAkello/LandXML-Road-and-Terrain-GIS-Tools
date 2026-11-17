@@ -812,14 +812,28 @@ class QgisProcessingTests(unittest.TestCase):
             vector = QgsVectorLayer("LineString?crs=EPSG:26915", "Fence", "memory")
             feature = QgsFeature(); feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(20, -30), QgsPointXY(80, -30)]))
             vector.dataProvider().addFeatures([feature])
+            from qgis.core import QgsField
+            from qgis.PyQt.QtCore import QVariant
+            sheds = QgsVectorLayer("Polygon?crs=EPSG:26915&field=h:double", "Sheds", "memory")
+            shed = QgsFeature(sheds.fields())
+            shed.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(60, 20), QgsPointXY(70, 20), QgsPointXY(70, 30), QgsPointXY(60, 30)]]))
+            shed.setAttributes([6.0])
+            sheds.dataProvider().addFeatures([shed])
             params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG = plain #cfd8c4; Road FG = depth over EG",
-                          CONTOURS="EG = 0.5", RASTERS=[raster], RASTER_CONTOURS=1.0, VECTORS=[vector], STATION_LABELS=20,
+                          CONTOURS="EG = 0.5", RASTERS=[raster], RASTER_CONTOURS=1.0, VECTORS=[vector, sheds], STATION_LABELS=20,
+                          EXTRUDE_FIELD="h", WATER="EG = 100.6",
                           TITLE="Test road", OUTPUT_FOLDER=str(Path(directory) / "scene"))
             result = algorithm.processAlgorithm(params, self.context, self.feedback)
             scene, folder = load_scene(result["SCENE"])
             self.assertEqual(scene["title"], "Test road")
             self.assertEqual([(s["id"], s["role"]) for s in scene["surfaces"]],
-                             [("s1", "surface"), ("s2", "design"), ("r1", "raster"), ("s1_under", "existing_under")])
+                             [("s1", "surface"), ("s2", "design"), ("r1", "raster"), ("s1_under", "existing_under"),
+                              ("solids", "solid"), ("water5", "water")])
+            solids = read_ply(str(Path(folder) / "solids.ply"))[0] + scene["origin"]
+            self.assertAlmostEqual(float(solids[:, 2].max() - solids[:, 2].min()), 6.0, places=4)
+            water = read_ply(str(Path(folder) / "water5.ply"))[0] + scene["origin"]
+            self.assertTrue(np.allclose(water[:, 2], 100.6, atol=1e-4))
+            self.assertLessEqual(water[:, 0].max(), 30.0 + 1e-6)          # EG = 100 + 0.02 x + 0.01 |y| is below 100.6 only for x < 30
             under = scene["surfaces"][3]
             self.assertEqual((under["visible"], under["pair"]), (False, {"before": ["s1_under"], "after": ["s2"]}))
             (drive_path,) = scene["paths"]
@@ -885,6 +899,8 @@ class QgisProcessingTests(unittest.TestCase):
             # stored order is northing easting: the alignment runs along the first coordinate
             self.assertTrue(np.allclose(stored[:, 2], 100 + 0.1 * stored[:, 0], atol=1e-6))
             self.assertEqual(len(stored), 4)                     # one point per join, not two
+            dense = centerlines_3d(str(path), 2.0, max_step=5.0)[0][3]
+            self.assertLessEqual(np.hypot(*np.diff(dense[:, :2], axis=0).T).max(), 5.0 + 1e-9)
 
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]

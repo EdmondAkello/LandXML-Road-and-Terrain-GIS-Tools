@@ -621,9 +621,10 @@ class ProfileAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         }
 
 
-def centerlines_3d(path, seg, alignment_filter=None, warn=None, cancel=None, progress=None):
+def centerlines_3d(path, seg, alignment_filter=None, warn=None, cancel=None, progress=None, max_step=None):
     """[(alignment, start station, end station, (n, 3) array)] in stored coordinates, where a vertical
-    profile covers the alignment. Elevations come from the profile only; Z is never fabricated."""
+    profile covers the alignment. Elevations come from the profile only; Z is never fabricated.
+    ``max_step`` adds points so no step is longer (3D scenes clip lines to an area point by point)."""
     import numpy as np
 
     warn = warn or (lambda text: None)
@@ -692,7 +693,8 @@ def centerlines_3d(path, seg, alignment_filter=None, warn=None, cancel=None, pro
         # Plan vertices and the profile's own samples: long tangents through vertical curves need the
         # profile stations too, or the line would cut straight through crests and sags.
         stations = sorted({start, end, *(s0 + d for d in cum if start < s0 + d < end),
-                           *(station for station, _z in prof if start < station < end)})
+                           *(station for station, _z in prof if start < station < end),
+                           *(np.arange(start, end, max_step)[1:] if max_step else ())})
         levels = np.interp(stations, [station for station, _z in prof], [z for _s, z in prof])
         stored = np.asarray([[*xy_at(station), level] for station, level in zip(stations, levels)], dtype=float)
         out.append((name, start, end, stored))

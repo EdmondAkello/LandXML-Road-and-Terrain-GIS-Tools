@@ -36,7 +36,7 @@ from .landxml.grading import _inside_many
 from .landxml.plan_features import level_lines
 from .landxml.quantity_units import LINEAR_UNITS
 from .landxml.reports import station_label
-from .landxml.scene import SceneWriter, parse_views, station_offset
+from .landxml.scene import SceneWriter, extrude, parse_views, station_offset, water_mesh
 from .landxml.scene_viewer import write_viewer
 from .landxml.tin_overlay import sample_tin
 from .params import number_param
@@ -265,6 +265,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(number_param("STATION_LABELS", "Station labels every (0 = none)", 100.0, 0.0, 1e6, decimals=1))
         self.addParameter(QgsProcessingParameterMultipleLayers("VECTORS", "Other line or polygon layers",
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
+        self.addParameter(number_param("STRETCH", "Long corridors: a view every (stations; 0 = none)", 1000.0, 0.0, 1e6, decimals=0))
+        self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
+        self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
+        self.addParameter(number_param("EXTRUDE_HEIGHT", "Or raise all polygons by (0 = outlines only)", 0.0, 0.0, 1000.0, decimals=2))
         self.addParameter(number_param("MAX_TRIANGLES", "Triangle budget (all surfaces)", 2_000_000, 10_000, 5e7, decimals=0))
         self.addParameter(number_param("EXAGGERATION", "Suggested vertical exaggeration", 1.5, 0.1, 20.0, decimals=2))
         self.addParameter(QgsProcessingParameterString("VIEWS", "Camera views (a corridor gets side and along views by default)",
@@ -343,7 +347,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         """(name, 3D points in output coordinates, stations) of the corridor alignment, or the first
         alignment with a profile."""
         wanted = self._corridor_name or ""
-        for name, start, _end, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled):
+        for name, start, _end, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled, max_step=5.0):
             if wanted and name != wanted:
                 continue
             xyz = transform_vertices(stored, method=method, **params)
@@ -406,6 +410,12 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             return loaded[name]
 
         cutouts = {}      # existing surface → designs drawn over it
+        road_without_ground = []   # finished roads with no 'over': they cut through every other LandXML surface
+        # A finished road drawn without 'over' is set over the first other surface, so the ground is cut
+        # away to its daylight lines instead of covering it in cuts.
+        plain_names = [requested for requested, style_text, over in surfaces if not style_text.strip().lower().startswith("road")]
+        surfaces = [(requested, style_text, over or (plain_names[0] if style_text.strip().lower().startswith("road") and plain_names else ""))
+                    for requested, style_text, over in surfaces]
         for k, (requested, style_text, over) in enumerate(surfaces):
             name = match_name(names, requested, "surface")
             xyz, faces = load(name)
@@ -420,12 +430,18 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                     raise QgsProcessingException(f"'{requested} = depth' needs 'over <existing surface>'.")
                 exyz, efaces = load(match_name(names, over, "surface"))
                 depth = xyz[:, 2] - sample_tin((exyz, efaces), xyz)
-            meshes.append((f"s{k + 1}", name, "design" if depth is not None else "surface", xyz, faces, style, depth))
+            meshes.append((f"s{k + 1}", name, "design" if depth is not None or style["attribute"] == "road" else "surface",
+                           xyz, faces, style, depth))
             if over:
-                base_name = match_name(names, over, "surface")
-                cutouts.setdefault(base_name, []).append((xyz, faces))
+                cutouts.setdefault(match_name(names, over, "surface"), []).append((xyz, faces))
+            elif style["attribute"] == "road":
+                road_without_ground.append((xyz, faces))
+
         # ground under a design drawn over it is left out, and ground points just inside the design's edge
         # take the design level, so the ground cannot show through the design
+        for mesh in meshes:
+            if mesh[5]["attribute"] != "road" and mesh[2] != "design":
+                cutouts.setdefault(mesh[1], []).extend(road_without_ground)
         unders = []        # ground removed under designs, kept for the viewer's before/after switch
         for index, mesh in enumerate(meshes):
             if mesh[1] not in cutouts:
@@ -540,7 +556,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
 
         # ---- LandXML linework
         if path and self.parameterAsBool(p, "ALIGNMENTS", c) and read_catalog(path).alignments:
-            profiled = {name: (start_, stored) for name, start_, _e, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled)}
+            profiled = {name: (start_, stored) for name, start_, _e, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled, max_step=5.0)}
             every = self.parameterAsDouble(p, "STATION_LABELS", c)
             for name, _desc, sta0, _sta1, parts, _unsupported, distances in _alignment_parts(path, 2.0):
                 pts = merge_parts(parts)
@@ -598,7 +614,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 for run in _runs_inside(points, area):
                     writer.line(kind, record.name or kind, run, {"code": record.feature_code or ""},
                                 color="#a6611a" if kind == "breakline" else "#00897b", width=2, lift=0.1)
-        # ---- QGIS vector layers
+        # ---- QGIS vector layers (polygons raised to solids when a height is given)
+        extrude_field = self.parameterAsString(p, "EXTRUDE_FIELD", c).strip()
+        default_height = self.parameterAsDouble(p, "EXTRUDE_HEIGHT", c)
+        solids = []
         for layer in self.parameterAsLayerList(p, "VECTORS", c):
             transform = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance())
             rect = QgsCoordinateTransform(crs, layer.crs(), QgsProject.instance()).transformBoundingBox(QgsRectangle(*area.box[:2], *area.box[2:]))
@@ -617,6 +636,24 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                     for part in geometry.constParts():
                         parts.append(list(part.exteriorRing()))
                         parts += [list(part.interiorRing(i)) for i in range(part.numInteriorRings())]
+                height = default_height
+                if extrude_field and extrude_field in feature.fields().names():
+                    try:
+                        height = float(feature[extrude_field])
+                    except (TypeError, ValueError):
+                        height = default_height
+                if kind == QgsWkbTypes.GeometryType.PolygonGeometry and height > 0:
+                    for part in geometry.constParts():
+                        ring = np.array([[v.x(), v.y()] for v in part.exteriorRing()], float)
+                        if not area.keep_points(ring).any():
+                            continue
+                        ground = drape_points(ring)
+                        base = float(np.nanmin(ground[:, 2])) if ground is not None else origin[2]
+                        bxyz, bfaces = extrude(ring, base, height)
+                        if len(bfaces):
+                            solids.append((bxyz, bfaces + sum(len(x) for x, _f in solids)))
+                            count += 1
+                    continue
                 for vertices in parts:
                     points = np.array([[v.x(), v.y(), v.z() if has_z else 0.0] for v in vertices], float)
                     if len(points) < 2:
@@ -628,7 +665,32 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                     for run in _runs_inside(points, area):
                         writer.line("vector", layer.name(), run, {"layer": layer.name()}, color="#37474f", width=2, lift=0.2)
                         count += 1
-            fb.pushInfo(f"{layer.name()}: {count:,} lines.")
+            fb.pushInfo(f"{layer.name()}: {count:,} lines or solids.")
+        if solids:
+            sxyz = np.vstack([x for x, _f in solids])
+            sfaces = np.vstack([f for _x, f in solids])
+            style = ss.resolve(ss.parse_style("plain #d9d4c7"), None, unit_label)
+            style["classes"][0]["label"] = "Raised polygons"
+            writer.surface("solids", "Buildings and structures", "solid", sxyz, sfaces,
+                           np.tile(np.array([0xd9, 0xd4, 0xc7], np.uint8), (len(sxyz), 1)), style)
+        # ---- water at given levels
+        for part in (self.parameterAsString(p, "WATER", c) or "").split(";"):
+            if not part.strip():
+                continue
+            name, _sep, level_text = part.rpartition("=")
+            try:
+                level = float(level_text)
+            except ValueError as exc:
+                raise QgsProcessingException(f"A water level is 'surface = level': {part.strip()}") from exc
+            target = next((m for m in meshes if m[1] == match_name([m[1] for m in meshes], name.strip(), "surface")), None)
+            wxyz, wfaces = water_mesh(target[3], target[4], level)
+            if not len(wfaces):
+                fb.pushWarning(f"{target[1]} has no ground below {level:g}; no water drawn.")
+                continue
+            style = ss.resolve(ss.parse_style("plain #4f9fd6"), None, unit_label)
+            style["classes"][0]["label"] = f"Water at {level:g}"
+            writer.surface(f"water{len(writer.scene['surfaces'])}", f"Water {level:g} ({target[1]})", "water", wxyz, wfaces,
+                           np.tile(np.array([0x4f, 0x9f, 0xd6], np.uint8), (len(wxyz), 1)), style, opacity=0.72, lift=0.02)
 
         view_text = self.parameterAsString(p, "VIEWS", c)
         focus = np.vstack([m[3] for m in meshes if m[2] == "design"] or [all_xyz])
@@ -646,6 +708,27 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 writer.path(road_path[0], road_path[1][inside], road_path[2][inside])
         views = parse_views(view_text)
         writer.views(views, target=(low + high) / 2, size=size * (0.8 if corridor_axis is not None else 1.0))
+        # long corridors: a side view of every stretch, so each part of the road can be reached in one click
+        stretch = self.parameterAsDouble(p, "STRETCH", c)
+        for drive_path in writer.scene.get("paths", []):
+            if stretch <= 0 or corridor_axis is None:
+                break
+            stations = np.asarray(drive_path["stations"])
+            points = np.asarray(drive_path["points"], float) + writer.origin
+            if stations[-1] - stations[0] <= 1.5 * stretch:
+                continue
+            for a in np.arange(stations[0], stations[-1], stretch):
+                b = min(a + stretch, stations[-1])
+                chosen = (stations >= a) & (stations <= b)
+                if chosen.sum() < 2:
+                    continue
+                part = points[chosen]
+                chord = part[-1, :2] - part[0, :2]
+                ax, ay = chord / max(np.hypot(*chord), 1e-9)
+                centre = part.mean(axis=0)
+                unit = doc.horizontal_unit if doc is not None else horizontal
+                name = f"{station_label(a, unit, 2)[:-3]}–{station_label(b, unit, 2)[:-3]}"
+                writer.view(name, (-ay, ax, 0.45), centre, 1.3 * max(np.hypot(*chord), 50.0))
         scene = writer.write()
         viewer = write_viewer(os.path.dirname(scene), writer.scene, title=title)
         fb.pushInfo(f"Scene: {len(writer.scene['surfaces'])} surfaces ({total:,} triangles), {len(writer.scene['lines']):,} lines, "

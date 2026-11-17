@@ -146,6 +146,79 @@ def station_offset(points, path_xy, path_stations, chunk=2_000_000):
     return station, offset
 
 
+def triangulate_ring(ring):
+    """Ear-clipping triangles (index triples) of a simple polygon ring (n, ≥2), first point not repeated."""
+    ring = np.asarray(ring, float)[:, :2]
+    n = len(ring)
+    if n < 3:
+        return []
+    order = list(range(n))
+    area = 0.5 * float(np.dot(ring[:, 0], np.roll(ring[:, 1], -1)) - np.dot(np.roll(ring[:, 0], -1), ring[:, 1]))
+    if area < 0:
+        order.reverse()
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def inside(pt, a, b, c):
+        return cross(a, b, pt) >= 0 and cross(b, c, pt) >= 0 and cross(c, a, pt) >= 0
+
+    triangles, guard = [], 0
+    while len(order) > 3 and guard < 10 * n:
+        guard += 1
+        for k in range(len(order)):
+            i, j, m = order[k - 1], order[k], order[(k + 1) % len(order)]
+            a, b, c = ring[i], ring[j], ring[m]
+            if cross(a, b, c) <= 1e-12:
+                continue
+            if any(inside(ring[q], a, b, c) for q in order if q not in (i, j, m)):
+                continue
+            triangles.append((i, j, m))
+            order.pop(k)
+            break
+        else:
+            break
+    if len(order) == 3:
+        triangles.append(tuple(order))
+    return triangles
+
+
+def extrude(ring, base, height):
+    """(xyz, faces) of a prism: the ring (plan) from ``base`` up by ``height``, walls and roof."""
+    ring = np.asarray(ring, float)[:, :2]
+    if len(ring) > 1 and np.allclose(ring[0], ring[-1]):
+        ring = ring[:-1]
+    n = len(ring)
+    if n < 3 or height <= 0:
+        return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
+    bottom = np.column_stack([ring, np.full(n, base)])
+    top = np.column_stack([ring, np.full(n, base + height)])
+    xyz = np.vstack([bottom, top])
+    faces = []
+    for i in range(n):
+        j = (i + 1) % n
+        faces += [(i, j, n + j), (i, n + j, n + i)]
+    faces += [(n + a, n + b, n + c) for a, b, c in triangulate_ring(ring)]
+    return xyz, np.asarray(faces, np.int64)
+
+
+def water_mesh(xyz, faces, level):
+    """(xyz, faces) of a flat water surface at ``level`` over the parts of a TIN below it (exact shoreline)."""
+    from .surface_style import band_pieces
+
+    resolved = {"attribute": "elevation", "classes": [{"high": level}, {"high": None}]}
+    pieces = band_pieces(xyz, faces, np.asarray(xyz)[:, 2], resolved).get(0, [])
+    points, tris = [], []
+    for piece in pieces:                 # each piece is convex (a triangle cut by a line): fan it
+        start = len(points)
+        points.extend(piece[:, :2].tolist())
+        tris.extend((start, start + k, start + k + 1) for k in range(1, len(piece) - 1))
+    if not tris:
+        return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
+    plan = np.asarray(points)
+    return np.column_stack([plan, np.full(len(plan), level)]), np.asarray(tris, np.int64)
+
+
 class SceneWriter:
     """Collects surfaces, lines, labels and views, then writes ``scene.json`` and the meshes to a folder."""
 
@@ -221,6 +294,13 @@ class SceneWriter:
             item["target"] = [round(float(v), 4) for v in centre]
             item["distance"] = float(item.get("distance") or max(1.4 * size, 10.0))
             self.scene["views"].append(item)
+
+    def view(self, name, direction, target, distance, view_angle=30.0):
+        """One view aimed at an absolute ``target``."""
+        point = np.asarray(target, float)[:3] - self.origin
+        self.scene["views"].append({"name": name, "direction": [float(v) for v in direction],
+                                    "target": [round(float(v), 4) for v in point], "distance": float(distance),
+                                    "view_angle": float(view_angle)})
 
     def write(self):
         if np.isfinite(self._low).all():

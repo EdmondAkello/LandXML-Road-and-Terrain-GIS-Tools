@@ -28,6 +28,9 @@
 - **Before/after switch** in the viewer: ground removed under a design is kept as a hidden surface, so the viewer can show the existing ground or the design.
 - Alignments stay visible, faintly, where the ground hides them (cuts), instead of seeming to drop out.
 - Scene format version 2: optional `paths`, extra per-vertex PLY properties (`station`, `offset`), the `road` style, and `visible`/`pair` on surfaces; readers ignore what they do not know.
+- **Long roads in the viewer**: an **Along the road** panel with a plan minimap of the drive paths (click to look at that part of the road from its side, the driver's position marked) and a go-to-station box; long corridors also get a side view per stretch (`STRETCH`, default every 1,000 stations). Links ending in `#station=12+350` or `#drive=0.4&play` open at a station or start driving.
+- **Water and raised polygons in 3D scenes**: `WATER` draws a flat water surface at a level over the parts of a surface below it (exact shoreline), and polygon layers are raised to solids from a height field (`EXTRUDE_FIELD`) or a fixed height.
+- A finished-road surface without `over` now cuts every other LandXML ground surface under it, so the ground cannot cover the road; 3D scene paths and lines have no gaps longer than 5 m, so a long tangent is no longer cut short at the edge of the area.
 - `road_features.centerlines_3d` (shared by 3D Centerlines and the scene export); `tin_overlay.sample_tin` samples a TIN at points.
 - `elevationUnit` on the LandXML `Units` element is accepted as the vertical unit (`verticalLinearUnit` wins when both are present).
 
