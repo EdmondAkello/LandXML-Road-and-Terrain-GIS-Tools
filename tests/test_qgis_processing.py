@@ -1879,3 +1879,29 @@ class QgisProcessingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SyntheticDemOffsetTests(unittest.TestCase):
+    def test_dem_offset_from_the_surveyed_ground_profile(self):
+        from landxml_plugin.scene_algorithm import Scene3DAlgorithm
+
+        text = ('<?xml version="1.0"?><LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">'
+                '<Alignments><Alignment name="A" staStart="0" length="100"><CoordGeom><Line length="100">'
+                '<Start>0 0</Start><End>0 100</End></Line></CoordGeom><Profile><ProfAlign name="FRL">'
+                '<PVI>0 105</PVI><PVI>100 105</PVI></ProfAlign><ProfSurf name="EG" state="existing">'
+                '<PntList2D>0 100 100 110</PntList2D></ProfSurf></Profile></Alignment></Alignments></LandXML>')
+        messages = []
+
+        class Feedback:
+            pushInfo = pushWarning = messages.append
+
+        ground = (np.array([[-10, -10, 86], [110, -10, 98], [110, 10, 98], [-10, 10, 86]], float),
+                  np.array([[0, 1, 2], [0, 2, 3]]))                            # 13 below the surveyed ground
+        xs = np.arange(0, 101, 10.0)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "a.xml"
+            path.write_text(text, encoding="utf-8")
+            shift = Scene3DAlgorithm._dem_offset(str(path), "A", np.column_stack([xs, 0 * xs, 105 + 0 * xs]), xs, ground,
+                                                 Feedback())
+        self.assertAlmostEqual(shift, 13.0, places=6)
+        self.assertIn("datum", messages[0])

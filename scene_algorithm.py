@@ -278,6 +278,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 ("SYN_FILL_SLOPE", "Synthetic: fill slope (horizontal per 1 vertical)", 2.0, 0.1, 10.0),
                 ("SYN_MAX_WIDTH", "Synthetic: longest side slope (output units)", 40.0, 1.0, 500.0)):
             self.addParameter(number_param(key, label, default, lo, hi, decimals=2))
+        self.addParameter(QgsProcessingParameterBoolean(
+            "SYN_MATCH_PROFILE", "Synthetic: shift DEMs to match the alignment's surveyed ground profile", defaultValue=False))
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
         self.addParameter(number_param("EXTRUDE_HEIGHT", "Or raise all polygons by (0 = outlines only)", 0.0, 0.0, 1000.0, decimals=2))
@@ -368,6 +370,41 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             return name, xyz, stations
         return None
 
+    @staticmethod
+    def _dem_offset(path, name, centre, stations, ground, fb):
+        """Median (surveyed ground profile − DEM) along the alignment, or None without a ground profile."""
+        from .landxml.longsection import default_pair, read_alignment_profiles
+        from .landxml.parser import load_document
+        from .landxml.tin_overlay import sample_tin
+
+        alignment = next((a for a in load_document(path).alignments() if (a.attrib.get("name") or "") == name), None)
+        if alignment is None:
+            return None
+        _design, profile = default_pair(read_alignment_profiles(alignment, 5.0))
+        if profile is None:
+            return None
+        dem = sample_tin(ground, centre[:, :2])
+        surveyed = np.full(len(stations), np.nan)
+        for part in profile.parts:
+            part = np.asarray(part, float)
+            inside = (stations >= part[:, 0].min()) & (stations <= part[:, 0].max())
+            surveyed[inside] = np.interp(stations[inside], part[:, 0], part[:, 1])
+        difference = surveyed - dem
+        difference = difference[np.isfinite(difference)]
+        if len(difference) < 3:
+            return None
+        median = float(np.median(difference))
+        spread = float(np.percentile(difference, 90) - np.percentile(difference, 10))
+        message = (f"The DEM is {-median:+.2f} from the surveyed ground profile '{profile.name}' along the alignment "
+                   f"(median; 10–90 % spread {spread:.2f}).")
+        if abs(median) > 1.0:
+            fb.pushWarning(message + " A vertical datum difference (for example ellipsoidal against local heights) "
+                           "makes every cut and fill wrong by about that much; tick 'match the surveyed ground profile' "
+                           "to shift the DEMs.")
+        else:
+            fb.pushInfo(message)
+        return median
+
     def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor):
         """Add a synthetic finished road along an alignment's profile, cut into the ground meshes."""
         from .landxml.grading import volume_summary
@@ -393,6 +430,16 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         if not grounds:
             raise QgsProcessingException("A synthetic corridor needs a ground surface or DEM to run its side slopes out to.")
         ground = (grounds[0][3], grounds[0][4])
+        if grounds[0][2] == "raster":
+            shift = self._dem_offset(path, name, centre, stations, ground, fb)
+            if shift is not None and self.parameterAsBool(p, "SYN_MATCH_PROFILE", c):
+                for index, mesh in enumerate(meshes):
+                    if mesh[2] == "raster":
+                        moved = mesh[3].copy()
+                        moved[:, 2] += shift
+                        meshes[index] = (*mesh[:3], moved, *mesh[4:])
+                ground = next((m[3], m[4]) for m in meshes if m[0] == grounds[0][0])
+                fb.pushInfo(f"DEMs raised by {shift:+.2f} to match the alignment's surveyed ground profile.")
         width = self.parameterAsDouble(p, "SYN_CARRIAGEWAY", c)
         shoulder = self.parameterAsDouble(p, "SYN_SHOULDER", c)
         lanes = int(self.parameterAsDouble(p, "SYN_LANES", c))
@@ -421,21 +468,31 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 if len(keep):
                     gxyz, keep, _used = _compact(gxyz, keep)
                     meshes[index] = (*mesh[:3], gxyz, keep, *mesh[5:])
-        try:
-            depth_xyz, depth_faces, _stats = depth_tin((xyz, faces), ground)
-            volumes = volume_summary(depth_xyz, depth_faces)
-            fb.pushInfo(f"Synthetic corridor {stations[0]:.0f}–{stations[-1]:.0f}: about {volumes['cut_volume']:,.0f} cut and "
-                        f"{volumes['fill_volume']:,.0f} fill (cubic output units, concept section, no bulking).")
-        except ValueError:
-            pass
         fb.pushInfo(f"Side slopes run out {np.median(daylight):.1f} (median), up to {daylight.max():.1f} beyond the shoulders.")
         short = daylight.max(axis=1) >= self.parameterAsDouble(p, "SYN_MAX_WIDTH", c) - 1e-6
+
+        def volumes(face_set):
+            try:
+                depth_xyz, depth_faces, _stats = depth_tin((xyz, face_set), ground)
+                return volume_summary(depth_xyz, depth_faces)
+            except ValueError:
+                return None
+
+        whole = volumes(faces)
+        if whole:
+            fb.pushInfo(f"Synthetic corridor {stations[0]:.0f}–{stations[-1]:.0f}: about {whole['cut_volume']:,.0f} cut and "
+                        f"{whole['fill_volume']:,.0f} fill (cubic output units, concept section, no bulking).")
         if short.any():
             edges = np.flatnonzero(np.diff(np.concatenate([[0], short.astype(int), [0]])))
             runs = [f"{stations[a]:.0f}–{stations[b - 1]:.0f}" for a, b in zip(edges[::2], edges[1::2])]
             fb.pushWarning("Side slopes do not reach the ground within the longest slope at " + ", ".join(runs[:12])
                            + (" …" if len(runs) > 12 else "") + ": a deep crossing or high embankment, likely a structure "
                            "at design stage. The volumes above count these stretches as fill.")
+            rows = faces // 7
+            earthworks = volumes(faces[~short[rows].any(axis=1)])
+            if earthworks:
+                fb.pushInfo(f"Leaving those stretches out: about {earthworks['cut_volume']:,.0f} cut and "
+                            f"{earthworks['fill_volume']:,.0f} fill.")
 
     # ------------------------------------------------------------------ run
     def processAlgorithm(self, p, c, fb):
