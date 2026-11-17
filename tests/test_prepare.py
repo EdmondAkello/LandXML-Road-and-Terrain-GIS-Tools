@@ -109,6 +109,20 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((second["GENERATED_PROFILES"], second["GENERATED_SECTIONS"]), (0, 0))
         self.assertEqual(Path(second["OUTPUT"]).read_bytes(), Path(result["OUTPUT"]).read_bytes())
 
+    def test_distant_terrain_is_not_indexed_and_results_are_unchanged(self):
+        base = self.run_prepare()
+        far = [(1000 + 2 * i, 1000 + 2 * (i % 7), 1001 + 2 * i, 1001 + 2 * (i % 7)) for i in range(25_100)]
+        extra = self.write("existing_big.xml", document(surfaces=surface("Terrain", [(-10, -60, 50, 60)] + far)))
+        messages = []
+        self.feedback.pushInfo = messages.append
+        big = self.run_prepare(EXISTING_FILE=extra, OUTPUT=str(self.folder / "big.xml"))
+        self.assertTrue(any("near the alignments" in m for m in messages))
+        self.assertEqual((big["GENERATED_PROFILES"], big["GENERATED_SECTIONS"]), (2, 8))
+        def sections(path):
+            found, *_ = read_corridor_sections(load_document(path).root)
+            return [(s.station, s.surface("Prepared Existing Ground").points) for s in found]
+        self.assertEqual(sections(big["OUTPUT"]), sections(base["OUTPUT"]))
+
     def test_equations_preserve_internal_sampling_and_quantity_length(self):
         geometry = alignment().replace('<CoordGeom>', '<StaEquation staInternal="120.5" staBack="120.5" staAhead="110.5"/><CoordGeom>')
         primary = self.write("equation.xml", document(geometry))

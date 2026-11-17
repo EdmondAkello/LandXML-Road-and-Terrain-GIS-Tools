@@ -9,10 +9,11 @@ import os
 import tempfile
 import xml.etree.ElementTree as ET  # nosec B405 - builds nodes; parsing uses hardened safe_xml
 
+import numpy as np
 from qgis.core import QgsCoordinateReferenceSystem
 
 from .. import safe_xml
-from ..core import read_tin
+from ..core import crop_tin, read_tin
 from .catalog import match_name
 from .common import child, descendants, local_name
 from .corridor import guess_surfaces, read_corridor_sections, roadway_surface_refs
@@ -213,7 +214,21 @@ def prepare_landxml(path, output, terrains, alignment, profile_interval, section
                 primary_surfaces.append(copied)
         if info["invisible_face_count"]:
             feedback.pushInfo(f"{name}: excluded {info['invisible_face_count']:,} hidden triangles.")
-        sources.append((role, target_name, name, digest, TinSampler(vertices, faces, feedback)))
+        sampled_vertices, sampled_faces = vertices, faces
+        if len(faces) > 50_000:
+            # Only triangles near the alignments can be sampled; indexing the rest of a large terrain is wasted work.
+            xs = np.concatenate([np.asarray(record["points"], float)[:, 0] for record in records])
+            ys = np.concatenate([np.asarray(record["points"], float)[:, 1] for record in records])
+            margin = max(left, right) * 1.05 + 10.0
+            try:
+                sampled_vertices, sampled_faces = crop_tin(
+                    vertices, faces, (xs.min() - margin, ys.min() - margin, xs.max() + margin, ys.max() + margin))
+            except ValueError:
+                pass  # no overlap: the sampler reports the coverage gaps as before
+            else:
+                if len(sampled_faces) < len(faces):
+                    feedback.pushInfo(f"{name}: indexing {len(sampled_faces):,} of {len(faces):,} triangles near the alignments.")
+        sources.append((role, target_name, name, digest, TinSampler(sampled_vertices, sampled_faces, feedback)))
     if len(sources) == 2 and sources[0][1] == sources[1][1]:
         raise ValueError("Existing and proposed terrain must be different surfaces.")
     usable = 0
