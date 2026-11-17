@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #222; }
+  body { display: flex; overflow: hidden; background: #fff; }
+  #view { position: relative; flex: 1; min-width: 0; }
+  #gl { width: 100%; height: 100%; display: block; cursor: grab; }
+  #gl.dragging { cursor: grabbing; }
+  #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #leaders { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+  .lbl { position: absolute; transform: translate(0, -50%); white-space: nowrap; background: rgba(255, 253, 231, .92);
+         border: 1px solid #b9b39a; border-radius: 3px; padding: 1px 5px; font-size: 12px; font-weight: 600; }
+  .lbl.small { font-weight: 400; font-size: 11px; background: rgba(255, 255, 255, .8); border-color: #ccc; }
+  #compass { position: absolute; right: 14px; top: 14px; width: 74px; height: 74px; pointer-events: none; }
+  #pick { position: absolute; left: 12px; bottom: 12px; background: rgba(255, 255, 255, .93); border: 1px solid #ccc;
+          border-radius: 4px; padding: 6px 9px; display: none; font-variant-numeric: tabular-nums; }
+  #hint { position: absolute; left: 12px; top: 10px; color: #666; font-size: 11px; background: rgba(255,255,255,.75); padding: 2px 6px; border-radius: 3px; }
+  #panel { width: 300px; flex: none; border-left: 1px solid #d0d0d0; overflow-y: auto; padding: 12px 14px 20px; box-sizing: border-box; background: #fafafa; }
+  #panel h1 { font-size: 15px; margin: 0 0 2px; }
+  #panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #555; margin: 16px 0 6px; border-bottom: 1px solid #e0e0e0; padding-bottom: 3px; }
+  .meta { color: #666; font-size: 11px; }
+  .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  .row label { flex: 1; cursor: pointer; }
+  .sw { width: 12px; height: 12px; border: 1px solid #888; flex: none; }
+  .ln { width: 18px; height: 3px; flex: none; }
+  .legend .row { margin: 1px 0 1px 20px; font-size: 12px; }
+  button { font: inherit; padding: 3px 9px; margin: 2px 3px 2px 0; border: 1px solid #bbb; background: #fff; border-radius: 3px; cursor: pointer; }
+  button:hover { background: #eef3f8; }
+  input[type=range] { width: 100%; }
+  select { font: inherit; }
+  #viewtext { width: 100%; box-sizing: border-box; font: 11px monospace; margin-top: 4px; }
+  #error { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 30px; text-align: center; color: #a00; }
+</style>
+</head>
+<body>
+<div id="view">
+  <canvas id="gl"></canvas>
+  <svg id="leaders"></svg>
+  <div id="labels"></div>
+  <svg id="compass" viewBox="-40 -40 80 80"><circle r="30" fill="rgba(255,255,255,.85)" stroke="#555" stroke-width="1.5"/>
+    <g id="needle"><path d="M0,-26 L7,0 L0,-4 L-7,0Z" fill="#222"/><path d="M0,26 L7,0 L0,4 L-7,0Z" fill="#fff" stroke="#222" stroke-width="1"/>
+    <text y="-31" text-anchor="middle" font-size="11" font-weight="700" fill="#222">N</text></g></svg>
+  <div id="hint">Drag to rotate · right-drag or Shift-drag to pan · wheel to zoom · click a surface to read it</div>
+  <div id="pick"></div>
+  <div id="error"></div>
+</div>
+<div id="panel">
+  <h1 id="title"></h1>
+  <div class="meta" id="meta"></div>
+  <h2>Layers</h2>
+  <div id="layers"></div>
+  <h2>Display</h2>
+  <div class="row"><span style="flex:1">Vertical exaggeration</span><span id="veval"></span></div>
+  <input type="range" id="ve" min="1" max="6" step="0.1">
+  <div class="row"><label><input type="checkbox" id="showlabels" checked> Labels</label></div>
+  <h2>Views</h2>
+  <div id="views"></div>
+  <div class="meta" style="margin-top:6px">Current view (paste into the tool's Views):</div>
+  <input id="viewtext" readonly>
+  <h2>Save image</h2>
+  <div class="row">Size <select id="scale"><option value="1">screen</option><option value="2" selected>2 ×</option><option value="3">3 ×</option></select>
+    <button id="png">Save PNG</button></div>
+  <div class="meta">The image includes the legend panel and compass beside the model.</div>
+  <h2>Legend</h2>
+  <div id="legend"></div>
+</div>
+<script id="scene-data" type="application/json">__SCENE__</script>
+<script>
+"use strict";
+// LandXML Road & Terrain GIS Tools: self-contained 3D scene viewer (WebGL2, no libraries).
+const S = JSON.parse(document.getElementById("scene-data").textContent);
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });
+const LINE_NAMES = { daylight: "Daylight line", platform_outline: "Platform outline", retained_edge: "Retained edge",
+  batter_edge: "Batter", road: "Road", alignment: "Alignment", feature_line: "Feature line", breakline: "Breakline",
+  contour: "Contour", index_contour: "Index contour", section: "Cross-section", vector: "Vector layer", boundary: "Surface boundary" };
+function fail(text) { const e = document.getElementById("error"); e.textContent = text; e.style.display = "flex"; }
+if (!gl) fail("This browser cannot show WebGL 2 graphics. Open the file in a current Chrome, Edge or Firefox.");
+
+// ---------------------------------------------------------------- data
+function decode(text, Type) {
+  const bin = atob(text); const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Type(bytes.buffer);
+}
+function hex(color) { const c = (color || "#333333").replace("#", ""); return [0, 2, 4].map(i => parseInt(c.substr(i, 2), 16) / 255); }
+
+// ---------------------------------------------------------------- matrices (column-major)
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+  return [f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0];
+}
+function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function norm(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; }
+function lookAt(eye, target, up) {
+  const z = norm(sub(eye, target)), x = norm(cross(up, z)), y = cross(z, x);
+  return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x, eye), -dot(y, eye), -dot(z, eye), 1];
+}
+function mul(a, b) {
+  const o = new Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++)
+    o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  return o;
+}
+
+// ---------------------------------------------------------------- shaders
+function program(vs, fs) {
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    gl.attachShader(p, s);
+  }
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+const meshProgram = program(`#version 300 es
+  in vec3 p; in vec3 n; in vec3 c; uniform mat4 mvp; uniform float ve; uniform float lift;
+  out vec3 vc; out vec3 vn;
+  void main() { vc = c; vn = normalize(vec3(n.x * ve, n.y * ve, n.z)); gl_Position = mvp * vec4(p.x, p.y, (p.z + lift) * ve, 1.0); }`,
+  `#version 300 es
+  precision highp float; in vec3 vc; in vec3 vn; uniform float alpha; out vec4 o;
+  void main() {
+    vec3 nn = normalize(gl_FrontFacing ? vn : -vn);
+    float l = 0.42 + 0.48 * max(dot(nn, normalize(vec3(-0.45, 0.35, 0.82))), 0.0) + 0.18 * max(dot(nn, normalize(vec3(0.6, -0.5, 0.4))), 0.0);
+    o = vec4(vc * min(l, 1.08), alpha); }`);
+const lineProgram = program(`#version 300 es
+  in vec2 corner; in vec3 a; in vec3 b; uniform mat4 mvp; uniform float ve; uniform float lift; uniform float width; uniform vec2 screen;
+  void main() {
+    vec4 ca = mvp * vec4(a.x, a.y, (a.z + lift) * ve, 1.0); vec4 cb = mvp * vec4(b.x, b.y, (b.z + lift) * ve, 1.0);
+    vec2 sa = ca.xy / ca.w * screen, sb = cb.xy / cb.w * screen;
+    vec2 dir = normalize(sb - sa + vec2(1e-6, 0.0)); vec2 nrm = vec2(-dir.y, dir.x);
+    vec4 cp = mix(ca, cb, corner.x);
+    cp.xy += nrm * corner.y * width / screen * cp.w;
+    cp.z -= 0.0006 * cp.w;
+    gl_Position = cp; }`,
+  `#version 300 es
+  precision highp float; uniform vec3 color; out vec4 o; void main() { o = vec4(color, 1.0); }`);
+
+// ---------------------------------------------------------------- scene objects
+const surfaces = [];
+for (const s of S.surfaces) {
+  const m = S.meshes[s.id]; if (!m) continue;
+  const pos = decode(m.positions, Float32Array), col = decode(m.colors, Uint8Array), idx = decode(m.indices, Uint32Array);
+  const depth = m.depth ? decode(m.depth, Float32Array) : null;
+  const nrm = new Float32Array(pos.length);
+  for (let t = 0; t < idx.length; t += 3) {
+    const i = idx[t] * 3, j = idx[t + 1] * 3, k = idx[t + 2] * 3;
+    const ux = pos[j] - pos[i], uy = pos[j + 1] - pos[i + 1], uz = pos[j + 2] - pos[i + 2];
+    const vx = pos[k] - pos[i], vy = pos[k + 1] - pos[i + 1], vz = pos[k + 2] - pos[i + 2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    for (const v of [i, j, k]) { nrm[v] += nx; nrm[v + 1] += ny; nrm[v + 2] += nz; }
+  }
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  for (const [name, data, size, type, normalized] of [["p", pos, 3, gl.FLOAT, false], ["n", nrm, 3, gl.FLOAT, false], ["c", col, 3, gl.UNSIGNED_BYTE, true]]) {
+    const loc = gl.getAttribLocation(meshProgram, name); const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, type, normalized, 0, 0);
+  }
+  const ebo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  surfaces.push({ info: s, vao, count: idx.length, pos, idx, depth, visible: true, opacity: s.opacity ?? 1 });
+}
+const cornerBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -1, 1, -1, 1, 1, 0, -1, 1, 1, 0, 1]), gl.STATIC_DRAW);
+const lineGroups = {};
+for (const line of S.lines) {
+  const key = line.kind + "|" + line.color + "|" + line.width + "|" + (line.lift ?? 0);
+  (lineGroups[key] = lineGroups[key] || { kind: line.kind, color: line.color, width: line.width, lift: line.lift ?? 0, segs: [] }).segs.push(line.points);
+}
+const lines = [];
+for (const g of Object.values(lineGroups)) {
+  const n = g.segs.reduce((t, pts) => t + Math.max(pts.length - 1, 0), 0); if (!n) continue;
+  const ab = new Float32Array(n * 6); let o = 0;
+  for (const pts of g.segs) for (let i = 0; i + 1 < pts.length; i++) { ab.set(pts[i], o); ab.set(pts[i + 1], o + 3); o += 6; }
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  let loc = gl.getAttribLocation(lineProgram, "corner"); gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuf);
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, ab, gl.STATIC_DRAW);
+  for (const [name, off] of [["a", 0], ["b", 12]]) {
+    loc = gl.getAttribLocation(lineProgram, name); gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 24, off); gl.vertexAttribDivisor(loc, 1);
+  }
+  gl.bindVertexArray(null);
+  lines.push({ kind: g.kind, color: hex(g.color), css: g.color, width: g.width, lift: g.lift, vao, count: n });
+}
+// boxes of the surfaces the labels belong to (design surfaces, or all when there is none)
+const focus = surfaces.filter(s => s.info.role === "design");
+const focusBoxes = (focus.length ? focus : surfaces).map(s => {
+  const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], P = s.pos;
+  for (let i = 0; i < P.length; i += 3) for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], P[i + k]); b[k + 3] = Math.max(b[k + 3], P[i + k]); }
+  return b;
+});
+const kinds = {}; for (const l of lines) if (!(l.kind in kinds)) kinds[l.kind] = { visible: true, css: l.css };
+
+// ---------------------------------------------------------------- camera
+const ext = S.extent || { min: [-100, -100, 0], max: [100, 100, 10] };
+let ve = S.vertical_exaggeration || 1;
+const cam = { target: [0, 0, 0], azimuth: 0, elevation: 0.6, distance: 300, fov: 30 };
+function setView(v) {
+  const d = norm(v.direction); cam.target = v.target.slice(); cam.distance = v.distance;
+  cam.azimuth = Math.atan2(d[0], d[1]); cam.elevation = Math.asin(Math.max(-0.99, Math.min(0.99, d[2])));
+  cam.fov = v.view_angle || 30; draw();
+}
+function eye() {
+  const t = [cam.target[0], cam.target[1], cam.target[2] * ve];
+  const c = Math.cos(cam.elevation);
+  return [t[0] + cam.distance * c * Math.sin(cam.azimuth), t[1] + cam.distance * c * Math.cos(cam.azimuth), t[2] + cam.distance * Math.sin(cam.elevation)];
+}
+function matrices(width, height) {
+  const t = [cam.target[0], cam.target[1], cam.target[2] * ve], e = eye();
+  const size = Math.hypot(ext.max[0] - ext.min[0], ext.max[1] - ext.min[1], (ext.max[2] - ext.min[2]) * ve) + 1;
+  const proj = perspective(cam.fov * Math.PI / 180, width / height, Math.max(cam.distance / 1000, 0.05), cam.distance + size * 3);
+  return { mvp: mul(proj, lookAt(e, t, [0, 0, 1])), eye: e };
+}
+
+// ---------------------------------------------------------------- drawing
+let pending = false;
+function draw() { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; render(canvas.width, canvas.height); }); } }
+function render(width, height) {
+  gl.viewport(0, 0, width, height);
+  gl.clearColor(...hex(S.background || "#ffffff"), 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  const { mvp } = matrices(width, height);
+  gl.useProgram(meshProgram);
+  gl.uniformMatrix4fv(gl.getUniformLocation(meshProgram, "mvp"), false, mvp);
+  gl.uniform1f(gl.getUniformLocation(meshProgram, "ve"), ve);
+  const ordered = surfaces.filter(s => s.visible).sort((a, b) => (b.opacity >= 1) - (a.opacity >= 1));
+  for (const s of ordered) {
+    const translucent = s.opacity < 1;
+    if (translucent) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 1);
+    gl.uniform1f(gl.getUniformLocation(meshProgram, "lift"), s.info.lift || 0);
+    gl.uniform1f(gl.getUniformLocation(meshProgram, "alpha"), s.opacity);
+    gl.bindVertexArray(s.vao); gl.drawElements(gl.TRIANGLES, s.count, gl.UNSIGNED_INT, 0);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+    if (translucent) { gl.disable(gl.BLEND); gl.depthMask(true); }
+  }
+  gl.useProgram(lineProgram);
+  gl.uniformMatrix4fv(gl.getUniformLocation(lineProgram, "mvp"), false, mvp);
+  gl.uniform1f(gl.getUniformLocation(lineProgram, "ve"), ve);
+  gl.uniform2f(gl.getUniformLocation(lineProgram, "screen"), width / 2, height / 2);
+  const px = width / canvas.clientWidth;
+  for (const l of lines) {
+    if (!kinds[l.kind].visible) continue;
+    gl.uniform1f(gl.getUniformLocation(lineProgram, "lift"), l.lift);
+    gl.uniform1f(gl.getUniformLocation(lineProgram, "width"), l.width * 0.5 * px);
+    gl.uniform3fv(gl.getUniformLocation(lineProgram, "color"), l.color);
+    gl.bindVertexArray(l.vao); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, l.count);
+  }
+  gl.bindVertexArray(null);
+  placeLabels(mvp, width, height);
+  const az = cam.azimuth * 180 / Math.PI;   // camera bearing from the target; the view looks the opposite way
+  document.getElementById("needle").setAttribute("transform", `rotate(${-(az + 180)})`);
+  const d = [Math.cos(cam.elevation) * Math.sin(cam.azimuth), Math.cos(cam.elevation) * Math.cos(cam.azimuth), Math.sin(cam.elevation)];
+  document.getElementById("viewtext").value = `view: ${d.map(v => v.toFixed(2)).join(", ")}`;
+}
+function project(mvp, p, width, height) {
+  const x = p[0], y = p[1], z = p[2] * ve;
+  const cx = mvp[0] * x + mvp[4] * y + mvp[8] * z + mvp[12], cy = mvp[1] * x + mvp[5] * y + mvp[9] * z + mvp[13];
+  const cw = mvp[3] * x + mvp[7] * y + mvp[11] * z + mvp[15];
+  if (cw <= 0) return null;
+  return [(cx / cw * 0.5 + 0.5) * width, (1 - (cy / cw * 0.5 + 0.5)) * height];
+}
+const labelBox = document.getElementById("labels"); const labelEls = [];
+for (const l of S.labels) { const e = document.createElement("div"); e.className = "lbl" + (l.kind === "station" ? " small" : ""); e.textContent = l.text; labelBox.appendChild(e); labelEls.push(e); }
+let showLabels = true;
+// Callouts: labels sit in columns left and right of the labelled points, joined to them by leaders,
+// so they never cover the model where the points are.
+function labelPositions(mvp, width, height, k = 1) {
+  const pts = [];
+  S.labels.forEach((l, i) => {
+    const p = project(mvp, [l.position[0], l.position[1], l.position[2]], width, height);
+    if (p && p[0] >= 0 && p[1] >= 0 && p[0] <= width && p[1] <= height) pts.push({ i, p, w: (l.text.length * 7 + 12) * k });
+  });
+  if (!pts.length) return [];
+  // keep the label columns clear of the model: outside the screen box of the focus surfaces where there is room
+  let minx = Math.min(...pts.map(q => q.p[0])), maxx = Math.max(...pts.map(q => q.p[0]));
+  const mid = (minx + maxx) / 2;
+  for (const b of focusBoxes) for (const x of [b[0], b[3]]) for (const y of [b[1], b[4]]) for (const z of [b[2], b[5]]) {
+    const q = project(mvp, [x, y, z], width, height); if (!q) continue;
+    minx = Math.min(minx, q[0]); maxx = Math.max(maxx, q[0]);
+  }
+  const gap = 46 * k, row = 22 * k, edge = 8 * k, out = [];
+  for (const side of ["left", "right"]) {
+    const group = pts.filter(q => side === "left" ? q.p[0] < mid || (pts.length === 1) : q.p[0] >= mid && pts.length > 1)
+      .sort((a, b) => a.p[1] - b.p[1]);
+    if (!group.length) continue;
+    const widest = Math.max(...group.map(q => q.w));
+    let x = side === "left" ? Math.max(minx - gap - widest, edge) : Math.min(maxx + gap, width - widest - edge);
+    const ys = [];
+    for (const q of group) ys.push(Math.max(q.p[1], ys.length ? ys[ys.length - 1] + row : row));
+    const over = ys.length ? ys[ys.length - 1] - (height - row) : 0;
+    if (over > 0) for (let j = ys.length - 1; j >= 0; j--) ys[j] = Math.min(ys[j] - over, j + 1 < ys.length ? ys[j + 1] - row : Infinity);
+    group.forEach((q, j) => {
+      const lx = side === "left" ? x + widest - q.w : x;      // left column is right-aligned towards the model
+      out.push({ i: q.i, anchor: q.p, x: lx, y: Math.max(ys[j], row / 2), w: q.w, side });
+    });
+  }
+  return out;
+}
+function placeLabels(mvp, width, height) {
+  const scale = canvas.clientWidth / width, svg = document.getElementById("leaders");
+  labelEls.forEach(e => e.style.display = "none");
+  svg.innerHTML = "";
+  if (!showLabels) return;
+  let lines = "";
+  for (const c of labelPositions(mvp, width, height)) {
+    const e = labelEls[c.i]; e.style.display = "block";
+    e.style.left = c.x * scale + "px"; e.style.top = c.y * scale + "px";
+    const ex = (c.side === "left" ? c.x + c.w : c.x) * scale, ey = c.y * scale, ax = c.anchor[0] * scale, ay = c.anchor[1] * scale;
+    const pts = `${ax},${ay} ${ex + (c.side === "left" ? 10 : -10)},${ey} ${ex},${ey}`;
+    lines += `<polyline points="${pts}" fill="none" stroke="#fff" stroke-width="3" stroke-opacity=".8"/>` +
+             `<polyline points="${pts}" fill="none" stroke="#333" stroke-width="1"/>` +
+             `<circle cx="${ax}" cy="${ay}" r="2.6" fill="#333"/>`;
+  }
+  svg.innerHTML = lines;
+}
+function resize() {
+  const r = window.devicePixelRatio || 1;
+  canvas.width = Math.round(canvas.clientWidth * r); canvas.height = Math.round(canvas.clientHeight * r); draw();
+}
+window.addEventListener("resize", resize);
+
+// ---------------------------------------------------------------- interaction
+let drag = null;
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+canvas.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, moved: false }; canvas.setPointerCapture(e.pointerId); canvas.classList.add("dragging"); });
+canvas.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.pan) {
+    const k = cam.distance * Math.tan(cam.fov * Math.PI / 360) * 2 / canvas.clientHeight;
+    const right = [-Math.cos(cam.azimuth), Math.sin(cam.azimuth)], fwd = [-Math.sin(cam.azimuth), -Math.cos(cam.azimuth)];
+    cam.target[0] += (-dx * right[0] + dy * fwd[0]) * k; cam.target[1] += (-dx * right[1] + dy * fwd[1]) * k;
+  } else {
+    cam.azimuth -= dx * 0.008; cam.elevation = Math.max(0.03, Math.min(1.55, cam.elevation + dy * 0.006));
+  }
+  draw();
+});
+canvas.addEventListener("pointerup", e => { canvas.classList.remove("dragging"); if (drag && !drag.moved) pick(e); drag = null; });
+canvas.addEventListener("wheel", e => { e.preventDefault(); cam.distance *= Math.exp(e.deltaY * 0.0012); draw(); }, { passive: false });
+
+function pick(e) {
+  const rect = canvas.getBoundingClientRect();
+  const nx = (e.clientX - rect.left) / rect.width * 2 - 1, ny = 1 - (e.clientY - rect.top) / rect.height * 2;
+  const origin = eye(), t = [cam.target[0], cam.target[1], cam.target[2] * ve];
+  const f = norm(sub(t, origin)), r = norm(cross(f, [0, 0, 1])), up = cross(r, f);
+  const h = Math.tan(cam.fov * Math.PI / 360), w = h * rect.width / rect.height;
+  const dir = norm([f[0] + r[0] * nx * w + up[0] * ny * h, f[1] + r[1] * nx * w + up[1] * ny * h, f[2] + r[2] * nx * w + up[2] * ny * h]);
+  let best = null;
+  for (const s of surfaces) {
+    if (!s.visible) continue;
+    const P = s.pos, I = s.idx, lift = s.info.lift || 0;
+    for (let k = 0; k < I.length; k += 3) {
+      const a = I[k] * 3, b = I[k + 1] * 3, c = I[k + 2] * 3;
+      const ax = P[a], ay = P[a + 1], az = (P[a + 2] + lift) * ve;
+      const e1x = P[b] - ax, e1y = P[b + 1] - ay, e1z = (P[b + 2] + lift) * ve - az;
+      const e2x = P[c] - ax, e2y = P[c + 1] - ay, e2z = (P[c + 2] + lift) * ve - az;
+      const px = dir[1] * e2z - dir[2] * e2y, py = dir[2] * e2x - dir[0] * e2z, pz = dir[0] * e2y - dir[1] * e2x;
+      const det = e1x * px + e1y * py + e1z * pz; if (Math.abs(det) < 1e-12) continue;
+      const tx = origin[0] - ax, ty = origin[1] - ay, tz = origin[2] - az;
+      const uu = (tx * px + ty * py + tz * pz) / det; if (uu < 0 || uu > 1) continue;
+      const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+      const vv = (dir[0] * qx + dir[1] * qy + dir[2] * qz) / det; if (vv < 0 || uu + vv > 1) continue;
+      const dist = (e2x * qx + e2y * qy + e2z * qz) / det;
+      if (dist > 0 && (!best || dist < best.dist)) best = { dist, s, a: I[k], b: I[k + 1], c: I[k + 2], u: uu, v: vv };
+    }
+  }
+  const box = document.getElementById("pick");
+  if (!best) { box.style.display = "none"; return; }
+  const { s, a, b, c, u, v } = best, P = s.pos, o = S.origin, wa = 1 - u - v;
+  const X = wa * P[a * 3] + u * P[b * 3] + v * P[c * 3] + o[0], Y = wa * P[a * 3 + 1] + u * P[b * 3 + 1] + v * P[c * 3 + 1] + o[1];
+  const Z = wa * P[a * 3 + 2] + u * P[b * 3 + 2] + v * P[c * 3 + 2] + o[2];
+  const unit = (S.units && S.units.vertical === "meter") ? "m" : "";
+  let text = `<b>${s.info.name}</b><br>E ${X.toFixed(2)} · N ${Y.toFixed(2)}<br>Level ${Z.toFixed(3)} ${unit}`;
+  if (s.depth) {
+    const d = wa * s.depth[a] + u * s.depth[b] + v * s.depth[c];
+    if (isFinite(d)) text += `<br>${d < 0 ? "Cut" : "Fill"} ${Math.abs(d).toFixed(3)} ${unit}`;
+  }
+  box.innerHTML = text; box.style.display = "block";
+}
+
+// ---------------------------------------------------------------- panel
+document.getElementById("title").textContent = S.title || (S.source && S.source.file) || "3D scene";
+document.getElementById("meta").textContent = [S.crs && S.crs.authid, S.units && `units: ${S.units.horizontal}`, S.created].filter(Boolean).join(" · ");
+const layersDiv = document.getElementById("layers");
+for (const s of surfaces) {
+  const row = document.createElement("div"); row.className = "row";
+  row.innerHTML = `<label><input type="checkbox" checked> ${s.info.name}</label><input type="range" min="0.2" max="1" step="0.05" value="${s.opacity}" style="width:70px" title="Opacity">`;
+  row.querySelector("input[type=checkbox]").onchange = e => { s.visible = e.target.checked; draw(); };
+  row.querySelector("input[type=range]").oninput = e => { s.opacity = +e.target.value; draw(); };
+  layersDiv.appendChild(row);
+}
+for (const [kind, k] of Object.entries(kinds)) {
+  const row = document.createElement("div"); row.className = "row";
+  row.innerHTML = `<span class="ln" style="background:${k.css}"></span><label><input type="checkbox" checked> ${LINE_NAMES[kind] || kind}</label>`;
+  row.querySelector("input").onchange = e => { k.visible = e.target.checked; draw(); };
+  layersDiv.appendChild(row);
+}
+const legendDiv = document.getElementById("legend");
+for (const s of S.surfaces) {
+  const st = s.style; if (!st || !st.classes) continue;
+  const block = document.createElement("div"); block.className = "legend";
+  block.innerHTML = `<div style="font-weight:600;margin-top:6px">${s.name}</div>` +
+    st.classes.slice().reverse().map(c => `<div class="row"><span class="sw" style="background:${c.color}"></span>${c.label}</div>`).join("");
+  legendDiv.appendChild(block);
+}
+const veInput = document.getElementById("ve"), veVal = document.getElementById("veval");
+veInput.value = ve; veVal.textContent = "× " + ve.toFixed(1);
+veInput.oninput = () => { ve = +veInput.value; veVal.textContent = "× " + ve.toFixed(1); draw(); };
+document.getElementById("showlabels").onchange = e => { showLabels = e.target.checked; draw(); };
+const viewsDiv = document.getElementById("views");
+for (const v of S.views) { const b = document.createElement("button"); b.textContent = v.name; b.onclick = () => setView(v); viewsDiv.appendChild(b); }
+const planButton = document.createElement("button"); planButton.textContent = "plan";
+planButton.onclick = () => { cam.elevation = 1.55; cam.azimuth = Math.PI; draw(); }; viewsDiv.appendChild(planButton);
+
+// ---------------------------------------------------------------- PNG with legend panel and compass beside the model
+document.getElementById("png").onclick = () => {
+  const k = +document.getElementById("scale").value;
+  const w = canvas.clientWidth * k, h = canvas.clientHeight * k;
+  canvas.width = w; canvas.height = h; render(w, h);
+  const panel = Math.round(Math.max(w * 0.24, 320 * k)), out = document.createElement("canvas");
+  out.width = w + panel; out.height = h; const g = out.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, out.width, out.height); g.drawImage(canvas, 0, 0);
+  const { mvp } = matrices(w, h);
+  if (showLabels) {
+    g.font = `600 ${12 * k}px system-ui, Arial`; g.textBaseline = "middle"; g.textAlign = "left";
+    for (const c of labelPositions(mvp, w, h, k)) {
+      const t = S.labels[c.i].text, tw = g.measureText(t).width + 10 * k, x = c.side === "left" ? c.x + c.w - tw : c.x;
+      const ex = c.side === "left" ? x + tw : x;
+      g.strokeStyle = "#333"; g.lineWidth = k; g.beginPath(); g.moveTo(c.anchor[0], c.anchor[1]);
+      g.lineTo(ex + (c.side === "left" ? 10 * k : -10 * k), c.y); g.lineTo(ex, c.y); g.stroke();
+      g.fillStyle = "#333"; g.beginPath(); g.arc(c.anchor[0], c.anchor[1], 2.6 * k, 0, 2 * Math.PI); g.fill();
+      g.fillStyle = "rgba(255,253,231,.95)"; g.strokeStyle = "#b9b39a"; g.fillRect(x, c.y - 9 * k, tw, 18 * k); g.strokeRect(x, c.y - 9 * k, tw, 18 * k);
+      g.fillStyle = "#222"; g.fillText(t, x + 5 * k, c.y + k);
+    }
+  }
+  g.strokeStyle = "#bbb"; g.beginPath(); g.moveTo(w + 0.5, 0); g.lineTo(w + 0.5, h); g.stroke();
+  const x0 = w + 24 * k; let y = 30 * k;
+  const cx = w + panel / 2, cy = y + 40 * k, r = 32 * k, ang = -(cam.azimuth + Math.PI);
+  g.lineWidth = 1.5 * k; g.strokeStyle = "#555"; g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.stroke();
+  const at = (a, rr) => [cx + rr * Math.sin(a), cy - rr * Math.cos(a)];
+  g.fillStyle = "#222"; g.beginPath(); g.moveTo(...at(ang, r * .85)); g.lineTo(...at(ang + 2.6, r * .45)); g.lineTo(cx, cy); g.lineTo(...at(ang - 2.6, r * .45)); g.fill();
+  g.font = `700 ${13 * k}px system-ui, Arial`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("N", ...at(ang, r + 11 * k));
+  y = cy + r + 34 * k; g.textAlign = "left"; g.textBaseline = "top";
+  for (const s of S.surfaces) {
+    const st = s.style; if (!st || !st.classes) continue;
+    g.font = `600 ${13 * k}px system-ui, Arial`; g.fillStyle = "#222"; g.fillText(s.name, x0, y); y += 20 * k;
+    g.font = `${12 * k}px system-ui, Arial`;
+    for (const c of st.classes.slice().reverse()) {
+      g.fillStyle = c.color; g.fillRect(x0, y, 12 * k, 12 * k); g.strokeStyle = "#888"; g.lineWidth = k; g.strokeRect(x0, y, 12 * k, 12 * k);
+      g.fillStyle = "#222"; g.fillText(c.label, x0 + 20 * k, y - k); y += 17 * k;
+    }
+    y += 10 * k;
+  }
+  const shown = Object.entries(kinds).filter(([, v]) => v.visible);
+  if (shown.length) {
+    g.font = `600 ${13 * k}px system-ui, Arial`; g.fillStyle = "#222"; g.fillText("Lines", x0, y); y += 20 * k; g.font = `${12 * k}px system-ui, Arial`;
+    for (const [kind, v] of shown) { g.fillStyle = v.css; g.fillRect(x0, y + 4 * k, 18 * k, 3 * k); g.fillStyle = "#222"; g.fillText(LINE_NAMES[kind] || kind, x0 + 26 * k, y - k); y += 17 * k; }
+  }
+  g.fillStyle = "#666"; g.font = `${11 * k}px system-ui, Arial`;
+  const notes = [document.getElementById("title").textContent, `Vertical exaggeration × ${ve.toFixed(1)}`, S.crs && S.crs.authid ? `CRS: ${S.crs.authid}` : ""].filter(Boolean);
+  notes.forEach((t, i) => g.fillText(t, x0, h - (notes.length - i) * 16 * k - 8 * k));
+  const a = document.createElement("a"); a.download = (document.title || "scene").replace(/[^\w.-]+/g, "_") + ".png"; a.href = out.toDataURL("image/png"); a.click();
+  resize();
+};
+window.sceneViewer = { setView, render, cam, get ve() { return ve; } };
+resize();
+if (S.views.length) setView(S.views[0]);
+</script>
+</body>
+</html>

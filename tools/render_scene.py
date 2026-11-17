@@ -61,7 +61,65 @@ def _font(size):
     return ImageFont.load_default()
 
 
-def _compose(scene, view, image, path):
+def _project_labels(plotter, scene, ve, height, focus):
+    """Screen positions (x right, y down) of the labels' points and the x range of the focus surfaces."""
+    import vtk
+
+    coordinate = vtk.vtkCoordinate()
+    coordinate.SetCoordinateSystemToWorld()
+
+    def screen(point):
+        coordinate.SetValue(*point)
+        x, y = coordinate.GetComputedDoubleDisplayValue(plotter.renderer)
+        return x, height - y
+
+    points = [(label["text"], screen((label["position"][0], label["position"][1], label["position"][2] * ve)))
+              for label in scene["labels"]]
+    xs = [screen((b[i], b[j], b[k]))[0] for b in focus for i in (0, 1) for j in (2, 3) for k in (4, 5)]
+    return points, (min(xs), max(xs)) if xs else None
+
+
+def _callouts(points, span, width, height, font, draw, unit):
+    """Labels in columns left and right of the model, joined to their points by leaders."""
+    inside = [(text, p) for text, p in points if 0 <= p[0] <= width and 0 <= p[1] <= height]
+    if not inside:
+        return
+    xs = [p[0] for _t, p in inside]
+    low, high = min(xs), max(xs)
+    middle = (low + high) / 2
+    if span:
+        low, high = min(low, span[0]), max(high, span[1])
+    gap, row, edge = unit * 3, unit * 1.7, unit
+    for side in ("left", "right"):
+        group = sorted([(t, p) for t, p in inside if (p[0] < middle) == (side == "left") or len(inside) == 1 and side == "left"],
+                       key=lambda item: item[1][1])
+        if len(inside) == 1 and side == "right":
+            continue
+        if not group:
+            continue
+        widths = [draw.textlength(t, font=font) + unit for t, _p in group]
+        widest = max(widths)
+        x = max(low - gap - widest, edge) if side == "left" else min(high + gap, width - widest - edge)
+        ys = []
+        for _t, p in group:
+            ys.append(max(p[1], ys[-1] + row if ys else row))
+        over = ys[-1] - (height - row)
+        if over > 0:
+            for j in range(len(ys) - 1, -1, -1):
+                ys[j] = min(ys[j] - over, ys[j + 1] - row if j + 1 < len(ys) else float("inf"))
+        for (text, p), w, y in zip(group, widths, ys):
+            y = max(y, row / 2)
+            left = x + widest - w if side == "left" else x
+            end = left + w if side == "left" else left
+            knee = end + unit if side == "left" else end - unit
+            for colour, line_width in (("white", 4), ("#333333", 2)):
+                draw.line([p, (knee, y), (end, y)], fill=colour, width=line_width)
+            draw.ellipse([p[0] - 4, p[1] - 4, p[0] + 4, p[1] + 4], fill="#333333")
+            draw.rectangle([left, y - row * 0.45, left + w, y + row * 0.45], fill="#fffde7", outline="#b9b39a")
+            draw.text((left + unit / 2, y), text, fill="black", font=font, anchor="lm")
+
+
+def _compose(scene, view, image, path, anchors=None):
     """The 3D image with a side panel: compass, legend of the styled surfaces and line kinds, notes.
     Nothing is drawn over the model."""
     from PIL import Image, ImageDraw
@@ -73,6 +131,8 @@ def _compose(scene, view, image, path):
     draw = ImageDraw.Draw(sheet)
     x0, unit = width + 30, max(height // 60, 14)
     draw.line([(width, 0), (width, height)], fill="#bbbbbb", width=2)
+    if anchors:
+        _callouts(anchors[0], anchors[1], width, height, _font(int(unit * 1.1)), draw, unit)
     # compass: north as seen from this camera (bearing of the view direction, looking from camera to target)
     look = -np.asarray(view["direction"], float)
     bearing = np.degrees(np.arctan2(look[0], look[1]))
@@ -137,6 +197,7 @@ def render(folder, size=(2400, 1600), only=None, out=None):
         rgb = np.column_stack([mesh.point_data[k] for k in ("red", "green", "blue")]) if "red" in mesh.point_data \
             else mesh.point_data.get("RGB")
         meshes.append((surface, mesh, np.asarray(rgb, np.uint8)))
+    focus = [m.bounds for s, m, _rgb in meshes if s["role"] == "design"] or [m.bounds for _s, m, _rgb in meshes]
     paths = []
     for view in scene["views"]:
         if only and view["name"] not in only:
@@ -158,11 +219,6 @@ def render(folder, size=(2400, 1600), only=None, out=None):
             lifted = np.column_stack([points[:, :2], (points[:, 2] + float(line.get("lift", 0.0))) * ve])
             plotter.add_mesh(pv.lines_from_points(lifted), color=line.get("color", "#333333"),
                              line_width=float(line.get("width", 2)))
-        for label in scene["labels"]:
-            x, y, z = label["position"]
-            plotter.add_point_labels([[x, y, (z + float(label.get("lift", 3.0))) * ve]], [label["text"]], font_size=22,
-                                     point_size=8, point_color="black", shape_color="#fffde7", text_color="black",
-                                     shape_opacity=0.9, always_visible=True, render_points_as_spheres=True)
         target = np.asarray(view["target"], float)
         target[2] *= ve
         direction = np.asarray(view["direction"], float)
@@ -173,8 +229,9 @@ def render(folder, size=(2400, 1600), only=None, out=None):
         plotter.camera.view_angle = float(view.get("view_angle", 30.0))
         path = os.path.join(out or folder, f"render_{view['name']}.png")
         image = plotter.screenshot(return_img=True)
+        anchors = _project_labels(plotter, scene, ve, image.shape[0], focus)
         plotter.close()
-        _compose(scene, view, image, path)
+        _compose(scene, view, image, path, anchors)
         paths.append(path)
     return paths
 

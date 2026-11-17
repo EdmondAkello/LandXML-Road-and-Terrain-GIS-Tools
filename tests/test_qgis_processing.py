@@ -722,6 +722,11 @@ class QgisProcessingTests(unittest.TestCase):
             texts = sorted(label["text"] for label in scene["labels"])
             self.assertEqual(texts, ["Gate", "Mast", "P1 RL 103.00", "P2 RL 105.00"])
             self.assertEqual([view["name"] for view in scene["views"]], ["sw", "se"])
+            viewer = Path(result["VIEWER"]).read_text(encoding="utf-8")
+            self.assertIn('"format":"landxmltools-scene"', viewer)
+            self.assertIn('getContext("webgl2"', viewer)
+            self.assertNotIn("__SCENE__", viewer)
+            self.assertNotIn("http", viewer.split("<script id=\"scene-data\"")[0].replace("http://www.w3.org", ""))
             self.assertGreater(scene["views"][0]["distance"], 50)
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, VIEWS="sw: 0, 0, 0"), self.context, self.feedback)

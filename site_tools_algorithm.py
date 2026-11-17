@@ -290,6 +290,7 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         _vertical_unit_param(self)
         self.addParameter(QgsProcessingParameterFolderDestination("OUTPUT_FOLDER", "Scene folder"))
         self.addOutput(QgsProcessingOutputFile("SCENE", "scene.json"))
+        self.addOutput(QgsProcessingOutputFile("VIEWER", "Interactive 3D viewer (HTML)"))
 
     def processAlgorithm(self, p, c, fb):
         from .core import read_tin
@@ -297,6 +298,7 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         from .landxml import surface_style as ss
         from .landxml.plan_features import footprint_lines
         from .landxml.scene import SceneWriter, parse_views
+        from .landxml.scene_viewer import write_viewer
         from .landxml.tin_overlay import sample_tin
         from .road_features import centerlines_3d
 
@@ -408,9 +410,11 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         low, high = design_t.min(axis=0), design_t.max(axis=0)
         writer.views(views, target=(low + high) / 2, size=float(np.linalg.norm((high - low)[:2])))
         scene = writer.write()
+        viewer = write_viewer(os.path.dirname(scene), writer.scene, title=f"{design} – 3D scene")
         fb.pushInfo(f"Scene written: {scene} ({len(writer.scene['surfaces'])} surfaces, {len(writer.scene['lines'])} "
                     f"lines, {len(writer.scene['labels'])} labels, {len(writer.scene['views'])} views).")
-        return {"OUTPUT_FOLDER": os.path.dirname(scene), "SCENE": scene}
+        fb.pushInfo(f"Interactive viewer: {viewer} (opens in a web browser, offline).")
+        return {"OUTPUT_FOLDER": os.path.dirname(scene), "SCENE": scene, "VIEWER": viewer}
 
 
 def _classes(ss, xyz, faces, resolved, depth, vertical_factor):
