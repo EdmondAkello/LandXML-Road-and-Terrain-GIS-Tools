@@ -18,6 +18,8 @@ from __future__ import annotations
 import csv
 import os
 
+import numpy as np
+
 from qgis.core import (
     Qgis,
     QgsCoordinateTransform,
@@ -30,7 +32,6 @@ from qgis.core import (
     QgsProcessingException,
     QgsProcessingOutputNumber,
     QgsProcessingOutputString,
-    QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterField,
@@ -43,9 +44,11 @@ from qgis.core import (
 )
 
 from .compat import FIELD_DOUBLE, FIELD_INT, FIELD_STRING
-from .core import bounds, grid_for_bounds, rasterize_tin, read_tin, transform_vertices, write_geotiff
+from .core import _epsg_of, bounds, grid_for_bounds, rasterize_tin, read_tin, transform_vertices, write_geotiff
 from .earthworks_algorithm import (
     QUANTITY_HELP,
+    VERTICAL_UNITS,
+    _vertical_unit_param,
     _input_param,
     _resolve,
     _volume_parameter,
@@ -53,7 +56,9 @@ from .earthworks_algorithm import (
     _write_text,
 )
 from .landxml.catalog import read_catalog
-from .landxml.tin_overlay import depth_tin
+from .landxml.parser import load_document
+from .landxml.plan_features import footprint_lines, level_lines, write_plan_features
+from .landxml.tin_overlay import depth_tin, sample_tin
 from .landxml.quantity_units import LINEAR_UNITS, quantity_units
 from .landxml.grading import (
     depth_warning,
@@ -66,6 +71,7 @@ from .landxml.grading import (
     basin_report_html,
     change_grid,
     comparison_report_html,
+    outline_polygons,
     platform_report_html,
     platform_summary,
     reconcile,
@@ -101,14 +107,6 @@ def _optional_number(parameters, name):
 # Site grading has its own group, apart from road corridors.
 GROUP = "9. Site grading (land development)"
 GROUP_ID = "site_grading"
-VERTICAL_UNITS = [("As declared in the file", None), ("Metre", "meter"), ("International foot", "foot"),
-                  ("US survey foot", "USSurveyFoot")]
-
-
-def _vertical_unit_param(algorithm):
-    algorithm.addParameter(QgsProcessingParameterEnum(
-        "VERTICAL_UNIT", "Vertical (elevation) unit — choose when the file does not declare it",
-        options=[name for name, _unit in VERTICAL_UNITS], defaultValue=0))
 
 
 def _grading_units(algorithm, p, c, documents, feedback, horizontal, volume_unit="auto"):
@@ -150,12 +148,35 @@ EXISTING_HELP = (
 )
 
 
-def _depth_surface(path, surface, existing, method, params, feedback):
+def _existing_file(algorithm, p, c, doc, feedback):
+    """(path, document) of a separate existing-ground LandXML, or ("", None) to use the design file."""
+    path = algorithm.parameterAsFile(p, "EXISTING_FILE", c) if "EXISTING_FILE" in p else ""
+    if not path:
+        return "", None
+    if not os.path.isfile(path):
+        raise QgsProcessingException("The existing-ground LandXML file does not exist.")
+    if os.path.realpath(path) == os.path.realpath(doc.path):
+        return "", None
+    other = load_document(path)
+    for label, mine, theirs in (("horizontal", doc.horizontal_unit, other.horizontal_unit),
+                                ("vertical", doc.vertical_unit, other.vertical_unit)):
+        if mine and theirs and mine.lower() != theirs.lower():
+            raise QgsProcessingException(
+                f"The design and existing-ground files declare different {label} units ({mine} and {theirs}); "
+                "prepare them with the same units first.")
+    feedback.pushInfo(f"Existing ground is read from {os.path.basename(path)}; both files must use the same "
+                      "coordinate system, which is not checked.")
+    return path, other
+
+
+def _depth_surface(path, surface, existing, method, params, feedback, existing_path=None, keep=None, overlay=True):
     """(xyz, faces, meta) of a depth surface in output coordinates.
 
     With ``existing`` blank, ``surface`` is read as a volume (depth) surface.
     Otherwise ``surface`` is the design and the depth surface is built from both TINs
-    in source coordinates, then transformed.
+    in source coordinates, then transformed. The existing ground may come from another
+    file (``existing_path``) and is read only where it meets the design area, so a very
+    large survey surface costs memory in proportion to the site, not the survey.
     """
     try:
         xyz, faces, meta = read_tin(path, surface, cancel=feedback.isCanceled)
@@ -164,15 +185,26 @@ def _depth_surface(path, surface, existing, method, params, feedback):
     if meta["invisible_face_count"]:
         feedback.pushInfo(f"{surface}: skipped {meta['invisible_face_count']:,} hidden triangles.")
     if existing:
-        if existing == surface:
+        source = existing_path or path
+        if existing == surface and source == path:
             raise QgsProcessingException(f"'{surface}' is both the design and the existing-ground surface.")
         try:
-            exyz, efaces, emeta = read_tin(path, existing, cancel=feedback.isCanceled)
+            exyz, efaces, emeta = read_tin(source, existing, cancel=feedback.isCanceled, bounds=meta["bounds"])
+            if keep is not None:
+                keep.update(design=(xyz, faces), existing=(exyz, efaces))
+                if not overlay:            # the caller needs the two surfaces only
+                    return None, None, meta
             xyz, faces, stats = depth_tin((xyz, faces), (exyz, efaces))
         except ValueError as exc:
+            if "touch the requested area" in str(exc):
+                raise QgsProcessingException(
+                    f"'{existing}' does not reach the area of '{surface}'. Check that both files use the same "
+                    "coordinates.") from exc
             raise QgsProcessingException(f"{surface} − {existing}: {exc}") from exc
         if emeta["invisible_face_count"]:
             feedback.pushInfo(f"{existing}: skipped {emeta['invisible_face_count']:,} hidden triangles.")
+        if emeta.get("cropped") and emeta["source_face_count"] > len(efaces):
+            feedback.pushInfo(f"{existing}: {len(efaces):,} of {emeta['source_face_count']:,} triangles meet the design area.")
         uncovered = stats["design_area"] - stats["overlay_area"]
         feedback.pushInfo(f"Depth surface '{surface}' − '{existing}': {stats['triangles']:,} triangles over "
                           f"{stats['overlay_area']:,.2f} source units².")
@@ -182,6 +214,48 @@ def _depth_surface(path, surface, existing, method, params, feedback):
     if feedback.isCanceled():
         raise QgsProcessingException("Cancelled.")
     return transform_vertices(xyz, method=method, **params), faces, meta
+
+
+FEATURE_LINES_HELP = (
+    "\n\nCivil 3D feature lines (optional): a LandXML file of PlanFeatures in the input file's stored "
+    "coordinates and units (northing easting elevation for Civil 3D), whatever coordinate interpretation "
+    "the GIS outputs use, so it imports back into the source drawing (Insert > LandXML). Daylight lines "
+    "outline the earthworks footprint (where design and existing ground differ by more than 0.01 vertical "
+    "units); lines shorter than 1 horizontal unit are left out.")
+
+
+def _feature_lines_param(algorithm, label):
+    algorithm.addParameter(QgsProcessingParameterFileDestination(
+        "FEATURE_LINES", label, fileFilter="LandXML (*.xml)", optional=True))
+
+
+def _feature_lines_path(algorithm, p, c):
+    return algorithm.parameterAsFileOutput(p, "FEATURE_LINES", c) if "FEATURE_LINES" in p else ""
+
+
+def _write_feature_lines(out, doc, vertical, features, feedback, group):
+    if not out:
+        return ""
+    if not features:
+        feedback.pushWarning("No feature lines were found to write; the feature-line file is empty.")
+    try:
+        count = write_plan_features(out, features, doc.horizontal_unit, vertical, _epsg_of(doc.root), group)
+    except OSError as exc:
+        raise QgsProcessingException(f"Could not write '{out}': {exc}") from exc
+    feedback.pushInfo(f"{count} feature lines written to {os.path.basename(out)} (source coordinates).")
+    return out
+
+
+def _design_depth(keep):
+    """Design vertices (stored coordinates), faces and depth (design − existing) at each vertex.
+
+    Edges and daylight lines are traced on the design TIN itself, whose triangles share edges;
+    the overlay of the two surfaces is exact for volumes but its pieces meet at T-junctions."""
+    xyz, faces = keep["design"]
+    depth = xyz[:, 2] - sample_tin(keep["existing"], xyz)
+    covered = np.isfinite(depth)
+    faces = faces[covered[faces].all(axis=1)]
+    return xyz, faces, np.where(covered, depth, 0.0)
 
 
 def _split_pair(text):
@@ -221,13 +295,17 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             "To reconcile with the Civil 3D cut/fill summary, enter its unadjusted (factor 1.0) cut, fill and area "
             "in the reported units; each is checked against the tolerance and the result is PASS or FAIL. "
             "The Helmert option's scale changes plan areas and volumes; depths stay in source vertical units."
-            + EXISTING_HELP + QUANTITY_HELP
+            + EXISTING_HELP + QUANTITY_HELP + FEATURE_LINES_HELP
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
         self.addParameter(name_param("VOLUME_SURFACE", "Volume (depth) surface, or the design surface when an existing ground is given (blank = detect)", "surfaces"))
-        self.addParameter(name_param("EXISTING_SURFACE", "Existing-ground surface (blank = the surface above is a volume surface)", "surfaces"))
+        self.addParameter(QgsProcessingParameterFile(
+            "EXISTING_FILE", "Existing-ground LandXML (blank = the same file; read only where it meets the design)",
+            extension="xml", optional=True))
+        self.addParameter(name_param("EXISTING_SURFACE", "Existing-ground surface (blank = the surface above is a volume surface)",
+                                     "surfaces", file_param="EXISTING_FILE", fallback_file_param="INPUT"))
         self.addParameter(_volume_parameter())
         self.addParameter(
             QgsProcessingParameterString(
@@ -251,6 +329,7 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
+        _feature_lines_param(self, "Daylight lines (Civil 3D feature lines, LandXML; needs design and existing surfaces)")
         self.addParameter(
             QgsProcessingParameterFileDestination("BANDS_CSV", "Depth-band table (CSV)", fileFilter="CSV (*.csv)", optional=True)
         )
@@ -270,14 +349,18 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Grading quantities require an output CRS in metres, feet or US survey feet.")
-        units, _vertical = _grading_units(self, p, c, [doc], fb, horizontal, _volume_unit(self, p, c))
+        existing_path, existing_doc = _existing_file(self, p, c, doc, fb)
+        units, _vertical = _grading_units(self, p, c, [doc] + ([existing_doc] if existing_doc else []), fb,
+                                          horizontal, _volume_unit(self, p, c))
         try:
             bands = parse_bands(self.parameterAsString(p, "DEPTH_BANDS", c))
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
 
         catalog = read_catalog(path)
-        existing = _resolve(catalog.surfaces, self.parameterAsString(p, "EXISTING_SURFACE", c).strip(), "existing-ground surface") if self.parameterAsString(p, "EXISTING_SURFACE", c).strip() else ""
+        existing = (_resolve(read_catalog(existing_path or path).surfaces,
+                             self.parameterAsString(p, "EXISTING_SURFACE", c).strip(), "existing-ground surface")
+                    if self.parameterAsString(p, "EXISTING_SURFACE", c).strip() else "")
         surface = _resolve(catalog.surfaces, self.parameterAsString(p, "VOLUME_SURFACE", c), "volume surface")
         if not surface and existing:
             raise QgsProcessingException("Choose the design surface to compare with the existing ground.")
@@ -288,7 +371,20 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
                     f"Choose the volume surface: {reason}. Available surfaces: {', '.join(catalog.surfaces) or 'none'}."
                 )
             fb.pushInfo(f"Volume surface chosen automatically: '{surface}' ({reason}).")
-        xyz, faces, meta = _depth_surface(path, surface, existing, method, params, fb)
+        lines_out = _feature_lines_path(self, p, c)
+        keep = {} if lines_out and existing else None
+        xyz, faces, meta = _depth_surface(path, surface, existing, method, params, fb, existing_path, keep)
+        daylight = []
+        if lines_out:
+            if keep:
+                dxyz, dfaces, ddepth = _design_depth(keep)
+                daylight = [{"name": f"Daylight {k}", "points": line,
+                             "description": f"Earthworks limit of {surface} on {existing}",
+                             "properties": {"source": "daylight"}}
+                            for k, line in enumerate(footprint_lines(dxyz, dfaces, ddepth), 1)]
+            else:
+                fb.pushWarning("Daylight feature lines need the design and existing-ground surfaces (a volume "
+                               "surface holds depths, not levels); none were written.")
         try:
             summary = volume_summary(xyz, faces, bands)
         except ValueError as exc:
@@ -341,6 +437,8 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             "CUT_AREA": reported["cut_area"], "FILL_AREA": reported["fill_area"],
             "CHECK": status, "VOLUME_UNIT": units.volume,
             "REPORT": report or "", "BANDS_CSV": bands_csv or "",
+            "FEATURE_LINES": _write_feature_lines(lines_out, doc, _vertical, daylight, fb, "Daylight lines")
+            if lines_out and keep else "",
         }
 
 
@@ -385,7 +483,7 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
             "overall fall is below the minimum are flagged, because water can pond on them.\n\n"
             "Outputs are platform polygons with these fields and an HTML report with the area in each slope class. "
             "Slopes account for the horizontal and vertical units; the Helmert option's scale changes plan "
-            "distances. Leave the surface blank only when the file has a single surface."
+            "distances. Leave the surface blank only when the file has a single surface." + FEATURE_LINES_HELP
         )
 
     def initAlgorithm(self, config=None):
@@ -402,6 +500,7 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
+        _feature_lines_param(self, "Platform outlines (Civil 3D feature lines, LandXML)")
         self.addOutput(QgsProcessingOutputNumber("PLATFORM_COUNT", "Platforms listed"))
         self.addOutput(QgsProcessingOutputNumber("FLAGGED_COUNT", "Platforms below the minimum fall"))
 
@@ -474,8 +573,19 @@ class PlatformLevelsAlgorithm(ProjectSettingsAlgorithm):
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
             _write_text(report, platform_report_html(summary, surface, units, os.path.basename(path), warnings))
+        lines_out = _feature_lines_path(self, p, c)
+        outlines = []
+        if lines_out:
+            for item in summary["platforms"]:
+                for k, (outer, holes) in enumerate(outline_polygons(xyz, faces[item["members"]], dims=3), 1):
+                    for h, ring in enumerate([outer, *holes]):
+                        suffix = (f" part {k}" if len(item["polygons"]) > 1 else "") + (f" hole {h}" if h else "")
+                        outlines.append({"name": f"{item['id']} outline{suffix}", "points": np.vstack([ring, ring[:1]]),
+                                         "description": f"Platform {item['id']}, mean level {item['level_mean']:.3f}",
+                                         "properties": {"platform": item["id"]}})
         return {"OUTPUT": dest, "REPORT": report or "", "PLATFORM_COUNT": len(summary["platforms"]),
-                "FLAGGED_COUNT": flagged}
+                "FLAGGED_COUNT": flagged,
+                "FEATURE_LINES": _write_feature_lines(lines_out, doc, vertical, outlines, fb, "Platform outlines")}
 
 
 class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
@@ -504,7 +614,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
             "water would overflow. A rim above the spill level is flagged. With a required volume the tool checks "
             "the storage with freeboard (rim minus freeboard) and reports PASS, PASS TO RIM ONLY (enough only "
             "when filled to the rim), FAIL or NOT CHECKED. Enter the required volume in the reported units."
-            + QUANTITY_HELP
+            + QUANTITY_HELP + FEATURE_LINES_HELP
         )
 
     def initAlgorithm(self, config=None):
@@ -526,6 +636,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(
             QgsProcessingParameterFileDestination("REPORT", "HTML report", fileFilter="HTML (*.html)", optional=True)
         )
+        _feature_lines_param(self, "Pond rim and design water level (Civil 3D feature lines, LandXML)")
         self.addParameter(
             QgsProcessingParameterFileDestination("TABLE_CSV", "Stage–storage table (CSV)", fileFilter="CSV (*.csv)", optional=True)
         )
@@ -584,6 +695,16 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
         if required is not None:
             (fb.pushInfo if summary["status"] == "PASS" else fb.pushWarning)(
                 f"Capacity {summary['status']}: required {required:,.3f} {units.volume}.")
+        lines_out = _feature_lines_path(self, p, c)
+        rims = []
+        if lines_out:
+            for label, level in (("Rim", summary["rim"]), ("Design water level", summary["design_level"])):
+                if label != "Rim" and not (summary["freeboard"] and level > summary["floor"]):
+                    continue
+                for k, line in enumerate(level_lines(xyz, faces, level), 1):
+                    line[:, 2] = level
+                    rims.append({"name": f"{surface} {label.lower()} {k}", "points": line,
+                                 "description": f"{label} {level:.3f}", "properties": {"level": f"{level:.3f}"}})
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
             _write_text(report, basin_report_html(reported, surface, units, os.path.basename(path), warnings))
@@ -602,6 +723,7 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
             "RIM_VOLUME": reported["rim_volume"], "FREEBOARD_VOLUME": reported["design_volume"],
             "RIM_LEVEL_USED": summary["rim"], "SPILL_LEVEL": summary["spill"], "FLOOR_LEVEL": summary["floor"],
             "CHECK": summary["status"], "VOLUME_UNIT": units.volume, "REPORT": report or "", "TABLE_CSV": table or "",
+            "FEATURE_LINES": _write_feature_lines(lines_out, doc, _vertical, rims, fb, "Pond rims"),
         }
 
 
@@ -643,6 +765,9 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(QgsProcessingParameterString(
             "VOLUME_SURFACES", "Volume surfaces, one per site, or 'Design | Existing' pairs (separate with ; — blank = all named as volume surfaces)",
             defaultValue="", optional=True))
+        self.addParameter(QgsProcessingParameterFile(
+            "EXISTING_FILE", "Existing-ground LandXML for the 'Design | Existing' pairs (blank = the same file)",
+            extension="xml", optional=True))
         self.addParameter(QgsProcessingParameterString(
             "SHRINKAGE", "Shrinkage factors, compacted per in-place (blank = 0.85, 0.90, 0.95)",
             defaultValue="0.85, 0.90, 0.95", optional=True))
@@ -670,7 +795,9 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Earthwork balance requires an output CRS in metres, feet or US survey feet.")
-        units, _vertical = _grading_units(self, p, c, [doc], fb, horizontal, _volume_unit(self, p, c))
+        existing_path, existing_doc = _existing_file(self, p, c, doc, fb)
+        units, _vertical = _grading_units(self, p, c, [doc] + ([existing_doc] if existing_doc else []), fb,
+                                          horizontal, _volume_unit(self, p, c))
         try:
             factors = parse_factors(self.parameterAsString(p, "SHRINKAGE", c))
         except ValueError as exc:
@@ -682,7 +809,8 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
             for entry in requested:
                 design, existing = _split_pair(entry)
                 pairs.append((_resolve(catalog.surfaces, design, "volume or design surface"),
-                              _resolve(catalog.surfaces, existing, "existing-ground surface") if existing else ""))
+                              _resolve(read_catalog(existing_path or path).surfaces, existing, "existing-ground surface")
+                              if existing else ""))
             names = [f"{d} − {e}" if e else d for d, e in pairs]
         else:
             names = [name for name in catalog.surfaces if any(hint in name.lower() for hint in VOLUME_SURFACE_HINTS)]
@@ -700,7 +828,7 @@ class EarthworkBalanceAlgorithm(ProjectSettingsAlgorithm):
         for name, (design, existing) in zip(names, pairs):
             if fb.isCanceled():
                 raise QgsProcessingException("Earthwork balance cancelled.")
-            xyz, faces, _meta = _depth_surface(path, design, existing, method, params, fb)
+            xyz, faces, _meta = _depth_surface(path, design, existing, method, params, fb, existing_path)
             try:
                 summary = volume_summary(xyz, faces, ())
             except ValueError as exc:
@@ -812,7 +940,11 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
     def initAlgorithm(self, config=None):
         _input_param(self)
         self.addParameter(name_param("SURFACE_A", "First revision: volume surface (or design surface)", "surfaces"))
-        self.addParameter(name_param("EXISTING_A", "First revision: existing-ground surface (blank = volume surface above)", "surfaces"))
+        self.addParameter(QgsProcessingParameterFile(
+            "EXISTING_FILE", "Existing-ground LandXML for both revisions (blank = each revision's own file)",
+            extension="xml", optional=True))
+        self.addParameter(name_param("EXISTING_A", "First revision: existing-ground surface (blank = volume surface above)",
+                                     "surfaces", file_param="EXISTING_FILE", fallback_file_param="INPUT"))
         self.addParameter(QgsProcessingParameterFile(
             "INPUT_B", "Second revision LandXML (blank = same file)", extension="xml", optional=True))
         self.addParameter(QgsProcessingParameterString("SURFACE_B", "Second revision: volume surface (or design surface)"))
@@ -858,6 +990,9 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
         horizontal = HORIZONTAL_UNITS.get(crs.mapUnits())
         if horizontal is None:
             raise QgsProcessingException("Revision comparison requires an output CRS in metres, feet or US survey feet.")
+        existing_path, existing_doc = _existing_file(self, p, c, doc, fb)
+        if existing_doc:
+            documents.append(existing_doc)
         units, _vertical = _grading_units(self, p, c, documents, fb, horizontal, _volume_unit(self, p, c))
         surfaces = []
         for path, key, existing_key in ((path_a, "SURFACE_A", "EXISTING_A"), (path_b, "SURFACE_B", "EXISTING_B")):
@@ -868,8 +1003,9 @@ class RevisionComparisonAlgorithm(ProjectSettingsAlgorithm):
                                              f"{os.path.basename(path)}: {', '.join(catalog.surfaces) or 'none'}.")
             name = _resolve(catalog.surfaces, requested, "volume surface")
             existing_name = self.parameterAsString(p, existing_key, c).strip()
-            existing_name = _resolve(catalog.surfaces, existing_name, "existing-ground surface") if existing_name else ""
-            xyz, faces, _meta = _depth_surface(path, name, existing_name, method, params, fb)
+            existing_name = (_resolve(read_catalog(existing_path or path).surfaces, existing_name, "existing-ground surface")
+                             if existing_name else "")
+            xyz, faces, _meta = _depth_surface(path, name, existing_name, method, params, fb, existing_path)
             surfaces.append((xyz, faces))
             if fb.isCanceled():
                 raise QgsProcessingException("Revision comparison cancelled.")

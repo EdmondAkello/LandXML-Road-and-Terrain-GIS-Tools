@@ -56,6 +56,7 @@ keep the same tested semantics real ``ElementTree`` would give them.
 from __future__ import annotations
 
 import xml.parsers.expat as expat
+from bisect import bisect_right
 import xml.etree.ElementPath as ElementPath
 
 
@@ -74,6 +75,9 @@ class ParseError(SyntaxError):
     module refuses to act on."""
 
 
+_GENERATION = [0]
+
+
 class Element:
     """Minimal ``xml.etree.ElementTree.Element``-compatible node.
 
@@ -86,16 +90,66 @@ class Element:
     a real ``xml.etree.ElementTree.Element`` instance.
     """
 
-    __slots__ = ("tag", "attrib", "text", "_children")
+    __slots__ = ("tag", "attrib", "text", "_children", "_tree", "_order", "_end")
 
     def __init__(self, tag, attrib=None):
         self.tag = tag
         self.attrib = attrib if attrib is not None else {}
         self.text = None
         self._children = []
+        self._tree = None
+        self._order = 0
+        self._end = 0
 
     def append(self, child):
+        _GENERATION[0] += 1               # any change to any tree invalidates the descendant indexes
         self._children.append(child)
+
+    def descendants_named(self, name):
+        """Descendants (self excluded) whose local tag name is ``name``, in document order.
+
+        The first lookup indexes the whole subtree once: every node gets its document order and the
+        order of its last descendant, and each local name a sorted list of orders, so later lookups on
+        this element or any element inside it are two binary searches. Algorithms look descendants up
+        tens of thousands of times on large files; walking the subtree each time was the main cost of
+        reading corridors and cross-sections."""
+        tree = self._tree
+        if tree is None or tree[0] != _GENERATION[0]:
+            tree = self._build_index()
+        orders, nodes = tree[1].get(name, ((), ()))
+        return nodes[bisect_right(orders, self._order):bisect_right(orders, self._end)]
+
+    def by_local_name(self):
+        """{local tag name: [descendants in document order]} (self excluded)."""
+        tree = self._tree
+        if tree is None or tree[0] != _GENERATION[0]:
+            tree = self._build_index()
+        return {name: self.descendants_named(name) for name in tree[1]}
+
+    def _build_index(self):
+        names = {}
+        tree = (_GENERATION[0], names)
+        order = 0
+        stack = [(self, False)]
+        while stack:
+            node, done = stack.pop()
+            if done:
+                node._end = order - 1
+                continue
+            node._tree = tree
+            node._order = order
+            order += 1
+            if node is not self:
+                tag = node.tag
+                name = tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
+                entry = names.get(name)
+                if entry is None:
+                    entry = names[name] = ([], [])
+                entry[0].append(node._order)
+                entry[1].append(node)
+            stack.append((node, True))
+            stack.extend((child, False) for child in reversed(node._children))
+        return tree
 
     def __iter__(self):
         return iter(self._children)
@@ -112,10 +166,12 @@ class Element:
     def iter(self, tag=None):
         if tag == "*":
             tag = None
-        if tag is None or self.tag == tag:
-            yield self
-        for child in self._children:
-            yield from child.iter(tag)
+        stack = [self]
+        while stack:
+            node = stack.pop()
+            if tag is None or node.tag == tag:
+                yield node
+            stack.extend(reversed(node._children))
 
     def itertext(self):
         if self.text:
@@ -270,14 +326,73 @@ def _wire_builder(parser, builder):
         parser.ProcessingInstructionHandler = builder.pi
 
 
+def _wire_fast(parser):
+    """Handlers that build ``Element`` trees directly (the default builder's behaviour, without the
+    per-event method calls): about twice as fast on files with hundreds of thousands of elements."""
+    names = {}
+    stack = []
+    data = []
+    root = []
+    parser.ordered_attributes = False
+
+    def fixname(key):
+        try:
+            return names[key]
+        except KeyError:
+            name = ("{" + key) if "}" in key else key
+            names[key] = name
+            return name
+
+    def flush():
+        text = "".join(data)
+        data.clear()
+        if stack:
+            elem = stack[-1]
+            if elem.text is None and not elem._children:
+                elem.text = text
+
+    def start(tag, attrib):
+        if data:
+            flush()
+        if attrib:
+            for key in [k for k in attrib if "}" in k]:
+                attrib[fixname(key)] = attrib.pop(key)
+        elem = Element(fixname(tag), attrib)
+        if stack:
+            stack[-1].append(elem)
+        else:
+            root.append(elem)
+        stack.append(elem)
+
+    def end(tag):
+        if data:
+            flush()
+        stack.pop()
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = data.append
+
+    def close():
+        if data:
+            flush()
+        if not root:
+            raise ParseError("no element found")
+        return root[0]
+    return close
+
+
 def parse(source, builder=None):
     """Safe replacement for ``xml.etree.ElementTree.parse(source)``. Accepts
     a file path or an open binary file object; returns an ElementTree (call
     ``.getroot()`` as usual). An optional builder can retain comments and mixed
     text for serialization; all input still goes through the hardened parser."""
     parser = _new_parser()
-    builder = builder if builder is not None else TreeBuilder()
-    _wire_builder(parser, builder)
+    if builder is None:
+        close = _wire_fast(parser)
+    else:
+        _wire_builder(parser, builder)
+        close = builder.close
 
     owns_file = not hasattr(source, "read")
     fh = open(source, "rb") if owns_file else source
@@ -293,7 +408,7 @@ def parse(source, builder=None):
         if owns_file:
             fh.close()
 
-    return ElementTree(builder.close())
+    return ElementTree(close())
 
 
 def parse_root(source):

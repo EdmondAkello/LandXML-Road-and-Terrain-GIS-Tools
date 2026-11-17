@@ -550,3 +550,339 @@ class DepthFromTwoSurfacesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LevelLineTests(unittest.TestCase):
+    def test_pyramid_gives_one_closed_ring_and_plane_one_open_line(self):
+        from landxml_plugin.landxml.plan_features import level_lines
+
+        xyz = np.array([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], [1, 1, 2]], float)
+        faces = np.array([[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]])
+        (ring,) = level_lines(xyz, faces, 1.0)
+        self.assertTrue(np.allclose(ring[0], ring[-1]))
+        self.assertEqual(len(ring), 5)
+        self.assertTrue(np.allclose(ring[:, 2], 1.0))
+        self.assertTrue(np.allclose(np.abs(ring[:, :2] - 1.0).max(axis=1), 0.5))
+        self.assertEqual(level_lines(xyz, faces, 3.0), [])
+        plane = np.array([[0, 0, 0], [4, 0, 4], [4, 4, 4], [0, 4, 0]], float)
+        (line,) = level_lines(plane, np.array([[0, 1, 2], [0, 2, 3]]), 1.5)
+        self.assertTrue(np.allclose(sorted(line[[0, -1], 1]), [0, 4]))
+        self.assertTrue(np.allclose(line[:, 0], 1.5))
+
+
+class FootprintLineTests(unittest.TestCase):
+    def test_island_at_grade_becomes_a_hole_and_slivers_are_dropped(self):
+        from landxml_plugin.landxml.plan_features import footprint_lines
+
+        n = 7
+        xs, ys = np.meshgrid(np.arange(n, dtype=float), np.arange(n, dtype=float))
+        xyz = np.column_stack([xs.ravel(), ys.ravel(), 100 + xs.ravel()])
+        depth = np.where((np.abs(xs - 3) <= 1) & (np.abs(ys - 3) <= 1), 0.0, 1.0).ravel()
+        faces = []
+        for r in range(n - 1):
+            for c in range(n - 1):
+                a, b, d, e = r * n + c, r * n + c + 1, (r + 1) * n + c, (r + 1) * n + c + 1
+                faces += [(a, b, e), (a, e, d)]
+        lines = footprint_lines(xyz, np.array(faces), depth)
+        lengths = sorted(round(float(np.hypot(*np.diff(l[:, :2], axis=0).T).sum()), 6) for l in lines)
+        self.assertEqual(lengths, [8.0, 24.0])            # the 2 x 2 untouched island, inside the 6 x 6 edge
+        for line in lines:
+            self.assertTrue(np.allclose(line[:, 2], 100 + line[:, 0]))
+        self.assertEqual(len(footprint_lines(xyz, np.array(faces), depth, min_length=10.0)), 1)
+        self.assertEqual(footprint_lines(xyz, np.array(faces), np.zeros(len(xyz))), [])
+
+
+def _grid_tin(xs, ys, level):
+    X, Y = np.meshgrid(np.asarray(xs, float), np.asarray(ys, float))
+    xyz = np.column_stack([X.ravel(), Y.ravel(), level(X.ravel(), Y.ravel())])
+    n = len(xs)
+    faces = []
+    for r in range(len(ys) - 1):
+        for c in range(n - 1):
+            a, b, d, e = r * n + c, r * n + c + 1, (r + 1) * n + c, (r + 1) * n + c + 1
+            faces += [(a, b, e), (a, e, d)]
+    return xyz, np.array(faces)
+
+
+class EdgeAnalysisTests(unittest.TestCase):
+    def _depth(self, design):
+        from landxml_plugin.landxml.tin_overlay import sample_tin
+
+        ground = (np.array([[-100, -100, 100], [200, -100, 100], [200, 200, 100], [-100, 200, 100]], float),
+                  np.array([[0, 1, 2], [0, 2, 3]]))
+        return design[0], design[1], design[0][:, 2] - sample_tin(ground, design[0])
+
+    def test_batters_tie_in_and_an_open_side_is_a_retained_edge(self):
+        from landxml_plugin.landxml.edges import edge_analysis
+
+        def level(x, y):  # platform at 103 over 20..40, 1V:2H batters to the ground west, south and east; cut off at y = 40
+            return np.maximum(100.0, 103.0 - 0.5 * np.maximum.reduce([np.zeros_like(x), 20 - x, x - 40, 20 - y]))
+
+        steps = [14, 15, 16, 17, 18, 19, 20, 30, 40, 41, 42, 43, 44, 45, 46]
+        design = _grid_tin(steps, [14, 15, 16, 17, 18, 19, 20, 30, 40], level)
+        result = edge_analysis(*self._depth(design))
+        sched = result["schedule"]
+        self.assertAlmostEqual(sched["retained_fill"]["max"], 3.0, places=6)
+        self.assertAlmostEqual(sched["retained_fill"]["total"], 32.0, delta=0.5)   # the open north side
+        self.assertAlmostEqual(sched["batter_fill"]["max"], 3.0, places=6)
+        self.assertAlmostEqual(sched["batter_fill"]["total"], 32.0 + 2 * 26.0, delta=1.0)
+        self.assertAlmostEqual(result["perimeter"], 32 * 2 + 26 * 2, delta=1.0)   # an at-grade corner triangle is cut off
+        self.assertNotIn("retained_cut", sched)
+        self.assertEqual(result["steps"], [])
+
+    def test_wall_between_platforms_is_an_internal_step(self):
+        from landxml_plugin.landxml.edges import edge_analysis
+
+        xs = [0, 10, 24.95, 25, 35, 35.05, 50, 60]
+        design = _grid_tin(xs, xs, lambda x, y: np.where((x >= 25) & (x <= 35) & (y >= 25) & (y <= 35), 105.0, 103.0))
+        result = edge_analysis(*self._depth(design))
+        self.assertAlmostEqual(result["schedule"]["retained_fill"]["total"], 240.0, places=6)
+        self.assertAlmostEqual(result["schedule"]["retained_fill"]["max"], 3.0, places=6)
+        (step,) = result["steps"]
+        self.assertEqual(step["type"], "wall")
+        self.assertAlmostEqual(step["height"], 2.0, places=6)
+        self.assertAlmostEqual(step["length"], 40.1, delta=0.2)
+        self.assertAlmostEqual(step["x"], 30.0, delta=0.1)
+        with self.assertRaises(ValueError):
+            edge_analysis(design[0], design[1], np.zeros(len(design[0])))
+
+
+class SampleTinTests(unittest.TestCase):
+    def test_plane_values_inside_nan_outside(self):
+        from landxml_plugin.landxml.tin_overlay import sample_tin
+
+        xyz = np.array([[0, 0, 0], [10, 0, 10], [10, 10, 20], [0, 10, 10]], float)
+        tin = (xyz, np.array([[0, 1, 2], [0, 2, 3]]))
+        points = np.array([[5, 5], [2, 7], [10, 10], [0, 0], [11, 5], [5, -0.5]], float)
+        got = sample_tin(tin, points)
+        self.assertTrue(np.allclose(got[:4], points[:4, 0] + points[:4, 1]))
+        self.assertTrue(np.isnan(got[4:]).all())
+
+
+class SurfaceStyleTests(unittest.TestCase):
+    def test_presets_custom_breaks_and_data_classes(self):
+        from landxml_plugin.landxml import surface_style as ss
+
+        slope = ss.resolve(ss.parse_style("slope"))
+        self.assertEqual([c["label"] for c in slope["classes"]][0], "Flat (platforms) < 2 %")
+        self.assertEqual(list(ss.classify([0, 2, 29.9, 30, 300], slope)), [0, 1, 1, 2, 3])
+        depth = ss.resolve(ss.parse_style("depth"))
+        self.assertEqual(len(depth["classes"]), 12)
+        self.assertTrue(depth["classes"][0]["label"].startswith("< -5"))
+        custom = ss.resolve(ss.parse_style("depth: -1, 0, 1 | #ff0000, #ffaaaa, #aaffaa, #00ff00"))
+        self.assertEqual([c["color"] for c in custom["classes"]], ["#ff0000", "#ffaaaa", "#aaffaa", "#00ff00"])
+        elevation = ss.resolve(ss.parse_style("elevation: equal 4"), values=[100, 104, 108])
+        self.assertEqual([c["high"] for c in elevation["classes"]][:3], [102.0, 104.0, 106.0])
+        quantile = ss.resolve(ss.parse_style("elevation: quantile 2 | greys"), values=[1, 2, 3, 10])
+        self.assertEqual(len(quantile["classes"]), 2)
+        with self.assertRaises(ValueError):
+            ss.parse_style("colour: 1, 2")
+
+    def test_triangle_values_and_regions(self):
+        from landxml_plugin.landxml import surface_style as ss
+
+        xyz = np.array([[0, 0, 0], [10, 0, 0], [10, 10, 5], [0, 10, 5]], float)   # rises 50 % to the north
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        self.assertTrue(np.allclose(ss.triangle_values(xyz, faces, "slope"), 50.0))
+        self.assertTrue(np.allclose(ss.triangle_values(xyz, faces, "aspect"), 180.0))   # falls towards the south
+        self.assertTrue(np.allclose(ss.triangle_values(xyz, faces, "elevation"), [5 / 3, 10 / 3]))
+        resolved = ss.resolve(ss.parse_style("slope"))
+        index = ss.classify(ss.triangle_values(xyz, faces, "slope"), resolved)
+        regions = ss.class_regions(xyz, faces, index, len(resolved["classes"]))
+        self.assertEqual(list(regions), [2])
+        self.assertAlmostEqual(float(ss.class_areas(xyz, faces, index, 4)[2]), 100.0)
+        split, split_faces, colors, _ = ss.mesh_colors(xyz, faces, resolved)
+        self.assertEqual((len(split), len(split_faces)), (6, 2))         # slope: one colour per triangle
+        self.assertTrue((colors == (0xfd, 0xae, 0x61)).all())
+        same, same_faces, by_level, _ = ss.mesh_colors(xyz, faces, ss.resolve(ss.parse_style("elevation: 2.5")))
+        self.assertIs(same, xyz)
+        self.assertEqual(len({tuple(c) for c in by_level}), 2)
+        svg = ss.plan_svg([(regions, resolved)], legend=resolved)
+        self.assertIn("<svg", svg)
+        self.assertIn("Batter 30–250 %", svg)
+
+
+class BandPieceTests(unittest.TestCase):
+    def test_bands_are_exact_on_a_plane(self):
+        from landxml_plugin.landxml import surface_style as ss
+
+        xyz = np.array([[0, 0, 0], [10, 0, 10], [10, 10, 10], [0, 10, 0]], float)   # value = x
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        resolved = ss.resolve(ss.parse_style("elevation: 2.5, 5"))
+        pieces = ss.band_pieces(xyz, faces, xyz[:, 2], resolved)
+        self.assertTrue(np.allclose(ss.piece_areas(pieces, 3), [25.0, 25.0, 50.0]))
+        svg = ss.plan_svg([(pieces, resolved)], legend=resolved)
+        self.assertIn("stroke-width='0.4'", svg)
+
+
+class SceneSolidsTests(unittest.TestCase):
+    def test_ear_clipping_extrusion_and_water(self):
+        from landxml_plugin.landxml.scene import extrude, triangulate_ring, water_mesh
+
+        l_shape = np.array([[0, 0], [4, 0], [4, 1], [1, 1], [1, 3], [0, 3]], float)
+        tris = triangulate_ring(l_shape)
+        area = sum(0.5 * abs(np.cross(l_shape[b] - l_shape[a], l_shape[c] - l_shape[a])) for a, b, c in tris)
+        self.assertEqual(len(tris), 4)
+        self.assertAlmostEqual(area, 6.0)
+        xyz, faces = extrude(np.vstack([l_shape, l_shape[:1]]), 100.0, 5.0)
+        self.assertEqual((len(xyz), len(faces)), (12, 12 + 4))
+        self.assertEqual((xyz[:, 2].min(), xyz[:, 2].max()), (100.0, 105.0))
+        plane = np.array([[0, 0, 0], [10, 0, 10], [10, 10, 10], [0, 10, 0]], float)     # z = x
+        wxyz, wfaces = water_mesh(plane, np.array([[0, 1, 2], [0, 2, 3]]), 4.0)
+        wet = sum(0.5 * abs(np.cross(wxyz[b, :2] - wxyz[a, :2], wxyz[c, :2] - wxyz[a, :2])) for a, b, c in wfaces)
+        self.assertAlmostEqual(wet, 40.0)
+        self.assertTrue(np.allclose(wxyz[:, 2], 4.0))
+
+
+class SyntheticCorridorTests(unittest.TestCase):
+    def test_fill_slopes_run_out_to_flat_ground(self):
+        from landxml_plugin.landxml.synthetic_corridor import synthetic_corridor
+
+        ground = (np.array([[-50, -100, 100], [250, -100, 100], [250, 100, 100], [-50, 100, 100]], float),
+                  np.array([[0, 1, 2], [0, 2, 3]]))
+        xs = np.arange(0, 201, 2.0)
+        centre = np.column_stack([xs, np.zeros_like(xs), np.full_like(xs, 103.0)])          # 3 m above the ground
+        xyz, faces, station, offset, daylight = synthetic_corridor(centre, xs + 1000, ground, 7.0, 1.5, 0.025, 0.04, 1.5, 2.0)
+        edge_z = 103.0 - 0.025 * 3.5 - 0.04 * 1.5
+        self.assertTrue(np.allclose(daylight, 2.0 * (edge_z - 100.0), atol=1e-6))           # 1V:2H fill to the ground
+        self.assertTrue(np.allclose(xyz[offset == 0, 2], 103.0))
+        outer = np.abs(offset) == offset.max()
+        self.assertTrue(np.allclose(xyz[outer, 2], 100.0, atol=1e-6))
+        self.assertTrue(np.allclose(xyz[offset == 0, 1], 0.0))
+        self.assertTrue((xyz[offset > 0, 1] < 0).all())                                     # right of travel (east) is south
+        self.assertEqual(len(faces), 2 * 6 * (len(xs) - 1))
+        self.assertTrue(np.allclose(station[::7], xs + 1000))
+        cut = synthetic_corridor(centre - [0, 0, 6], xs, ground, 7.0, 1.5, 0.025, 0.04, 1.5, 2.0)[4]
+        self.assertTrue(np.allclose(cut, 1.5 * (100.0 - (97.0 - 0.025 * 3.5 - 0.04 * 1.5)), atol=1e-6))  # 1V:1.5H cut
+
+
+class ConceptStructureTests(unittest.TestCase):
+    def test_csv_schedule_reads_common_headings(self):
+        from landxml_plugin.landxml.structures import read_schedule_csv
+
+        text = ("site,type,chainage,mode,cell_b_m,cell_d_m,cells,invert_in,invert_out\n"
+                "R1,relief,9+025.00,conventional,3.0,1.5,2,1846.77,1846.71\n"
+                "P1,pipe culvert,9100,,,,2,,\n"
+                "X,box,bad,,1,1,1,,\n")
+        items, notes = read_schedule_csv(text)
+        self.assertEqual([i["id"] for i in items], ["R1", "P1"])
+        self.assertEqual((items[0]["kind"], items[0]["station"], items[0]["cells"], items[0]["span"], items[0]["rise"]),
+                         ("box", 9025.0, 2, 3.0, 1.5))
+        self.assertEqual(items[1]["kind"], "pipe")
+        self.assertIn("cell_b_m → span", notes[0])
+        self.assertIn("mode", notes[1])
+        self.assertTrue(any("Row 4 skipped" in n for n in notes))
+
+    def test_typed_schedule(self):
+        from landxml_plugin.landxml.structures import read_schedule_text
+
+        items = read_schedule_text("1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9, skew 15\n1+364-2+293 = bridge, span 30")
+        self.assertEqual([(i["kind"], i["station"]) for i in items], [("box", 1250.0), ("pipe", 1840.0), ("bridge", 1364.0)])
+        self.assertEqual((items[0]["cells"], items[0]["span"], items[0]["rise"]), (3, 2.0, 2.0))
+        self.assertEqual((items[1]["cells"], items[1]["span"], items[1]["skew"]), (2, 0.9, 15.0))
+        self.assertEqual((items[2]["end"], items[2]["span"]), (2293.0, 30.0))
+        with self.assertRaises(ValueError):
+            read_schedule_text("1+250 = box 3 x 2.0")
+
+    def test_box_culvert_width_cover_and_bridge_piers(self):
+        from landxml_plugin.landxml.structures import MeshBuilder, bridge, culvert, low_points
+
+        flat = lambda points: np.full(len(points), 100.0)
+        builder = MeshBuilder()
+        item = {"id": "C1", "kind": "box", "cells": 3, "span": 2.0, "rise": 2.0, "skew": 0.0,
+                "invert_in": None, "invert_out": None}
+        text = culvert(builder, item, np.array([0.0, 0.0, 101.0]), np.array([0.0, -1.0]), 10.0, 10.0, flat)
+        wide = np.ptp(builder.result()[0][:, 0])
+        single = MeshBuilder()
+        culvert(single, dict(item, cells=1), np.array([0.0, 0.0, 101.0]), np.array([0.0, -1.0]), 10.0, 10.0, flat)
+        self.assertAlmostEqual(wide - np.ptp(single.result()[0][:, 0]), 2 * (2.0 + 0.25), places=6)   # two more cells and walls
+        self.assertIn("does not fit under the road by 2.1 m", text)       # 100 + 2.0 + 2 x 0.25 against 101 - 0.6
+        builder = MeshBuilder()
+        xs = np.arange(0, 101, 2.0)
+        centre = np.column_stack([xs, 0 * xs, np.full_like(xs, 130.0)])
+        normal = np.tile([0.0, -1.0], (len(xs), 1))
+        text, piers = bridge(builder, centre, xs, normal, np.arange(len(xs)), 11.0, 25.0, flat)
+        self.assertEqual(piers, 3)
+        self.assertIn("4 spans", text)
+        ground = 100 - 5 * np.exp(-((xs - 50) / 8) ** 2)
+        self.assertEqual(low_points(xs, np.full_like(xs, 101.0), ground), [50.0])
+
+
+class ChannelAndIndexTests(unittest.TestCase):
+    def test_channel_lowers_the_ground_only_along_the_culvert(self):
+        from landxml_plugin.landxml.structures import carve_channels
+
+        xs, ys = np.meshgrid(np.arange(-60, 61, 10.0), np.arange(-60, 61, 10.0))
+        xyz = np.column_stack([xs.ravel(), ys.ravel(), np.full(xs.size, 100.0)])
+        n = 13
+        faces = np.array([[r * n + c, r * n + c + 1, (r + 1) * n + c + 1] for r in range(n - 1) for c in range(n - 1)]
+                         + [[r * n + c, (r + 1) * n + c + 1, (r + 1) * n + c] for r in range(n - 1) for c in range(n - 1)])
+        channel = {"left": np.array([0.0, -10.0]), "right": np.array([0.0, 10.0]), "z_left": 97.0, "z_right": 97.0, "width": 4.0}
+        cxyz, cfaces, lowered = carve_channels(xyz, faces, [channel])
+        self.assertGreater(lowered, 0)
+        self.assertGreater(len(cfaces), len(faces))
+        self.assertAlmostEqual(cxyz[np.hypot(cxyz[:, 0], cxyz[:, 1]) < 1e-9, 2].min(), 97.0)
+        self.assertTrue(np.allclose(cxyz[np.abs(cxyz[:, 0]) > 20, 2], 100.0))          # banks reach the ground within 4.5 m
+
+    def test_tin_index_matches_sample_tin(self):
+        from landxml_plugin.landxml.tin_overlay import TinIndex, sample_tin
+
+        xs, ys = np.meshgrid(np.arange(0, 101, 5.0), np.arange(0, 101, 5.0))
+        xyz = np.column_stack([xs.ravel(), ys.ravel(), np.sin(xs.ravel() / 9.0) * 3 + ys.ravel() * 0.1])
+        n = 21
+        faces = np.array([[r * n + c, r * n + c + 1, (r + 1) * n + c + 1] for r in range(n - 1) for c in range(n - 1)]
+                         + [[r * n + c, (r + 1) * n + c + 1, (r + 1) * n + c] for r in range(n - 1) for c in range(n - 1)])
+        points = np.random.default_rng(3).uniform(-10, 110, (5000, 2))
+        expected = sample_tin((xyz, faces), points)
+        got = TinIndex(xyz, faces).sample(points)
+        self.assertTrue(np.array_equal(np.isnan(expected), np.isnan(got)))
+        self.assertTrue(np.allclose(expected[~np.isnan(expected)], got[~np.isnan(got)]))
+
+
+class FastLookupTests(unittest.TestCase):
+    def test_station_offset_matches_a_full_search(self):
+        from landxml_plugin.landxml.scene import station_offset
+
+        t = np.linspace(0, 10, 400)
+        path = np.column_stack([t * 50, np.sin(t) * 80])
+        stations = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(path, axis=0).T))])
+        points = np.random.default_rng(5).uniform([-50, -200], [550, 200], (3000, 2))
+        station, offset = station_offset(points, path, stations)
+        a, b = path[:-1], path[1:]
+        d = b - a
+        tt = np.clip((((points[:, None] - a) * d).sum(2)) / (d ** 2).sum(1), 0, 1)
+        dist = np.linalg.norm(points[:, None] - (a + tt[..., None] * d), axis=2)
+        self.assertTrue(np.allclose(np.abs(offset), dist.min(axis=1)))
+        near, _o = station_offset(points, path, stations, max_distance=30.0)
+        self.assertTrue(np.array_equal(np.isnan(near), dist.min(axis=1) > 30.0))
+
+    def test_descendant_index_matches_a_walk(self):
+        from landxml_plugin import safe_xml
+        from landxml_plugin.landxml.common import descendants, local_name
+
+        root = safe_xml.fromstring('<a xmlns="urn:x"><b><c/><d><c/></d></b><c><e/></c></a>')
+        walk = lambda e, n: [x for x in e.iter() if x is not e and local_name(x.tag) == n]
+        for element in root.iter():
+            for name in ("b", "c", "d", "e"):
+                self.assertEqual(list(descendants(element, name)), walk(element, name))
+        root[0].append(safe_xml.Element("{urn:x}c"))          # a change to the tree rebuilds the index
+        self.assertEqual(len(list(descendants(root, "c"))), 4)
+
+
+class BridgeLayoutTests(unittest.TestCase):
+    def test_bridge_spans_and_piers_from_the_schedule(self):
+        from landxml_plugin.landxml.structures import MeshBuilder, bridge, read_schedule_text
+
+        items = read_schedule_text("1+000-1+100 = bridge, spans 4; 1+000-1+100 = bridge, piers 1+020 1+050 1+090")
+        self.assertEqual((items[0]["spans"], items[0]["piers"]), (4.0, None))
+        self.assertEqual(items[1]["piers"], [1020.0, 1050.0, 1090.0])
+        xs = np.arange(1000, 1101, 2.0)
+        centre = np.column_stack([xs, 0 * xs, np.full_like(xs, 130.0)])
+        normal = np.tile([0.0, -1.0], (len(xs), 1))
+        flat = lambda points: np.full(len(points), 100.0)
+        text, piers = bridge(MeshBuilder(), centre, xs, normal, np.arange(len(xs)), 11.0, 25.0, flat, spans=4)
+        self.assertEqual((piers, "4 spans" in text), (3, True))
+        text, piers = bridge(MeshBuilder(), centre, xs, normal, np.arange(len(xs)), 11.0, 25.0, flat,
+                             piers=[1020.0, 1050.0, 1090.0])
+        self.assertEqual(piers, 3)
+        self.assertIn("longest 40 m", text)

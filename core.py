@@ -14,6 +14,7 @@ import numpy as np
 from osgeo import gdal, osr
 
 from .landxml.common import child, descendants, first_descendant
+from .landxml import tin_cache, tin_stream
 from .landxml.parser import load_document
 
 
@@ -24,8 +25,7 @@ def list_surfaces(path):
     ]
 
 
-def declared_epsg(path):
-    root = load_document(path).root
+def _epsg_of(root):
     cs = child(root, "CoordinateSystem")
     if cs is None:
         return None
@@ -35,22 +35,11 @@ def declared_epsg(path):
     return None
 
 
-def read_tin(
-    path,
-    surface_name=None,
-    progress=None,
-    cancel=None,
-    surface_index=None,
-    include_invisible=False,
-):
-    """Read TIN vertices and faces.
+def declared_epsg(path):
+    return _epsg_of(load_document(path).root)
 
-    Faces flagged invisible (``<F i="1">``, written by Civil 3D for triangles
-    hidden by surface boundaries) are skipped unless ``include_invisible``.
-    """
-    if progress:
-        progress(2, "Parsing LandXML…")
-    root = load_document(path).root
+
+def _select_surface(root, surface_name, surface_index):
     surfaces = list(descendants(root, "Surface"))
     if not surfaces:
         raise ValueError("No <Surface> elements were found in the LandXML file.")
@@ -58,24 +47,133 @@ def read_tin(
         if not 0 <= surface_index < len(surfaces):
             raise ValueError(f"Surface index {surface_index} is out of range.")
         surface = surfaces[surface_index]
-        surface_name = surface.attrib.get("name", f"Surface {surface_index + 1}")
-    elif surface_name is None:
+        return surface, surface.attrib.get("name", f"Surface {surface_index + 1}")
+    if surface_name is None:
         surface = surfaces[0]
-        surface_name = surface.attrib.get("name", "Surface 1")
-    else:
-        matches = [
-            surface
-            for index, surface in enumerate(surfaces)
-            if surface.attrib.get("name", f"Surface {index + 1}") == surface_name
-        ]
-        if not matches:
-            raise ValueError(f"Surface not found: {surface_name}")
-        if len(matches) > 1:
-            raise ValueError(
-                f"Surface name '{surface_name}' is ambiguous; {len(matches)} surfaces have that name."
-            )
-        surface = matches[0]
+        return surface, surface.attrib.get("name", "Surface 1")
+    matches = [
+        surface
+        for index, surface in enumerate(surfaces)
+        if surface.attrib.get("name", f"Surface {index + 1}") == surface_name
+    ]
+    if not matches:
+        raise ValueError(f"Surface not found: {surface_name}")
+    if len(matches) > 1:
+        raise ValueError(
+            f"Surface name '{surface_name}' is ambiguous; {len(matches)} surfaces have that name."
+        )
+    return matches[0], surface_name
 
+
+def _tin_meta(xyz, farr, surface_name, invisible, epsg, extra=None):
+    b = xyz[:, :2]
+    meta = {
+        "surface_name": surface_name,
+        "point_count": len(xyz),
+        "face_count": len(farr),
+        "invisible_face_count": invisible,
+        "epsg": epsg,
+        "bounds": (
+            float(b[:, 0].min()),
+            float(b[:, 1].min()),
+            float(b[:, 0].max()),
+            float(b[:, 1].max()),
+        ),
+        "zmin": float(xyz[:, 2].min()),
+        "zmax": float(xyz[:, 2].max()),
+    }
+    meta.update(extra or {})
+    return meta
+
+
+def read_tin(
+    path,
+    surface_name=None,
+    progress=None,
+    cancel=None,
+    surface_index=None,
+    include_invisible=False,
+    bounds=None,
+    document=None,
+):
+    """Read TIN vertices and faces.
+
+    Faces flagged invisible (``<F i="1">``, written by Civil 3D for triangles
+    hidden by surface boundaries) are skipped unless ``include_invisible``.
+
+    Point and face blocks are streamed from disk in bounded chunks, so memory is about
+    36 bytes per point plus 12 per triangle whatever the file size. ``bounds`` is an optional
+    ``(xmin, ymin, xmax, ymax)`` box in the file's stored coordinates: only triangles whose
+    bounding box touches it are returned (vertices renumbered), and ``meta['cropped']`` is set. Pass an
+    already loaded ``document`` to avoid parsing the file again.
+    """
+    if progress:
+        progress(2, "Parsing LandXML…")
+    document = document or load_document(path)
+    root = document.root
+    surface, surface_name = _select_surface(root, surface_name, surface_index)
+    epsg = _epsg_of(root)
+    spans = document.tin_spans(surface) if document.skeleton else None
+    if spans is not None:
+        def stage(fraction, message):
+            if progress:
+                progress(2 + 10 * fraction, message)
+
+        cached = tin_cache.load(path, spans, include_invisible) if tin_cache.wanted(spans) else None
+        if cached is None and tin_cache.wanted(spans):
+            # Read the whole surface once and keep a binary copy; later runs (any crop) start from it.
+            try:
+                full_xyz, full_faces, full_info = tin_stream.read_tin_arrays(
+                    path, spans[0], spans[1], surface_name, include_invisible, None, stage, cancel)
+            except tin_stream.TinError as exc:
+                raise ValueError(str(exc)) from exc
+            tin_cache.store(path, spans, include_invisible, full_xyz, full_faces, full_info)
+            cached = (full_xyz, full_faces, full_info)
+        if cached is not None:
+            full_xyz, full_faces, info = cached
+            info = dict(info, cropped=bounds is not None)
+            if bounds is not None:
+                xyz, farr = crop_tin(full_xyz, full_faces, bounds)
+            else:
+                xyz, farr = np.array(full_xyz), np.array(full_faces)
+        else:
+            try:
+                xyz, farr, info = tin_stream.read_tin_arrays(
+                    path, spans[0], spans[1], surface_name, include_invisible, bounds, stage, cancel)
+            except tin_stream.TinError as exc:
+                raise ValueError(str(exc)) from exc
+        meta = _tin_meta(xyz, farr, surface_name, info["invisible_face_count"], epsg, {
+            "source_point_count": info["source_point_count"],
+            "source_face_count": info["source_face_count"],
+            "cropped": info["cropped"],
+        })
+        if progress:
+            progress(12, f"Loaded {len(xyz):,} vertices and {len(farr):,} triangles.")
+        return xyz, farr, meta
+    xyz, farr, invisible = _read_tin_nodes(surface, surface_name, include_invisible)
+    extra = {"source_point_count": len(xyz), "source_face_count": len(farr) + invisible, "cropped": False}
+    if bounds is not None:
+        xyz, farr = crop_tin(xyz, farr, bounds)
+        extra["cropped"] = True
+    meta = _tin_meta(xyz, farr, surface_name, invisible, epsg, extra)
+    if progress:
+        progress(12, f"Loaded {len(xyz):,} vertices and {len(farr):,} triangles.")
+    return xyz, farr, meta
+
+
+def crop_tin(xyz, faces, bounds):
+    """Keep triangles whose bounding box meets ``(xmin, ymin, xmax, ymax)``; renumber the vertices."""
+    kept = faces[tin_stream._touches(xyz, faces, bounds)]
+    if not len(kept):
+        raise ValueError("No triangular faces touch the requested area.")
+    used = np.unique(kept)
+    remap = np.full(len(xyz), -1, np.int32)
+    remap[used] = np.arange(len(used), dtype=np.int32)
+    return xyz[used], remap[kept]
+
+
+def _read_tin_nodes(surface, surface_name, include_invisible):
+    """The original element-by-element reader, for TINs held in the tree."""
     pnts = first_descendant(surface, "Pnts")
     faces = first_descendant(surface, "Faces")
     if pnts is None or faces is None:
@@ -129,28 +227,7 @@ def read_tin(
             ) from exc
     if not face_list:
         raise ValueError("No visible triangular faces were found.")
-
-    farr = np.asarray(face_list, dtype=np.int32)
-    b = xyz[:, :2]
-    epsg = declared_epsg(path)
-    meta = {
-        "surface_name": surface_name,
-        "point_count": len(xyz),
-        "face_count": len(farr),
-        "invisible_face_count": invisible,
-        "epsg": epsg,
-        "bounds": (
-            float(b[:, 0].min()),
-            float(b[:, 1].min()),
-            float(b[:, 0].max()),
-            float(b[:, 1].max()),
-        ),
-        "zmin": float(xyz[:, 2].min()),
-        "zmax": float(xyz[:, 2].max()),
-    }
-    if progress:
-        progress(12, f"Loaded {len(xyz):,} vertices and {len(farr):,} triangles.")
-    return xyz, farr, meta
+    return xyz, np.asarray(face_list, dtype=np.int32), invisible
 
 
 def transform_vertices(vertices, method="stored", **params):
@@ -275,50 +352,26 @@ def rasterize_tin(
             warnings.warn(message, RuntimeWarning, stacklevel=2)
 
     arr = np.full((rows, cols), np.float32(nodata), dtype=np.float32)
-    eps = max(resolution * 1e-8, 1e-9)
-    nfaces = len(faces)
-    for fi in range(nfaces):
+    from .landxml.tin_overlay import TinIndex
+
+    index = TinIndex(np.asarray(vertices, float), np.asarray(faces, np.int64))
+    # cell centres are sampled in bands of rows: the TIN is indexed once, so the cost follows the cells
+    # and the triangles' overlap rather than a Python loop over every triangle
+    xs = xmin_r + (np.arange(cols, dtype=np.float64) + 0.5) * resolution
+    band = max(1, 2_000_000 // max(cols, 1))
+    for r0 in range(0, rows, band):
         if cancel and cancel():
             raise RuntimeError("Conversion cancelled by user.")
-        ia, ib, ic = faces[fi]
-        x1, y1, z1 = vertices[ia]
-        x2, y2, z2 = vertices[ib]
-        x3, y3, z3 = vertices[ic]
-        det = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
-        if abs(det) < 1e-14:
-            continue
-        c0 = int(math.floor((min(x1, x2, x3) - xmin_r) / resolution))
-        c1 = int(math.ceil((max(x1, x2, x3) - xmin_r) / resolution))
-        r0 = int(math.floor((ymax_r - max(y1, y2, y3)) / resolution))
-        r1 = int(math.ceil((ymax_r - min(y1, y2, y3)) / resolution))
-        c0 = max(0, min(cols - 1, c0))
-        c1 = max(0, min(cols, c1 + 1))
-        r0 = max(0, min(rows - 1, r0))
-        r1 = max(0, min(rows, r1 + 1))
-        if c0 >= c1 or r0 >= r1:
-            continue
-        xs = xmin_r + (np.arange(c0, c1, dtype=np.float64) + 0.5) * resolution
+        r1 = min(rows, r0 + band)
         ys = ymax_r - (np.arange(r0, r1, dtype=np.float64) + 0.5) * resolution
-        X = xs[None, :]
-        Y = ys[:, None]
-        e1 = (x2 - x1) * (Y - y1) - (y2 - y1) * (X - x1)
-        e2 = (x3 - x2) * (Y - y2) - (y3 - y2) * (X - x2)
-        e3 = (x1 - x3) * (Y - y3) - (y1 - y3) * (X - x3)
-        inside = ((e1 >= -eps) & (e2 >= -eps) & (e3 >= -eps)) | (
-            (e1 <= eps) & (e2 <= eps) & (e3 <= eps)
-        )
-        if not inside.any():
-            continue
-        a = (z1 * (y2 - y3) + z2 * (y3 - y1) + z3 * (y1 - y2)) / det
-        b = (z1 * (x3 - x2) + z2 * (x1 - x3) + z3 * (x2 - x1)) / det
-        c = z1 - a * x1 - b * y1
-        Z = (a * X + b * Y + c).astype(np.float32, copy=False)
-        arr[r0:r1, c0:c1][inside] = Z[inside]
-        if progress and (fi % 5000 == 0 or fi == nfaces - 1):
-            progress(
-                12 + int(83 * (fi + 1) / nfaces),
-                f"Rasterizing triangles: {fi + 1:,}/{nfaces:,}",
-            )
+        X, Y = np.meshgrid(xs, ys)
+        z = index.sample(np.column_stack([X.ravel(), Y.ravel()]), tolerance=max(resolution * 1e-8, 1e-9))
+        found = np.isfinite(z)
+        block = arr[r0:r1].reshape(-1)
+        block[found] = z[found].astype(np.float32)
+        arr[r0:r1] = block.reshape(r1 - r0, cols)
+        if progress:
+            progress(12 + int(83 * r1 / rows), f"Rasterizing rows: {r1:,}/{rows:,}")
     return arr, xmin_r, ymax_r, resolution
 
 

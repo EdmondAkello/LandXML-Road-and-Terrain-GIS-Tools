@@ -153,7 +153,7 @@ def _clip(poly, count, e0, e1):
     return out, filled
 
 
-def depth_tin(design, existing):
+def depth_tin(design, existing, with_design=False):
     """Depth surface (design − existing) on the area both TINs cover.
 
     ``design`` and ``existing`` are (vertices (n, 3), faces (m, 3)) in the same
@@ -166,7 +166,7 @@ def depth_tin(design, existing):
     epx, epy, eq, ebox, ecorner = _planes(exyz, efaces)
     design_area = float(_area(dcorner).sum()) if len(dcorner) else 0.0
     first, second = candidate_pairs(dbox, ebox)
-    pieces = []
+    pieces, levels = [], []
     for start in range(0, len(first), CHUNK):
         i, j = first[start:start + CHUNK], second[start:start + CHUNK]
         poly = dcorner[i].copy()
@@ -188,10 +188,111 @@ def depth_tin(design, existing):
             x, y = tri[:, :, 0], tri[:, :, 1]
             depth = (dpx[ii, None] * x + dpy[ii, None] * y + dq[ii, None]) - (epx[jj, None] * x + epy[jj, None] * y + eq[jj, None])
             pieces.append(np.stack([x, y, depth], axis=2))
+            if with_design:
+                levels.append(dpx[ii, None] * x + dpy[ii, None] * y + dq[ii, None])
     if not pieces:
         raise ValueError("The design and existing-ground surfaces do not overlap.")
     triangles = np.concatenate(pieces).reshape(-1, 3)
     faces = np.arange(len(triangles), dtype=np.int64).reshape(-1, 3)
     corners = triangles.reshape(-1, 3, 3)
     overlay_area = float(_area(corners).sum())
-    return triangles, faces, {"design_area": design_area, "overlay_area": overlay_area, "triangles": len(faces)}
+    stats = {"design_area": design_area, "overlay_area": overlay_area, "triangles": len(faces)}
+    if with_design:
+        stats["design_z"] = np.concatenate(levels).reshape(-1)
+    return triangles, faces, stats
+
+
+class TinIndex:
+    """A TIN prepared once for many lookups: triangle planes and a grid of the cells each triangle covers.
+
+    ``sample_tin`` accepts one in place of ``(xyz, faces)``; build it when the same surface is sampled
+    again and again (draping lines and labels, running side slopes out to the ground)."""
+
+    WIDTH = np.int64(1) << 31
+
+    def __init__(self, xyz, faces):
+        xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
+        self.px, self.py, self.q, boxes, self.corners = _planes(xyz, faces)
+        self.empty = not len(boxes)
+        if self.empty:
+            return
+        corners = self.corners
+        self.boxes = boxes
+        self.edge = np.roll(corners, -1, axis=1) - corners                  # (n, 3, 2) edge vectors
+        scale = np.abs(corners).max(axis=(1, 2)) + 1.0
+        self.slack = -1e-9 * scale[:, None] * np.hypot(self.edge[:, :, 0], self.edge[:, :, 1])
+        extent = (boxes[:, 2:] - boxes[:, :2]).max(axis=1)
+        positive = extent[extent > 0]
+        self.cell = float(np.median(positive)) * 1.0001 if len(positive) else 1.0
+        self.origin = boxes[:, :2].min(axis=0)
+        while True:                        # a few huge triangles (hull slivers) must not fill memory
+            x0, y0, x1, y1 = _cells(boxes, self.origin, self.cell)
+            nx, ny = x1 - x0 + 1, y1 - y0 + 1
+            if int((nx * ny).sum()) <= max(8 * len(boxes), 4_000_000):
+                break
+            self.cell *= 2.0
+        owner, index = _expand(np.arange(len(boxes)), np.zeros(len(boxes), np.int64), nx * ny)
+        cx = np.repeat(x0, nx * ny) + index % np.repeat(nx, nx * ny)
+        cy = np.repeat(y0, nx * ny) + index // np.repeat(nx, nx * ny)
+        keys = cy * self.WIDTH + cx
+        order = np.argsort(keys, kind="stable")
+        self.keys, self.owner = keys[order], owner[order]
+
+    def sample(self, points, tolerance=1e-9):
+        points = np.asarray(points, float)[:, :2]
+        out = np.full(len(points), np.nan)
+        if self.empty or not len(points):
+            return out
+        cell = np.floor((points - self.origin) / self.cell).astype(np.int64)
+        key = cell[:, 1] * self.WIDTH + cell[:, 0]
+        lo = np.searchsorted(self.keys, key, "left")
+        count = np.searchsorted(self.keys, key, "right") - lo
+        total = np.cumsum(count)
+        start = 0
+        while start < len(points):
+            done = total[start - 1] if start else 0
+            stop = max(int(np.searchsorted(total, done + CHUNK * 4, "right")), start + 1)
+            i, position = _expand(np.arange(start, stop), lo[start:stop], count[start:stop])
+            j = self.owner[position]
+            self._fill(out, points, i, j, tolerance)
+            start = stop
+        return out
+
+    def _fill(self, out, points, i, j, tolerance):
+        x, y = points[i, 0], points[i, 1]
+        box = self.boxes[j]
+        near = (x >= box[:, 0]) & (x <= box[:, 2]) & (y >= box[:, 1]) & (y <= box[:, 3])
+        i, j, x, y = i[near], j[near], x[near], y[near]
+        c, e = self.corners[j], self.edge[j]
+        slack = self.slack[j] * (tolerance / 1e-9)
+        inside = np.ones(len(i), bool)
+        for k in range(3):
+            inside &= e[:, k, 0] * (y - c[:, k, 1]) - e[:, k, 1] * (x - c[:, k, 0]) >= slack[:, k]
+        i, j, x, y = i[inside], j[inside], x[inside], y[inside]
+        out[i] = self.px[j] * x + self.py[j] * y + self.q[j]
+
+
+def sample_tin(tin, points, tolerance=1e-9):
+    """Elevation of the TIN ``(xyz, faces)`` (or a :class:`TinIndex`) at each plan point of ``points`` (NaN outside it)."""
+    if isinstance(tin, TinIndex):
+        return tin.sample(points, tolerance)
+    xyz, faces = np.asarray(tin[0], float), np.asarray(tin[1], np.int64)
+    points = np.asarray(points, float)[:, :2]
+    out = np.full(len(points), np.nan)
+    px, py, q, boxes, corners = _planes(xyz, faces)
+    if not len(points) or not len(boxes):
+        return out
+    first, second = candidate_pairs(np.concatenate([points, points], axis=1), boxes)
+    for start in range(0, len(first), CHUNK):
+        i, j = first[start:start + CHUNK], second[start:start + CHUNK]
+        x, y = points[i, 0], points[i, 1]
+        c = corners[j]
+        scale = np.abs(c).max(axis=(1, 2)) + 1.0
+        inside = np.ones(len(i), bool)
+        for k in range(3):
+            e0, e1 = c[:, k], c[:, (k + 1) % 3]
+            cross = (e1[:, 0] - e0[:, 0]) * (y - e0[:, 1]) - (e1[:, 1] - e0[:, 1]) * (x - e0[:, 0])
+            inside &= cross >= -tolerance * scale * np.hypot(e1[:, 0] - e0[:, 0], e1[:, 1] - e0[:, 1])
+        i, j, x, y = i[inside], j[inside], x[inside], y[inside]
+        out[i] = px[j] * x + py[j] * y + q[j]
+    return out

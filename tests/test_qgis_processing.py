@@ -56,6 +56,7 @@ GRADING = str(ROOT / "tests" / "fixtures" / "generic" / "grading_volume.xml")
 PLATFORMS = str(ROOT / "tests" / "fixtures" / "generic" / "platforms.xml")
 BASIN = str(ROOT / "tests" / "fixtures" / "generic" / "basin.xml")
 BALANCE = str(ROOT / "tests" / "fixtures" / "generic" / "balance.xml")
+EDGES = str(ROOT / "tests" / "fixtures" / "generic" / "edges.xml")
 
 
 class QgisProcessingTests(unittest.TestCase):
@@ -81,8 +82,23 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 23)
+        self.assertEqual(len(self.algorithms), 28)
         self.assertIn("inspect_landxml", self.algorithms)
+
+    def test_every_tool_opens_its_section_of_the_bundled_guide(self):
+        from landxml_plugin.project_settings import GUIDE_SECTIONS, guide_path
+
+        self.assertIsNotNone(guide_path())
+        guide = Path(guide_path()).read_text(encoding="utf-8")
+        for algorithm in self.algorithms.values():
+            section = GUIDE_SECTIONS.get(algorithm.name())
+            self.assertIsNotNone(section, algorithm.name())
+            self.assertIn(f'id="{section}"', guide)
+            self.assertTrue(algorithm.helpUrl().startswith("file:") and algorithm.helpUrl().endswith("#" + section))
+        scene = self.algorithms["landxml_3d_scene"]
+        advanced = [d.name() for d in scene.parameterDefinitions() if int(d.flags()) & 2]
+        self.assertIn("SYN_CAMBER", advanced)
+        self.assertNotIn("SYNTHETIC", advanced)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
         fixtures = ROOT / "tests/fixtures/generic"
@@ -595,6 +611,338 @@ class QgisProcessingTests(unittest.TestCase):
             algorithm.processAlgorithm(dict(self._params(GRADING, "EPSG:26915"), DESIGN_SURFACE="", OUTPUT="memory:"),
                                        self.context, self.feedback)
 
+    def test_grading_feature_lines_round_trip_as_plan_features(self):
+        from landxml_plugin.landxml.features import read_line_features
+        from landxml_plugin.landxml.parser import load_document
+
+        def lines(path):
+            records, warnings = read_line_features(load_document(path).root)
+            self.assertFalse(warnings)
+            return records
+
+        with tempfile.TemporaryDirectory() as directory:
+            out = str(Path(directory) / "daylight.xml")
+            params = dict(self._params(GRADING, "EPSG:26915"), VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG",
+                          FEATURE_LINES=out)
+            result = self.algorithms["landxml_grading_quantities"].processAlgorithm(params, self.context, self.feedback)
+            self.assertEqual(result["FEATURE_LINES"], out)
+            (daylight,) = lines(out)
+            self.assertEqual((daylight.kind, daylight.feature_code, daylight.name), ("FeatureLine", "FeatureLine", "Daylight 1"))
+            self.assertEqual(load_document(out).vertical_unit, "meter")
+            # the whole 10 x 20 pad is worked, so the daylight line is its edge, at design levels z = 98 + 0.1 u + 0.25 v
+            ring = np.array(daylight.points)
+            self.assertTrue(np.allclose(ring[0], ring[-1]))
+            self.assertAlmostEqual(np.hypot(*np.diff(ring[:, :2], axis=0).T).sum(), 60.0, places=6)
+            for u, v, z in daylight.points:
+                self.assertAlmostEqual(z, 98 + 0.1 * u + 0.25 * v, places=6)
+            warnings = []
+            feedback = QgsProcessingFeedback()
+            feedback.pushWarning = warnings.append
+            result = self.algorithms["landxml_grading_quantities"].processAlgorithm(
+                dict(params, VOLUME_SURFACE="Pad Earthworks", EXISTING_SURFACE="", FEATURE_LINES=str(Path(directory) / "x.xml")),
+                self.context, feedback)
+            self.assertEqual(result["FEATURE_LINES"], "")
+            self.assertTrue(any("need the design and existing-ground" in text for text in warnings))
+
+            out = str(Path(directory) / "platforms.xml")
+            result = self.algorithms["landxml_platform_levels"].processAlgorithm(
+                dict(self._params(PLATFORMS, "EPSG:26915"), OUTPUT="memory:", FEATURE_LINES=out), self.context, self.feedback)
+            outlines = {line.name: line for line in lines(out)}
+            self.assertEqual(set(outlines), {"P1 outline", "P2 outline"})
+            for line in outlines.values():
+                ring = np.array(line.points)
+                self.assertTrue(np.allclose(ring[0], ring[-1]))
+                x, y = ring[:, 0], ring[:, 1]
+                self.assertAlmostEqual(abs(0.5 * (np.dot(x[:-1], y[1:]) - np.dot(x[1:], y[:-1]))), 400.0, places=6)
+                self.assertEqual(line.properties.get("platform"), line.name.split()[0])
+
+            out = str(Path(directory) / "pond.xml")
+            self.algorithms["landxml_basin_storage"].processAlgorithm(
+                dict(self._params(BASIN, "EPSG:26915"), BASIN_SURFACE="Test Pond", FREEBOARD=0.5, FEATURE_LINES=out),
+                self.context, self.feedback)
+            water = [line for line in lines(out) if "design water level" in line.name]
+            self.assertEqual(len(water), 1)
+            ring = np.array(water[0].points)
+            self.assertTrue(np.allclose(ring[0], ring[-1]))
+            self.assertTrue(np.allclose(ring[:, 2], 2.5))
+
+    def test_grading_edge_analysis_layers_report_and_schedule(self):
+        algorithm = self.algorithms["landxml_grading_edges"]
+        with tempfile.TemporaryDirectory() as directory:
+            params = dict(self._params(EDGES, "EPSG:26915"), DESIGN_SURFACE="Site FG", EXISTING_SURFACE="Site EG",
+                          OUTPUT=str(Path(directory) / "edges.gpkg"), STEPS=str(Path(directory) / "steps.gpkg"),
+                          REPORT=str(Path(directory) / "edges.html"), SCHEDULE_CSV=str(Path(directory) / "edges.csv"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            self.assertAlmostEqual(result["RETAINED_LENGTH"], 240.0, places=6)
+            self.assertAlmostEqual(result["MAX_RETAINED_HEIGHT"], 3.0, places=6)
+            self.assertEqual((result["BATTER_LENGTH"], result["STEP_COUNT"]), (0, 1))
+            package = ogr.Open(result["OUTPUT"])
+            runs = [(f.GetField("edge"), f.GetField("side"), f.GetField("height_band"), round(f.GetField("length"), 6))
+                    for f in package.GetLayer(0)]
+            self.assertEqual(sorted(runs), [("retained", "fill", "3–4", 240.0)])
+            package = ogr.Open(result["STEPS"])
+            (step,) = list(package.GetLayer(0))
+            self.assertEqual((step.GetField("type"), round(step.GetField("height"), 6)), ("wall", 2.0))
+            step = package = None
+            rows = Path(directory, "edges.csv").read_text(encoding="utf-8").splitlines()
+            self.assertTrue(rows[1].startswith("retained,fill,240.000,3.000"))
+            self.assertIn("Grading edge analysis", Path(directory, "edges.html").read_text(encoding="utf-8"))
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(self._params(EDGES, "EPSG:26915"), DESIGN_SURFACE="Site FG",
+                                            EXISTING_SURFACE="Site FG", OUTPUT="memory:"), self.context, self.feedback)
+
+    def test_export_scene_writes_json_meshes_lines_labels_and_views(self):
+        from landxml_plugin.landxml.scene import load_scene, read_ply
+
+        import re
+
+        algorithm = self.algorithms["landxml_export_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            grid = [(x, y) for y in range(-20, 81, 5) for x in range(-20, 81, 5)]
+            n = 21
+            tris = [(r * n + col + 1, r * n + col + 2, (r + 1) * n + col + 2) for r in range(n - 1) for col in range(n - 1)]
+            tris += [(r * n + col + 1, (r + 1) * n + col + 2, (r + 1) * n + col + 1) for r in range(n - 1) for col in range(n - 1)]
+            ground = ('<Surface name="Site EG"><Definition surfType="TIN"><Pnts>'
+                      + "".join(f'<P id="{k}">{x} {y} 100</P>' for k, (x, y) in enumerate(grid, 1)) + "</Pnts><Faces>"
+                      + "".join(f"<F>{a} {b} {c}</F>" for a, b, c in tris) + "</Faces></Definition></Surface>")
+            dense = Path(directory) / "dense.xml"
+            dense.write_text(re.sub(r'<Surface name="Site EG">.*?</Surface>', ground, Path(EDGES).read_text(), count=1,
+                                    flags=re.S), encoding="utf-8")
+            params = dict(self._params(str(dense), "EPSG:26915"), DESIGN_SURFACE="Site FG", EXISTING_SURFACE="Site EG",
+                          CONTEXT_MARGIN=10.0, DESIGN_STYLE="slope", LABELS="Gate @ 5, 5; Mast @ 30, 30, 8",
+                          OUTPUT_FOLDER=str(Path(directory) / "scene"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            scene, folder = load_scene(result["SCENE"])
+            self.assertEqual((scene["format"], scene["version"], scene["units"]["vertical"]),
+                             ("landxmltools-scene", 2, "meter"))
+            self.assertEqual(scene["origin"], [30, 30, 103])
+            self.assertEqual(scene["crs"]["authid"], "EPSG:26915")
+            self.assertEqual(scene["vertical_exaggeration"], 1.5)
+            surfaces = {item["id"]: item for item in scene["surfaces"]}
+            self.assertEqual(set(surfaces), {"context", "design"})
+            self.assertEqual(surfaces["design"]["style"]["attribute"], "slope")
+            xyz, faces, rgb, depth = read_ply(str(Path(folder) / surfaces["design"]["mesh"]))
+            self.assertEqual((len(xyz), len(faces)), (surfaces["design"]["vertices"], surfaces["design"]["triangles"]))
+            self.assertTrue(np.allclose(np.sort(np.unique(np.round(depth, 6))), [3.0, 5.0]))
+            self.assertAlmostEqual(float(xyz[:, 2].max()) + 103, 105.0, places=4)
+            cxyz, cfaces, crgb, _ = read_ply(str(Path(folder) / surfaces["context"]["mesh"]))
+            self.assertTrue((crgb == [0xcf, 0xd8, 0xc4]).all())
+            # ground under the design is dropped; the 10 m margin is kept
+            corners = cxyz[cfaces] + [30, 30, 103]
+            inside = (corners[..., 0] > 0) & (corners[..., 0] < 60) & (corners[..., 1] > 0) & (corners[..., 1] < 60)
+            self.assertFalse(inside.all(axis=1).any())
+            self.assertTrue(-15.0 - 1e-6 <= float(cxyz[:, 0].min()) + 30 <= -10.0)   # triangles touching the margin
+            kinds = sorted({line["kind"] for line in scene["lines"]})
+            self.assertEqual(kinds, ["daylight", "platform_outline", "retained_edge"])
+            texts = sorted(label["text"] for label in scene["labels"])
+            self.assertEqual(texts, ["Gate", "Mast", "P1 RL 103.00", "P2 RL 105.00"])
+            self.assertEqual([view["name"] for view in scene["views"]], ["sw", "se"])
+            viewer = Path(result["VIEWER"]).read_text(encoding="utf-8")
+            self.assertIn('"format":"landxmltools-scene"', viewer)
+            self.assertIn('getContext("webgl2"', viewer)
+            self.assertNotIn("__SCENE__", viewer)
+            self.assertNotIn("http", viewer.split("<script id=\"scene-data\"")[0].replace("http://www.w3.org", ""))
+            self.assertGreater(scene["views"][0]["distance"], 50)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, VIEWS="sw: 0, 0, 0"), self.context, self.feedback)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, LABELS="no position"), self.context, self.feedback)
+
+    def test_surface_classes_and_site_grading_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = dict(self._params(EDGES, "EPSG:26915"))
+            result = self.algorithms["landxml_surface_style"].processAlgorithm(
+                dict(base, SURFACE="Site FG", STYLE="slope", OUTPUT=str(Path(directory) / "slope.gpkg")),
+                self.context, self.feedback)
+            package = ogr.Open(result["OUTPUT"])
+            areas = {f.GetField("class"): round(f.GetField("area"), 3) for f in package.GetLayer(0)}
+            package = None
+            self.assertAlmostEqual(areas["Flat (platforms) < 2 %"], 3600 - 4 * 10.05 * 0.05 + 0.0, delta=0.05)
+            self.assertIn("Near-vertical > 250 %", areas)
+            depth = self.algorithms["landxml_surface_style"].processAlgorithm(
+                dict(base, SURFACE="Site FG", EXISTING_SURFACE="Site EG", STYLE="depth: 4", OUTPUT=str(Path(directory) / "d.gpkg")),
+                self.context, self.feedback)
+            package = ogr.Open(depth["OUTPUT"])
+            areas = {f.GetField("class"): round(f.GetField("area"), 3) for f in package.GetLayer(0)}
+            package = None
+            self.assertAlmostEqual(areas["≥ 4 m"], 100.0, delta=1.5)   # the pad and half of its thin wall strip
+            with self.assertRaises(QgsProcessingException):
+                self.algorithms["landxml_surface_style"].processAlgorithm(
+                    dict(base, SURFACE="Site FG", STYLE="depth", OUTPUT="memory:"), self.context, self.feedback)
+            report = self.algorithms["landxml_grading_report"].processAlgorithm(
+                dict(base, DESIGN_SURFACE="Site FG", EXISTING_SURFACE="Site EG", MAP_STYLES="depth; slope; elevation: equal 3",
+                     REPORT=str(Path(directory) / "site.html")), self.context, self.feedback)
+            self.assertAlmostEqual(report["FILL_VOLUME"], 3600 * 3 + 100 * 2 + 40 * 0.05 * 2 * 0.5 + 0.005, places=6)   # pad wall wedges
+            self.assertAlmostEqual(report["CUT_VOLUME"], 0.0, places=6)
+            text = Path(report["REPORT"]).read_text(encoding="utf-8")
+            for part in ("Site grading report", "Cut and fill depth", "Slope classes", "Design levels", "<svg",
+                         "Platforms", "Internal steps", "retained"):
+                self.assertIn(part, text)
+
+    def _road_scene_files(self, directory):
+        xs = list(range(0, 101, 10))
+        ys = list(range(-50, 51, 10))
+        pts, faces = [], []
+        for y in ys:
+            for x in xs:
+                pts.append((x, y, 100 + 0.02 * x + 0.01 * abs(y)))
+        n = len(xs)
+        for r in range(len(ys) - 1):
+            for col in range(n - 1):
+                a, b, d, e = r * n + col + 1, r * n + col + 2, (r + 1) * n + col + 1, (r + 1) * n + col + 2
+                faces += [(a, b, e), (a, e, d)]
+        def tin(name, points, tris):
+            return (f'<Surface name="{name}"><Definition surfType="TIN"><Pnts>'
+                    + "".join(f'<P id="{k}">{y} {x} {z}</P>' for k, (x, y, z) in enumerate(points, 1))
+                    + "</Pnts><Faces>" + "".join(f"<F>{a} {b} {c}</F>" for a, b, c in tris) + "</Faces></Definition></Surface>")
+        design = [(x, y, 102.0) for y in (-10, 10) for x in (0, 100)]
+        text = ('<?xml version="1.0" encoding="UTF-8"?><LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">'
+                '<Units><Metric linearUnit="meter" verticalLinearUnit="meter"/></Units><Surfaces>'
+                + tin("EG", pts, faces) + tin("Road FG", design, [(1, 2, 4), (1, 4, 3)])
+                + '</Surfaces><Alignments><Alignment name="Main" staStart="1000" length="100"><CoordGeom><Line length="100">'
+                '<Start>0 0</Start><End>0 100</End></Line></CoordGeom><Profile><ProfAlign name="FG"><PVI>1000 102</PVI>'
+                '<PVI>1100 102</PVI></ProfAlign></Profile></Alignment></Alignments>'
+                '<PlanFeatures name="F"><PlanFeature name="Kerb"><CoordGeom><Line><Start>5 10 102.1</Start><End>5 90 102.1</End>'
+                '</Line></CoordGeom><Feature code="FeatureLine"/></PlanFeature></PlanFeatures></LandXML>')
+        path = Path(directory) / "road.xml"
+        path.write_text(text, encoding="utf-8")
+        tif = Path(directory) / "dem.tif"
+        ds = gdal.GetDriverByName("GTiff").Create(str(tif), 60, 60, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((-20, 2, 0, 70, 0, -2))
+        from osgeo import osr
+        srs = osr.SpatialReference(); srs.ImportFromEPSG(26915); ds.SetProjection(srs.ExportToWkt())
+        band = ds.GetRasterBand(1); band.SetNoDataValue(-9999)
+        grid = np.fromfunction(lambda r, c: 95 + 0.1 * c, (60, 60), dtype=float); grid[0, 0] = -9999
+        band.WriteArray(grid); ds = None
+        return str(path), str(tif)
+
+    def test_road_scene_with_surfaces_rasters_contours_and_linework(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer
+        from landxml_plugin.landxml.scene import load_scene, read_ply
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, tif = self._road_scene_files(directory)
+            raster = QgsRasterLayer(tif, "DEM")
+            vector = QgsVectorLayer("LineString?crs=EPSG:26915", "Fence", "memory")
+            feature = QgsFeature(); feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(20, -30), QgsPointXY(80, -30)]))
+            vector.dataProvider().addFeatures([feature])
+            from qgis.core import QgsField
+            from qgis.PyQt.QtCore import QVariant
+            sheds = QgsVectorLayer("Polygon?crs=EPSG:26915&field=h:double", "Sheds", "memory")
+            shed = QgsFeature(sheds.fields())
+            shed.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(60, 20), QgsPointXY(70, 20), QgsPointXY(70, 30), QgsPointXY(60, 30)]]))
+            shed.setAttributes([6.0])
+            sheds.dataProvider().addFeatures([shed])
+            params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG = plain #cfd8c4; Road FG = depth over EG",
+                          CONTOURS="EG = 0.5", RASTERS=[raster], RASTER_CONTOURS=1.0, VECTORS=[vector, sheds], STATION_LABELS=20,
+                          EXTRUDE_FIELD="h", WATER="EG = 100.6",
+                          TITLE="Test road", OUTPUT_FOLDER=str(Path(directory) / "scene"))
+            result = algorithm.processAlgorithm(params, self.context, self.feedback)
+            scene, folder = load_scene(result["SCENE"])
+            self.assertEqual(scene["title"], "Test road")
+            self.assertEqual([(s["id"], s["role"]) for s in scene["surfaces"]],
+                             [("s1", "surface"), ("s2", "design"), ("r1", "raster"), ("s1_under", "existing_under"),
+                              ("solids", "solid"), ("water5", "water")])
+            solids = read_ply(str(Path(folder) / "solids.ply"))[0] + scene["origin"]
+            self.assertAlmostEqual(float(solids[:, 2].max() - solids[:, 2].min()), 6.0, places=4)
+            water = read_ply(str(Path(folder) / "water5.ply"))[0] + scene["origin"]
+            self.assertTrue(np.allclose(water[:, 2], 100.6, atol=1e-4))
+            self.assertLessEqual(water[:, 0].max(), 30.0 + 1e-6)          # EG = 100 + 0.02 x + 0.01 |y| is below 100.6 only for x < 30
+            under = scene["surfaces"][3]
+            self.assertEqual((under["visible"], under["pair"]), (False, {"before": ["s1_under"], "after": ["s2"]}))
+            (drive_path,) = scene["paths"]
+            self.assertEqual(drive_path["name"], "Main")
+            self.assertAlmostEqual(drive_path["stations"][0], 1000.0, places=6)
+            kinds = {line["kind"] for line in scene["lines"]}
+            self.assertTrue({"contour", "index_contour", "alignment", "feature_line", "vector"} <= kinds)
+            origin = np.array(scene["origin"])
+            alignment = np.array(next(l for l in scene["lines"] if l["kind"] == "alignment")["points"]) + origin
+            self.assertTrue(np.allclose(alignment[:, 2], 102.0))          # profile level, not draped
+            fence = np.array(next(l for l in scene["lines"] if l["kind"] == "vector")["points"]) + origin
+            self.assertTrue(np.allclose(fence[:, 2], 100 + 0.02 * fence[:, 0] + 0.01 * 30, atol=1e-6))   # draped on EG
+            stations = sorted(l["text"] for l in scene["labels"] if l["kind"] == "station")
+            self.assertEqual(stations[0], "1+000")
+            self.assertEqual(len(stations), 6)
+            levels = sorted({l["properties"]["level"] for l in scene["lines"] if l["properties"].get("surface") == "EG"})
+            self.assertEqual(levels[0], 100.5)
+            self.assertTrue(Path(result["VIEWER"]).is_file())
+            # a corridor keeps only the triangles near the alignment
+            narrow = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", CORRIDOR="Main", CORRIDOR_WIDTH=15,
+                                                     OUTPUT_FOLDER=str(Path(directory) / "corridor")), self.context, self.feedback)
+            corridor, corridor_folder = load_scene(narrow["SCENE"])
+            eg = next(s for s in corridor["surfaces"] if s["name"] == "EG")
+            from landxml_plugin.landxml.scene import read_ply as _read_ply
+            exyz = _read_ply(str(Path(corridor_folder) / eg["mesh"]))[0] + corridor["origin"]
+            self.assertLess(np.abs(exyz[:, 1]).max(), 15 + 10 + 1e-6)     # only ground near the alignment is kept
+            self.assertGreater(eg["triangles"], 10)          # the ground under the design is left out
+            part = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", CORRIDOR="Main", CORRIDOR_WIDTH=15,
+                                                   STATION_FROM=1050, STATION_TO=1080,
+                                                   OUTPUT_FOLDER=str(Path(directory) / "part")), self.context, self.feedback)
+            stretch, _ = load_scene(part["SCENE"])
+            from landxml_plugin.landxml.scene import read_ply
+            ground = read_ply(str(Path(directory) / "part" / next(s["mesh"] for s in stretch["surfaces"] if s["name"] == "EG")))[0]
+            self.assertLessEqual(np.ptp(ground[:, 0]), 70.0)    # stations 1050–1080 ± 15 m, whole 10 m cells (full corridor: 100)
+            self.assertEqual([v["name"] for v in stretch["views"]], ["left", "right", "along"])
+            # a finished-road surface carries station and offset for the viewer's road painting
+            road = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", SURFACES="EG; Road FG = road: 8, 2, 2",
+                                                   OUTPUT_FOLDER=str(Path(directory) / "road")), self.context, self.feedback)
+            road_scene, road_folder = load_scene(road["SCENE"])
+            surface = next(s for s in road_scene["surfaces"] if s["name"] == "Road FG")
+            self.assertEqual((surface["style"]["attribute"], surface["style"]["carriageway"], surface["style"]["lanes"]), ("road", 8.0, 2))
+            xyz, _faces, rgb, _depth, extra = read_ply(str(Path(road_folder) / surface["mesh"]), extras=True)
+            xyz = xyz + road_scene["origin"]
+            self.assertTrue(np.allclose(extra["station"], 1000 + xyz[:, 0], atol=1e-3))
+            self.assertTrue(np.allclose(extra["offset"], -xyz[:, 1], atol=1e-3))     # right of travel (east) is south
+            self.assertIn("Drive through", Path(road["VIEWER"]).read_text(encoding="utf-8"))
+            # feasibility: a synthetic corridor on the profile, its slopes run out to the ground, ground cut under it
+            concept = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", WATER="", SURFACES="EG",
+                                                      SYNTHETIC="Main", SYN_CARRIAGEWAY=20.0, OUTPUT_FOLDER=str(Path(directory) / "concept")),
+                                                 self.context, self.feedback)
+            concept_scene, concept_folder = load_scene(concept["SCENE"])
+            synthetic = next(s for s in concept_scene["surfaces"] if "synthetic" in s["name"])
+            self.assertEqual((synthetic["role"], synthetic["style"]["attribute"]), ("design", "road"))
+            sxyz, _f, _rgb, _d, sextra = read_ply(str(Path(concept_folder) / synthetic["mesh"]), extras=True)
+            centre_z = sxyz[np.abs(sextra["offset"]) < 1e-6][:, 2] + concept_scene["origin"][2]
+            self.assertTrue(np.allclose(centre_z, 102.0, atol=1e-4), centre_z[:5])
+            self.assertTrue(any(s["role"] == "existing_under" for s in concept_scene["surfaces"]))
+            # structures: a typed box culvert and a bridge stretch, drawn as concept solids with their own views
+            built = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", WATER="", SURFACES="EG",
+                                                    SYNTHETIC="Main", SYN_GROUND="EG", SYN_STRUCTURES="1+030 = box 2 x 1.5 x 1.0; 1+060-1+080 = bridge, span 10",
+                                                    OUTPUT_FOLDER=str(Path(directory) / "structures")), self.context, self.feedback)
+            built_scene, _built_folder = load_scene(built["SCENE"])
+            self.assertTrue(any(s["name"] == "Structures (concept)" for s in built_scene["surfaces"]))
+            names = [v["name"] for v in built_scene["views"]]
+            self.assertTrue(any(n.startswith("box 1+030") for n in names), names)
+            self.assertTrue(any(n.startswith("Bridge 10") for n in names), names)
+            with self.assertRaises(QgsProcessingException):
+                algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", WATER="", SURFACES="EG",
+                                                SYNTHETIC="Main", SYN_GROUND="Nothing", OUTPUT_FOLDER=str(Path(directory) / "x")),
+                                           self.context, self.feedback)
+        with self.assertRaises(QgsProcessingException):
+            algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
+
+    def test_centreline_levels_follow_the_profile_across_near_equal_element_joins(self):
+        from landxml_plugin.road_features import centerlines_3d
+
+        text = ('<?xml version="1.0"?><LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">'
+                '<Units><Metric linearUnit="meter"/></Units><Alignments><Alignment name="A" staStart="0" length="150">'
+                '<CoordGeom><Line><Start>0 0</Start><End>50 0</End></Line>'
+                '<Line><Start>50.00000000001 0</Start><End>100 0</End></Line>'
+                '<Line><Start>100.00000000002 0</Start><End>150 0</End></Line></CoordGeom>'
+                '<Profile><ProfAlign name="FRL"><PVI>0 100</PVI><PVI>150 115</PVI></ProfAlign></Profile>'
+                '</Alignment></Alignments></LandXML>')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "joins.xml"
+            path.write_text(text, encoding="utf-8")
+            ((name, start, end, stored),) = centerlines_3d(str(path), 2.0)
+            self.assertAlmostEqual(end - start, 150.0, places=6)
+            # stored order is northing easting: the alignment runs along the first coordinate
+            self.assertTrue(np.allclose(stored[:, 2], 100 + 0.1 * stored[:, 0], atol=1e-6))
+            self.assertEqual(len(stored), 4)                     # one point per join, not two
+            dense = centerlines_3d(str(path), 2.0, max_step=5.0)[0][3]
+            self.assertLessEqual(np.hypot(*np.diff(dense[:, :2], axis=0).T).max(), 5.0 + 1e-9)
+
     def test_basin_storage_check_table_and_units(self):
         algorithm = self.algorithms["landxml_basin_storage"]
         with tempfile.TemporaryDirectory() as directory:
@@ -662,6 +1010,58 @@ class QgisProcessingTests(unittest.TestCase):
             self.context, self.feedback)
         for key in ("CUT_CHANGE", "FILL_CHANGE", "NET_CHANGE"):
             self.assertAlmostEqual(comparison[key], 0.0, places=6)
+
+    def test_elevation_unit_is_accepted_as_the_vertical_unit(self):
+        from landxml_plugin.landxml.parser import load_document
+
+        text = Path(GRADING).read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "elevation.xml"
+            path.write_text(text.replace(' verticalLinearUnit="meter"', ' elevationUnit="meter"'), encoding="utf-8")
+            self.assertEqual(load_document(str(path)).vertical_unit, "meter")
+            both = Path(directory) / "both.xml"
+            both.write_text(text.replace(' verticalLinearUnit="meter"', ' verticalLinearUnit="meter" elevationUnit="foot"'),
+                            encoding="utf-8")
+            self.assertEqual(load_document(str(both)).vertical_unit, "meter")
+
+    def test_grading_tools_read_existing_ground_from_another_file(self):
+        import re
+
+        text = Path(GRADING).read_text(encoding="utf-8")
+        without_ground = re.sub(r'<Surface name="Pad EG">.*?</Surface>', "", text, count=1, flags=re.S)
+        self.assertNotIn('<Surface name="Pad EG">', without_ground)
+        with tempfile.TemporaryDirectory() as directory:
+            design_file = Path(directory) / "design.xml"
+            design_file.write_text(without_ground, encoding="utf-8")
+            ground_file = Path(directory) / "survey.xml"
+            ground_file.write_text(text, encoding="utf-8")
+            params = self._params(str(design_file), "EPSG:26915")
+            quantities = self.algorithms["landxml_grading_quantities"]
+            with self.assertRaises(QgsProcessingException):          # not in the design file
+                quantities.processAlgorithm(dict(params, VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG"),
+                                            self.context, self.feedback)
+            result = quantities.processAlgorithm(
+                dict(params, VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG", EXISTING_FILE=str(ground_file)),
+                self.context, self.feedback)
+            self.assertAlmostEqual(result["CUT_VOLUME"], 100.0, places=6)
+            self.assertAlmostEqual(result["FILL_VOLUME"], 100.0, places=6)
+            balance = self.algorithms["landxml_earthwork_balance"].processAlgorithm(
+                dict(params, VOLUME_SURFACES="Pad FG | Pad EG", EXISTING_FILE=str(ground_file), SHRINKAGE="0.9"),
+                self.context, self.feedback)
+            self.assertAlmostEqual(balance["TOTAL_CUT"], 100.0, places=6)
+            comparison = self.algorithms["landxml_grading_revision_comparison"].processAlgorithm(
+                dict(params, SURFACE_A="Pad Earthworks", SURFACE_B="Pad FG", EXISTING_B="Pad EG",
+                     EXISTING_FILE=str(ground_file), OUTPUT="memory:"), self.context, self.feedback)
+            for key in ("CUT_CHANGE", "FILL_CHANGE", "NET_CHANGE"):
+                self.assertAlmostEqual(comparison[key], 0.0, places=6)
+            # an existing ground in other coordinates is refused rather than silently giving zero
+            far = Path(directory) / "far.xml"
+            far.write_text(re.sub(r"(<P id=\"\d+\">)(\d+)", lambda m: m.group(1) + str(int(m.group(2)) + 9000), text),
+                           encoding="utf-8")
+            with self.assertRaisesRegex(QgsProcessingException, "does not reach"):
+                quantities.processAlgorithm(
+                    dict(params, VOLUME_SURFACE="Pad FG", EXISTING_SURFACE="Pad EG", EXISTING_FILE=str(far)),
+                    self.context, self.feedback)
 
     def test_earthwork_balance_sites_report_and_table(self):
         algorithm = self.algorithms["landxml_earthwork_balance"]
@@ -1509,3 +1909,46 @@ class QgisProcessingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SyntheticDemOffsetTests(unittest.TestCase):
+    def test_dem_offset_from_the_surveyed_ground_profile(self):
+        from landxml_plugin.scene_algorithm import Scene3DAlgorithm
+
+        text = ('<?xml version="1.0"?><LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">'
+                '<Alignments><Alignment name="A" staStart="0" length="100"><CoordGeom><Line length="100">'
+                '<Start>0 0</Start><End>0 100</End></Line></CoordGeom><Profile><ProfAlign name="FRL">'
+                '<PVI>0 105</PVI><PVI>100 105</PVI></ProfAlign><ProfSurf name="EG" state="existing">'
+                '<PntList2D>0 100 100 110</PntList2D></ProfSurf></Profile></Alignment></Alignments></LandXML>')
+        messages = []
+
+        class Feedback:
+            pushInfo = pushWarning = messages.append
+
+        ground = (np.array([[-10, -10, 86], [110, -10, 98], [110, 10, 98], [-10, 10, 86]], float),
+                  np.array([[0, 1, 2], [0, 2, 3]]))                            # 13 below the surveyed ground
+        xs = np.arange(0, 101, 10.0)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "a.xml"
+            path.write_text(text, encoding="utf-8")
+            shift = Scene3DAlgorithm._dem_offset(str(path), "A", np.column_stack([xs, 0 * xs, 105 + 0 * xs]), xs, ground,
+                                                 Feedback())
+        self.assertAlmostEqual(shift, 13.0, places=6)
+        self.assertIn("datum", messages[0])
+
+
+class RefineNearTests(unittest.TestCase):
+    def test_ground_is_split_only_near_the_footprint_and_keeps_its_shape(self):
+        from landxml_plugin.scene_algorithm import refine_near
+
+        xyz = np.array([[0, 0, 0], [100, 0, 10], [100, 100, 20], [0, 100, 10]], float)
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        footprint = (np.array([[40, -1, 0], [60, -1, 0], [60, 101, 0], [40, 101, 0]], float), np.array([[0, 1, 2], [0, 2, 3]]))
+        rxyz, rfaces = refine_near(xyz, faces, footprint, 10.0)
+        self.assertGreater(len(rfaces), 50)
+        plane = 0.1 * rxyz[:, 0] + 0.1 * rxyz[:, 1]
+        self.assertTrue(np.allclose(rxyz[:, 2], plane))
+        tri = rxyz[rfaces]
+        longest = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
+        centroid_x = tri[:, :, 0].mean(axis=1)
+        self.assertTrue((longest[(centroid_x > 45) & (centroid_x < 55)] <= 10.0 + 1e-9).all())

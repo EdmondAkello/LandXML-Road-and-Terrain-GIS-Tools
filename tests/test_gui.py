@@ -309,7 +309,8 @@ class PluginGuiTests(unittest.TestCase):
         iface = Interface()
         plugin = LandXMLTinToGeoTIFFPlugin(iface)
         plugin.initGui()
-        self.assertEqual(len(iface.menus), 3)
+        self.assertEqual(len(iface.menus), 4)                  # viewer, pick, locator, user guide
+        self.assertIn("User Guide", [a.text() for a in iface.menus])
         plugin.show_locator()
         self.assertIsNotNone(plugin.locator)
         plugin.pick_on_map()

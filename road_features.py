@@ -130,6 +130,21 @@ def _line_chain(points):
     return QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in points])
 
 
+def merge_parts(parts):
+    """Element points joined into one polyline exactly as ``read_alignments`` joins them, so the
+    result lines up with the alignment's ``vertex_distances`` (junction points that agree to
+    1e-9 are kept once; an exact-equality test kept near-equal duplicates and shifted every later
+    station, which stepped 3D centrelines and station points)."""
+    pts = []
+    for part in parts:
+        if pts and part and math.isclose(pts[-1][0], part[0][0], abs_tol=1e-9) and \
+                math.isclose(pts[-1][1], part[0][1], abs_tol=1e-9):
+            pts.extend(part[1:])
+        else:
+            pts.extend(part)
+    return pts
+
+
 def _alignment_parts(path, segment_length=5.0, alignment_filter=""):
     alignments, unsupported = read_alignments(path, segment_length)
     result = []
@@ -606,6 +621,91 @@ class ProfileAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         }
 
 
+def centerlines_3d(path, seg, alignment_filter=None, warn=None, cancel=None, progress=None, max_step=None):
+    """[(alignment, start station, end station, (n, 3) array)] in stored coordinates, where a vertical
+    profile covers the alignment. Elevations come from the profile only; Z is never fabricated.
+    ``max_step`` adds points so no step is longer (3D scenes clip lines to an area point by point)."""
+    import numpy as np
+
+    warn = warn or (lambda text: None)
+    root = load_document(path).root
+    # Build sampled vertical profiles keyed by alignment name. ProfAlign
+    # is a flat PVI/ParaCurve/CircCurve sequence -- see landxml.profile.
+    # A ProfAlign's own `name` is a profile label (e.g. "frl" = finish
+    # road level), not the owning alignment's name: real LandXML nests
+    # <Profile><ProfAlign> inside the <Alignment> it belongs to, it does
+    # not cross-reference it by an `alignment=` attribute equal to a
+    # ProfAlign name. Associate by walking each Alignment's own subtree
+    # first; fall back to an explicit alignment= reference if an exporter
+    # uses that pattern instead.
+    profiles = {}
+    for a_el in descendants(root, "Alignment"):
+        key = a_el.attrib.get("name", "")
+        if key in profiles:
+            continue
+        pa = first_descendant(a_el, "ProfAlign")
+        if pa is not None:
+            samples = read_vertical_profile(pa, seg)
+            if samples:
+                profiles[key] = samples
+    for prof in descendants(root, "ProfAlign"):
+        ref = prof.attrib.get("alignment")
+        if ref and ref not in profiles:
+            samples = read_vertical_profile(prof, seg)
+            if samples:
+                profiles[ref] = samples
+
+    out = []
+    parts_all = _alignment_parts(path, seg, alignment_filter)
+    for ai, (name, desc, sta0, sta1, parts, unsupported, distances) in enumerate(parts_all):
+        if cancel and cancel():
+            break
+        pts = merge_parts(parts)
+        if len(pts) < 2:
+            continue
+        raw = np.asarray([[x, y, 0] for x, y in pts], dtype=float)
+        cum = list(distances)
+        if len(cum) != len(pts):
+            warn(f"Skipped 3D centerline '{name}': its geometry and stationing do not line up.")
+            continue
+        if not sta0:
+            warn(f"Skipped 3D centerline '{name}': alignment start station is missing.")
+            continue
+        s0 = float(sta0)
+        prof = profiles.get(name)
+        if not prof:
+            warn(f"Skipped 3D centerline '{name}': no matching vertical profile; Z was not fabricated.")
+            continue
+        start = max(s0, prof[0][0])
+        end = min(s0 + cum[-1], prof[-1][0])
+        if end <= start:
+            warn(f"Skipped 3D centerline '{name}': profile does not overlap the alignment station range.")
+            continue
+
+        def xy_at(station):
+            distance = station - s0
+            i = max(1, bisect_left(cum, distance))
+            if i >= len(cum):
+                return raw[-1, :2]
+            fraction = (distance - cum[i - 1]) / max(cum[i] - cum[i - 1], 1e-12)
+            return raw[i - 1, :2] + fraction * (raw[i, :2] - raw[i - 1, :2])
+
+        # Plan vertices and the profile's own samples: long tangents through vertical curves need the
+        # profile stations too, or the line would cut straight through crests and sags.
+        stations = sorted({start, end, *(s0 + d for d in cum if start < s0 + d < end),
+                           *(station for station, _z in prof if start < station < end),
+                           *(np.arange(start, end, max_step)[1:] if max_step else ())})
+        levels = np.interp(stations, [station for station, _z in prof], [z for _s, z in prof])
+        stored = np.asarray([[*xy_at(station), level] for station, level in zip(stations, levels)], dtype=float)
+        out.append((name, start, end, stored))
+        if start > s0 or end < s0 + cum[-1]:
+            warn(f"Created partial 3D centerline '{name}' from station {start:.3f} to {end:.3f}; "
+                 "the profile does not cover the remaining alignment.")
+        if progress:
+            progress((ai + 1) / max(1, len(parts_all)))
+    return out
+
+
 class Centerline3DAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
     def createInstance(self):
         return Centerline3DAlgorithm()
@@ -665,114 +765,15 @@ class Centerline3DAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         ):
             fields.append(QgsField(n, FIELD_STRING, len=ln))
         sink, dest = _sink(self, p, c, fields, QgsWkbTypes.Type.LineStringZ)
-        root = load_document(path).root
-        # Build sampled vertical profiles keyed by alignment name. ProfAlign
-        # is a flat PVI/ParaCurve/CircCurve sequence -- see landxml.profile.
-        # A ProfAlign's own `name` is a profile label (e.g. "frl" = finish
-        # road level), not the owning alignment's name: real LandXML nests
-        # <Profile><ProfAlign> inside the <Alignment> it belongs to, it does
-        # not cross-reference it by an `alignment=` attribute equal to a
-        # ProfAlign name. Associate by walking each Alignment's own subtree
-        # first; fall back to an explicit alignment= reference if an exporter
-        # uses that pattern instead.
-        profiles = {}
-        for a_el in descendants(root, "Alignment"):
-            key = a_el.attrib.get("name", "")
-            if key in profiles:
-                continue
-            pa = first_descendant(a_el, "ProfAlign")
-            if pa is not None:
-                samples = read_vertical_profile(pa, seg)
-                if samples:
-                    profiles[key] = samples
-        for prof in descendants(root, "ProfAlign"):
-            ref = prof.attrib.get("alignment")
-            if ref and ref not in profiles:
-                samples = read_vertical_profile(prof, seg)
-                if samples:
-                    profiles[ref] = samples
-
-        def z_at(samples, sta):
-            if not samples or sta < samples[0][0] or sta > samples[-1][0]:
-                return None
-            for i in range(1, len(samples)):
-                st0, z0 = samples[i - 1]
-                st1, z1 = samples[i]
-                if sta <= st1:
-                    q = (sta - st0) / max(st1 - st0, 1e-12)
-                    return z0 + q * (z1 - z0)
-            return samples[-1][1]
-
-        parts_all = _alignment_parts(path, seg, alignment_filter)
-        for ai, (name, desc, sta0, sta1, parts, unsupported, distances) in enumerate(
-            parts_all
-        ):
-            if fb.isCanceled():
-                break
-            pts = []
-            for part in parts:
-                if pts and part and pts[-1] == part[0]:
-                    pts.extend(part[1:])
-                else:
-                    pts.extend(part)
-            if len(pts) < 2:
-                continue
-            import numpy as np
-
-            raw = np.asarray([[x, y, 0] for x, y in pts], dtype=float)
-            cum = list(distances)
-            if not sta0:
-                fb.pushWarning(
-                    f"Skipped 3D centerline '{name}': alignment start station is missing."
-                )
-                continue
-            s0 = float(sta0)
-            prof = profiles.get(name)
-            if not prof:
-                fb.pushWarning(
-                    f"Skipped 3D centerline '{name}': no matching vertical profile; Z was not fabricated."
-                )
-                continue
-            start = max(s0, prof[0][0])
-            end = min(s0 + cum[-1], prof[-1][0])
-            if end <= start:
-                fb.pushWarning(
-                    f"Skipped 3D centerline '{name}': profile does not overlap the alignment station range."
-                )
-                continue
-
-            def xy_at(station):
-                distance = station - s0
-                i = max(1, bisect_left(cum, distance))
-                if i >= len(cum):
-                    return raw[-1, :2]
-                fraction = (distance - cum[i - 1]) / max(
-                    cum[i] - cum[i - 1], 1e-12
-                )
-                return raw[i - 1, :2] + fraction * (raw[i, :2] - raw[i - 1, :2])
-
-            stations = [start]
-            stations.extend(s0 + d for d in cum if start < s0 + d < end)
-            stations.append(end)
-            clipped = np.asarray(
-                [[*xy_at(station), 0] for station in stations], dtype=float
-            )
-            z = [z_at(prof, station) for station in stations]
-            arr = transform_vertices(clipped, method=m, **tp)
-            xy = arr[:, :2]
-            points3 = [
-                QgsPoint(float(x), float(y), float(zz)) for (x, y), zz in zip(xy, z)
-            ]
+        lines = centerlines_3d(path, seg, alignment_filter, fb.pushWarning, fb.isCanceled,
+                               lambda fraction: fb.setProgress(int(100 * fraction)))
+        for name, start, end, stored in lines:
+            arr = transform_vertices(stored, method=m, **tp)
+            points3 = [QgsPoint(float(x), float(y), float(zz)) for x, y, zz in arr]
             feat = QgsFeature(fields)
             feat.setGeometry(QgsGeometry.fromPolyline(points3))
             feat.setAttributes([name, str(start), str(end), "Vertical profile"])
             sink.addFeature(feat)
-            if start > s0 or end < s0 + cum[-1]:
-                fb.pushWarning(
-                    f"Created partial 3D centerline '{name}' from station {start:.3f} to {end:.3f}; "
-                    "the profile does not cover the remaining alignment."
-                )
-            fb.setProgress(int(100 * (ai + 1) / max(1, len(parts_all))))
         attach_post_processor(c, dest, source_path=path)
         self.set_output_style(dest, "centerlines_3d")
         return {"OUTPUT": dest}
@@ -978,10 +979,8 @@ class StationPointsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                     f"Skipped station points for '{name}': start station is missing."
                 )
                 continue
-            pts = []
-            for part in parts:
-                pts.extend(part[1:] if pts and part and pts[-1] == part[0] else part)
-            if len(pts) < 2:
+            pts = merge_parts(parts)
+            if len(pts) < 2 or len(pts) != len(distances):
                 continue
             import numpy as np
 

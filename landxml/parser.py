@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 import os
+import weakref
 
 from .. import safe_xml
 from .common import child, descendants, first_descendant, local_name
 from .detection import detect_vendor
+from . import tin_stream
 
 
 def _units(root):
@@ -22,8 +24,10 @@ def _units(root):
         return None, None, ["LandXML Units has no Imperial or Metric declaration."]
     found = set()
     for item in unit_nodes:
+        # Some writers declare the vertical unit as elevationUnit; verticalLinearUnit wins when both are present.
         found.add(
-            (item.attrib.get("linearUnit"), item.attrib.get("verticalLinearUnit"))
+            (item.attrib.get("linearUnit"),
+             item.attrib.get("verticalLinearUnit") or item.attrib.get("elevationUnit"))
         )
     if len(found) > 1:
         return None, None, ["LandXML has conflicting unit declarations."]
@@ -54,34 +58,48 @@ def _crs(root):
     return "CoordinateSystem present without a recognized identifier"
 
 
-def _bounds(root):
+def _bounds(root, path=None):
+    """Raw plan bounds and elevation range of every stored coordinate, in one pass over the tree."""
     xs, ys, zs = [], [], []
-    for item in descendants(root, "P"):
-        parts = (item.text or "").split()
-        if len(parts) >= 3:
-            try:
-                x, y, z = map(float, parts[:3])
-            except ValueError:
-                continue
-            if all(math.isfinite(v) for v in (x, y, z)):
-                xs.append(x)
-                ys.append(y)
-                zs.append(z)
-    for item in descendants(root, "PntList3D"):
-        values = (item.text or "").split()
-        if len(values) % 3:
+    if path:                                   # TIN points kept out of the light tree
+        for pnts in descendants(root, "Pnts"):
+            span = tin_stream.span_of(pnts)
+            extent = tin_stream.points_extent(path, span) if span else None
+            if extent:
+                xs += [extent[0], extent[3]]
+                ys += [extent[1], extent[4]]
+                zs += [extent[2], extent[5]]
+    planar = {"Start", "End", "PI", "Center"}
+    for item in root.iter():
+        tag = item.tag
+        if not isinstance(tag, str):
             continue
-        for index in range(0, len(values), 3):
-            try:
-                x, y, z = map(float, values[index : index + 3])
-            except ValueError:
+        name = tag.rsplit("}", 1)[-1]
+        if name == "P":
+            parts = (item.text or "").split()
+            if len(parts) >= 3:
+                try:
+                    x, y, z = map(float, parts[:3])
+                except ValueError:
+                    continue
+                if math.isfinite(x) and math.isfinite(y) and math.isfinite(z):
+                    xs.append(x)
+                    ys.append(y)
+                    zs.append(z)
+        elif name == "PntList3D":
+            values = (item.text or "").split()
+            if len(values) % 3:
                 continue
-            if all(math.isfinite(value) for value in (x, y, z)):
-                xs.append(x)
-                ys.append(y)
-                zs.append(z)
-    for tag in ("Start", "End", "PI", "Center"):
-        for item in descendants(root, tag):
+            for index in range(0, len(values), 3):
+                try:
+                    x, y, z = map(float, values[index : index + 3])
+                except ValueError:
+                    continue
+                if math.isfinite(x) and math.isfinite(y) and math.isfinite(z):
+                    xs.append(x)
+                    ys.append(y)
+                    zs.append(z)
+        elif name in planar:
             parts = (item.text or "").split()
             if len(parts) >= 2:
                 try:
@@ -110,9 +128,25 @@ class LandXMLDocument:
     vertical_unit: str | None
     declared_crs: str | None
     warnings: list[str]
+    skeleton: bool = False       # TIN point/face contents are read from disk on demand
 
     def surfaces(self):
         return list(descendants(self.root, "Surface"))
+
+    def tin_spans(self, surface):
+        """Byte spans (points, faces) of a surface read from disk, or None when held in the tree."""
+        pnts = first_descendant(surface, "Pnts")
+        faces = first_descendant(surface, "Faces")
+        a, b = tin_stream.span_of(pnts), tin_stream.span_of(faces)
+        return (a, b) if a and b else None
+
+    def _count(self, element, tag):
+        if element is None:
+            return 0
+        span = tin_stream.span_of(element)
+        if span:
+            return tin_stream.count_elements(self.path, span)
+        return len(list(descendants(element, tag)))
 
     def alignments(self):
         return list(descendants(self.root, "Alignment"))
@@ -153,7 +187,7 @@ class LandXMLDocument:
         except ValueError as exc:
             maps = {}
             equation_error = str(exc)
-        bounds, elevations = _bounds(self.root)
+        bounds, elevations = _bounds(self.root, self.path if self.skeleton else None)
         surfaces = []
         for surface in self.surfaces():
             points = first_descendant(surface, "Pnts")
@@ -162,12 +196,8 @@ class LandXMLDocument:
                 {
                     "name": surface.attrib.get("name"),
                     "description": surface.attrib.get("desc"),
-                    "points": len(list(descendants(points, "P")))
-                    if points is not None
-                    else 0,
-                    "triangles": len(list(descendants(faces, "F")))
-                    if faces is not None
-                    else 0,
+                    "points": self._count(points, "P"),
+                    "triangles": self._count(faces, "F"),
                     "breaklines": len(list(descendants(surface, "Breakline"))),
                     "feature_lines": len(list(descendants(surface, "FeatureLine"))),
                     "explicit_boundaries": len(list(descendants(surface, "Boundary"))),
@@ -239,10 +269,31 @@ class LandXMLDocument:
         }
 
 
-def load_document(path: str) -> LandXMLDocument:
-    """Parse a LandXML file safely and expose only source-backed metadata."""
+def _parse_light(path):
+    """Parse everything except the contents of TIN <Pnts>/<Faces> blocks (None if not possible)."""
+    reader = tin_stream.open_skeleton(path)
+    if reader is None:
+        return None
     try:
-        root = safe_xml.parse_root(path)
+        return safe_xml.parse(reader).getroot()
+    except safe_xml.ParseError:
+        return None                                  # the full parse will report the real error
+    finally:
+        reader.close()
+
+
+def _load_document(path: str, full: bool = False) -> LandXMLDocument:
+    """Parse a LandXML file safely and expose only source-backed metadata.
+
+    By default the contents of TIN point and face blocks are not loaded into the tree
+    (they can be gigabytes); ``read_tin`` streams them from disk. Pass ``full=True``
+    when every ``<P>`` and ``<F>`` node is needed in the tree.
+    """
+    try:
+        root = None if full else _parse_light(path)
+        skeleton = root is not None
+        if root is None:
+            root = safe_xml.parse_root(path)
     except (OSError, safe_xml.ParseError, safe_xml.UnsafeXmlError) as exc:
         raise ValueError(f"Cannot parse LandXML file '{path}': {exc}") from exc
     if local_name(root.tag) != "LandXML":
@@ -269,4 +320,31 @@ def load_document(path: str) -> LandXMLDocument:
         vertical,
         _crs(root),
         warnings,
+        skeleton,
     )
+
+
+# Documents still in use are shared: one algorithm often opens the same file several times
+# (coordinate checks, alignments, profiles). Entries vanish when no caller holds the document,
+# so nothing stays in memory after a run; a changed file (size or modification time) is re-read.
+_OPEN_DOCUMENTS = weakref.WeakValueDictionary()
+
+
+def load_document(path: str, full: bool = False) -> LandXMLDocument:
+    """Parse a LandXML file safely and expose only source-backed metadata.
+
+    By default the contents of TIN point and face blocks are not loaded into the tree
+    (they can be gigabytes); ``read_tin`` streams them from disk. Pass ``full=True``
+    when every ``<P>`` and ``<F>`` node is needed in the tree. A document still held by
+    another caller is returned again while the file is unchanged; treat it as read-only.
+    """
+    try:
+        info = os.stat(path)
+        key = (os.path.realpath(path), info.st_size, info.st_mtime_ns, bool(full))
+    except OSError:
+        return _load_document(path, full)
+    document = _OPEN_DOCUMENTS.get(key)
+    if document is None or document.path != path:
+        document = _load_document(path, full)
+        _OPEN_DOCUMENTS[key] = document
+    return document

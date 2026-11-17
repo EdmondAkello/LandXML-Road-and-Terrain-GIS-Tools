@@ -111,9 +111,32 @@ def _volume_unit(algorithm, parameters, context):
     return VOLUME_UNITS[index]
 
 
-def _quantity_units(document, feedback, horizontal=None, allow_mixed=False, volume_unit="auto"):
+VERTICAL_UNITS = [("As declared in the file", None), ("Metre", "meter"), ("International foot", "foot"),
+                  ("US survey foot", "USSurveyFoot")]
+
+
+def _vertical_unit_param(algorithm):
+    algorithm.addParameter(QgsProcessingParameterEnum(
+        "VERTICAL_UNIT", "Vertical (elevation) unit — choose when the file does not declare it",
+        options=[name for name, _unit in VERTICAL_UNITS], defaultValue=0))
+
+
+def _chosen_vertical(algorithm, parameters, context):
+    """The vertical unit chosen by the user (None: as declared). Never inferred."""
+    if "VERTICAL_UNIT" not in parameters:
+        return None
+    return VERTICAL_UNITS[algorithm.parameterAsEnum(parameters, "VERTICAL_UNIT", context)][1]
+
+
+def _quantity_units(document, feedback, horizontal=None, allow_mixed=False, volume_unit="auto", vertical=None):
+    from .landxml.quantity_units import LINEAR_UNITS
+
+    declared = document.vertical_unit
+    if declared and vertical and LINEAR_UNITS.get(declared.lower()) != LINEAR_UNITS.get(vertical.lower()):
+        raise QgsProcessingException(f"The file declares the vertical unit '{declared}', but '{vertical}' was chosen. "
+                                     "Leave Vertical unit as declared, or fix the file with Prepare LandXML.")
     try:
-        units = quantity_units(horizontal or document.horizontal_unit, document.vertical_unit, allow_mixed, volume_unit)
+        units = quantity_units(horizontal or document.horizontal_unit, declared or vertical, allow_mixed, volume_unit)
     except ValueError as exc:
         raise QgsProcessingException(str(exc)) from exc
     feedback.pushInfo(f"Earthwork units: volumes and mass ordinates {units.volume}; lengths {units.length}; "
@@ -326,6 +349,7 @@ class ProfileCutFillAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(name_param("DESIGN_PROFILE", "Design profile (blank = first ProfAlign)", "profiles"))
         self.addParameter(name_param("GROUND_PROFILE", "Existing-ground profile (blank = longest ProfSurf)", "surface_profiles"))
         self.addParameter(_volume_parameter())
+        _vertical_unit_param(self)
         self.addParameter(number_param("INTERVAL", "Table station interval", 20, 0.01, 100000, decimals=2))
         self.addParameter(number_param("TOLERANCE", "On-grade tolerance (vertical units)", 0, 0, 100, decimals=3))
         self.addParameter(number_param("HIGH_FILL", "Flag fills deeper than", 3, 0, 1000, decimals=2))
@@ -391,8 +415,8 @@ class ProfileCutFillAlgorithm(ProjectSettingsAlgorithm):
         cut_slope = self.parameterAsDouble(p, "CUT_SLOPE", c)
         map_requested = bool(p.get("SEGMENTS") or p.get("TRANSITIONS"))
         volume_unit = _volume_unit(self, p, c)
-        units = _quantity_units(doc, fb, volume_unit=volume_unit) if width > 0 else None
-        if not doc.vertical_unit:
+        units = _quantity_units(doc, fb, volume_unit=volume_unit, vertical=_chosen_vertical(self, p, c)) if width > 0 else None
+        if not doc.vertical_unit and not _chosen_vertical(self, p, c):
             fb.pushWarning("Vertical unit is undeclared; depths are reported in the source elevation numbers.")
 
         results = []
@@ -568,7 +592,7 @@ class ProfileCutFillAlgorithm(ProjectSettingsAlgorithm):
         if report:
             _write_text(
                 report,
-                profile_report_html(results, doc.horizontal_unit, doc.vertical_unit, os.path.basename(path), volume_unit, doc.station_maps()),
+                profile_report_html(results, doc.horizontal_unit, (doc.vertical_unit or _chosen_vertical(self, p, c)), os.path.basename(path), volume_unit, doc.station_maps()),
             )
             outputs["REPORT"] = report
         outputs["ALIGNMENT_COUNT"] = len(results)
@@ -626,6 +650,7 @@ class CorridorQuantitiesAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(name_param("ALIGNMENT", "Alignment (blank = all with cross-sections)", "alignments"))
         self.addOutput(QgsProcessingOutputString("VOLUME_UNIT", "Volume unit (CY, CF or m³)"))
         self.addParameter(_volume_parameter())
+        _vertical_unit_param(self)
         self.addParameter(name_param("GROUND_SURFACE", "Existing-ground section surface (blank = detect)", "section_surfaces"))
         self.addParameter(name_param("DESIGN_SURFACE", "Design section surface (blank = detect)", "section_surfaces"))
         self.addParameter(name_param("DESIGN_PROFILE", "Design profile for Datum elevations (blank = first ProfAlign)", "design_profiles"))
@@ -691,7 +716,7 @@ class CorridorQuantitiesAlgorithm(ProjectSettingsAlgorithm):
             )
         fb.pushInfo(f"Section surfaces: {', '.join(surface_names) or 'none'}; shapes: {', '.join(shape_names) or 'none'}.")
         volume_unit = _volume_unit(self, p, c)
-        units = _quantity_units(doc, fb, volume_unit=volume_unit)
+        units = _quantity_units(doc, fb, volume_unit=volume_unit, vertical=_chosen_vertical(self, p, c))
         ground_override = _resolve(surface_names, ground_override, "ground section surface") or ""
         design_override = _resolve(surface_names, design_override, "design section surface") or ""
         refs = roadway_surface_refs(doc.root)
@@ -954,7 +979,7 @@ class CorridorQuantitiesAlgorithm(ProjectSettingsAlgorithm):
 
         report = self.parameterAsFileOutput(p, "REPORT", c)
         if report:
-            _write_text(report, corridor_report_html(results, doc.horizontal_unit, os.path.basename(path), doc.vertical_unit, volume_unit, doc.station_maps()))
+            _write_text(report, corridor_report_html(results, doc.horizontal_unit, os.path.basename(path), (doc.vertical_unit or _chosen_vertical(self, p, c)), volume_unit, doc.station_maps()))
             outputs["REPORT"] = report
         totals = [item["quantities"]["totals"] for item in results]
         outputs.update(
@@ -1001,6 +1026,7 @@ class SurfaceCutFillAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(name_param("BASE_SURFACE", "Base (existing) surface (blank = detect)", "surfaces"))
         self.addOutput(QgsProcessingOutputString("VOLUME_UNIT", "Volume unit (CY, CF or m³)"))
         self.addParameter(_volume_parameter())
+        _vertical_unit_param(self)
         self.addParameter(name_param("COMPARE_SURFACE", "Comparison (design) surface (blank = detect)", "surfaces"))
         self.addParameter(number_param("RESOLUTION", "Grid cell size (output CRS units)", 1, 0.01, 10000, decimals=3))
         self.addParameter(number_param("GRID_WARNING", "Warn above grid size (million cells; 0 = disable)", 250, 0, 1e9, decimals=3))
@@ -1021,7 +1047,8 @@ class SurfaceCutFillAlgorithm(ProjectSettingsAlgorithm):
         if horizontal is None:
             raise QgsProcessingException("Surface earthwork volumes require an output CRS in metres, feet or US survey feet.")
         volume_unit = _volume_unit(self, p, c)
-        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=volume_unit)
+        units = _quantity_units(doc, fb, horizontal, allow_mixed=True, volume_unit=volume_unit,
+                                vertical=_chosen_vertical(self, p, c))
         catalog = read_catalog(path)
         base_name = _resolve(catalog.surfaces, self.parameterAsString(p, "BASE_SURFACE", c), "base surface")
         compare_name = _resolve(catalog.surfaces, self.parameterAsString(p, "COMPARE_SURFACE", c), "comparison surface")
@@ -1040,11 +1067,19 @@ class SurfaceCutFillAlgorithm(ProjectSettingsAlgorithm):
         resolution = self.parameterAsDouble(p, "RESOLUTION", c)
         nodata = self.parameterAsDouble(p, "NODATA", c)
         surfaces = []
+        first_bounds = None
         for name in (base_name, compare_name):
             try:
-                xyz, faces, meta = read_tin(path, name, cancel=fb.isCanceled)
+                # Cells outside the first surface are no data, so the second is read only where it can matter.
+                xyz, faces, meta = read_tin(path, name, cancel=fb.isCanceled, bounds=first_bounds)
             except ValueError as exc:
-                raise QgsProcessingException(str(exc)) from exc
+                raise QgsProcessingException(
+                    f"'{name}' does not overlap '{base_name}'." if first_bounds else str(exc)) from exc
+            if first_bounds is None:
+                first_bounds = meta["bounds"]
+            if meta.get("cropped"):
+                fb.pushInfo(f"{name}: read {meta['face_count']:,} of {meta['source_face_count']:,} triangles "
+                            f"where it overlaps '{base_name}'.")
             if meta["invisible_face_count"]:
                 fb.pushInfo(f"{name}: skipped {meta['invisible_face_count']:,} invisible triangles.")
             surfaces.append((transform_vertices(xyz, method=method, **params), faces))
@@ -1085,7 +1120,7 @@ class SurfaceCutFillAlgorithm(ProjectSettingsAlgorithm):
             _write_text(
                 report,
                 surface_report_html(
-                    stats, base_name, compare_name, resolution, horizontal, civil3d, os.path.basename(path), doc.vertical_unit, volume_unit
+                    stats, base_name, compare_name, resolution, horizontal, civil3d, os.path.basename(path), (doc.vertical_unit or _chosen_vertical(self, p, c)), volume_unit
                 ),
             )
         limit = max(stats["max_cut"], stats["max_fill"], 0.01)

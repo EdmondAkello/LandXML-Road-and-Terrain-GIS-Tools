@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import io
 import math
 import os
+import re
 import tempfile
 import xml.etree.ElementTree as ET  # nosec B405 - builds nodes; parsing uses hardened safe_xml
 
+import numpy as np
 from qgis.core import QgsCoordinateReferenceSystem
 
 from .. import safe_xml
-from ..core import read_tin
+from . import tin_stream
+from ..core import crop_tin, read_tin
 from .catalog import match_name
 from .common import child, descendants, local_name
 from .corridor import guess_surfaces, read_corridor_sections, roadway_surface_refs
@@ -26,8 +30,85 @@ MARKER = "LandXMLTools.Prepare"
 UNITS = {"meter": "meter", "metre": "meter", "foot": "foot", "internationalfoot": "foot", "ussurveyfoot": "usSurveyFoot"}
 
 
+SOURCE_ATTRIBUTE = "landxmltools_source"
+_SPLICE = re.compile(rb"@@LANDXMLTOOLS-SPLICE-(\d+)@@")
+_ENCODING = re.compile(rb"""encoding\s*=\s*["']([A-Za-z0-9._-]+)["']""")
+_PREFIXED = re.compile(rb"<\s*[A-Za-z_][\w.-]*:")
+
+
+def _builder():
+    return ET.TreeBuilder(insert_comments=True, insert_pis=True)
+
+
 def read_tree(path):
-    return safe_xml.parse(path, builder=ET.TreeBuilder(insert_comments=True, insert_pis=True)).getroot()
+    """The file as a tree for rewriting. TIN ``Pnts``/``Faces``/``Contours`` contents are left in
+    the file (the elements carry their byte span), so a multi-gigabyte survey costs no memory;
+    ``_write_tree`` copies those bytes back unchanged. Files where that is not safe (UTF-16,
+    a non-UTF-8 declared encoding, or prefixed elements inside the blocks) are parsed whole."""
+    with open(path, "rb") as probe:
+        head = probe.read(512)
+    declared = _ENCODING.search(head.split(b"?>", 1)[0]) if head.lstrip().startswith(b"<?xml") else None
+    encoding = declared.group(1).decode("ascii").lower().replace("_", "-") if declared else "utf-8"
+    reader = tin_stream.open_skeleton(path) if encoding in ("utf-8", "utf8", "us-ascii", "ascii") else None
+    if reader is None:
+        return safe_xml.parse(path, builder=_builder()).getroot()
+    try:
+        root = safe_xml.parse(reader, builder=_builder()).getroot()
+    finally:
+        reader.close()
+    spans = [node for node in root.iter() if isinstance(node.tag, str) and tin_stream.SPAN_ATTRIBUTE in node.attrib]
+    with open(path, "rb") as stream:
+        for node in spans:
+            start, _end = tin_stream.span_of(node)
+            stream.seek(start)
+            if _PREFIXED.search(stream.read(4096)):
+                return safe_xml.parse(path, builder=_builder()).getroot()
+            node.set(SOURCE_ATTRIBUTE, path)
+    return root
+
+
+def _write_tree(root, stream):
+    """Serialize ``root`` to the binary ``stream``, copying elided TIN blocks from their source files."""
+    splices = []
+    for node in root.iter():
+        if not isinstance(node.tag, str):
+            continue
+        span = node.attrib.pop(tin_stream.SPAN_ATTRIBUTE, None)
+        source = node.attrib.pop(SOURCE_ATTRIBUTE, None)
+        if span and source:
+            start, end = (int(value) for value in span.split(":"))
+            node.text = f"@@LANDXMLTOOLS-SPLICE-{len(splices)}@@"
+            splices.append((source, start, end))
+    if not splices:
+        ET.ElementTree(root).write(stream, encoding="utf-8", xml_declaration=True)
+        return
+    buffer = io.BytesIO()
+    ET.ElementTree(root).write(buffer, encoding="utf-8", xml_declaration=True)
+    data = buffer.getvalue()
+    pieces = _SPLICE.split(data)
+    if len(pieces) != 2 * len(splices) + 1:
+        raise ValueError("Could not write the prepared file: a TIN block marker is ambiguous.")
+    handles = {}
+    try:
+        for k, piece in enumerate(pieces):
+            if k % 2 == 0:
+                stream.write(piece)
+                continue
+            source, start, end = splices[int(piece)]
+            if source not in handles:
+                handles[source] = open(source, "rb")
+            handle = handles[source]
+            handle.seek(start)
+            remaining = end - start
+            while remaining:
+                chunk = handle.read(min(remaining, 8 << 20))
+                if not chunk:
+                    raise ValueError(f"'{os.path.basename(source)}' changed while it was being prepared.")
+                stream.write(chunk)
+                remaining -= len(chunk)
+    finally:
+        for handle in handles.values():
+            handle.close()
 
 
 def metadata(node):
@@ -213,7 +294,21 @@ def prepare_landxml(path, output, terrains, alignment, profile_interval, section
                 primary_surfaces.append(copied)
         if info["invisible_face_count"]:
             feedback.pushInfo(f"{name}: excluded {info['invisible_face_count']:,} hidden triangles.")
-        sources.append((role, target_name, name, digest, TinSampler(vertices, faces, feedback)))
+        sampled_vertices, sampled_faces = vertices, faces
+        if len(faces) > 50_000:
+            # Only triangles near the alignments can be sampled; indexing the rest of a large terrain is wasted work.
+            xs = np.concatenate([np.asarray(record["points"], float)[:, 0] for record in records])
+            ys = np.concatenate([np.asarray(record["points"], float)[:, 1] for record in records])
+            margin = max(left, right) * 1.05 + 10.0
+            try:
+                sampled_vertices, sampled_faces = crop_tin(
+                    vertices, faces, (xs.min() - margin, ys.min() - margin, xs.max() + margin, ys.max() + margin))
+            except ValueError:
+                pass  # no overlap: the sampler reports the coverage gaps as before
+            else:
+                if len(sampled_faces) < len(faces):
+                    feedback.pushInfo(f"{name}: indexing {len(sampled_faces):,} of {len(faces):,} triangles near the alignments.")
+        sources.append((role, target_name, name, digest, TinSampler(sampled_vertices, sampled_faces, feedback)))
     if len(sources) == 2 and sources[0][1] == sources[1][1]:
         raise ValueError("Existing and proposed terrain must be different surfaces.")
     usable = 0
@@ -328,7 +423,7 @@ def prepare_landxml(path, output, terrains, alignment, profile_interval, section
             ET.register_namespace("", root.tag[1:].split("}")[0])
         with tempfile.NamedTemporaryFile(mode="wb", dir=os.path.dirname(os.path.abspath(output)), suffix=".xml", delete=False) as stream:
             temporary = stream.name
-            ET.ElementTree(root).write(stream, encoding="utf-8", xml_declaration=True)
+            _write_tree(root, stream)
         load_document(temporary)
         if feedback.isCanceled():
             raise RuntimeError("LandXML preparation cancelled.")

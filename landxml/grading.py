@@ -312,8 +312,8 @@ def _inside(point, ring):
     return bool(np.count_nonzero(crosses) % 2)
 
 
-def outline_polygons(xyz, faces):
-    """Plan outline of a set of triangles as [(outer ring, [holes]), ...]; rings are (n, 2) arrays."""
+def outline_polygons(xyz, faces, dims=2):
+    """Plan outline of a set of triangles as [(outer ring, [holes]), ...]; rings are (n, ``dims``) arrays."""
     faces = _oriented_faces(xyz, faces)
     directed = _edge_keys(faces)
     span = int(faces.max()) + 1
@@ -339,13 +339,13 @@ def outline_polygons(xyz, faces):
             ring.append(nxt)
             vertex = nxt
         if len(ring) >= 3:
-            rings.append(xyz[ring, :2])
-    outers = [ring for ring in rings if _ring_area(ring) > 0]
-    holes = [ring for ring in rings if _ring_area(ring) < 0]
-    polygons = [(outer, []) for outer in sorted(outers, key=_ring_area, reverse=True)]
+            rings.append(xyz[ring, :dims])
+    outers = [ring for ring in rings if _ring_area(ring[:, :2]) > 0]
+    holes = [ring for ring in rings if _ring_area(ring[:, :2]) < 0]
+    polygons = [(outer, []) for outer in sorted(outers, key=lambda r: _ring_area(r[:, :2]), reverse=True)]
     for hole in holes:
-        for outer, inner in sorted(polygons, key=lambda item: _ring_area(item[0])):
-            if _inside(hole.mean(axis=0) if len(hole) < 3 else hole[0], outer):
+        for outer, inner in sorted(polygons, key=lambda item: _ring_area(item[0][:, :2])):
+            if _inside(hole[:, :2].mean(axis=0) if len(hole) < 3 else hole[0, :2], outer[:, :2]):
                 inner.append(hole)
                 break
     return polygons
@@ -404,6 +404,7 @@ def platform_summary(xyz, faces, vertical_factor=1.0, flat=0.02, min_fall=0.005,
             "below_min_fall": fall < min_fall,
             "triangles": int(member.sum()),
             "polygons": outline_polygons(xyz, faces[member]) if outlines else [],
+            "members": np.flatnonzero(member),
         })
     platforms.sort(key=lambda item: -item["area"])
     for number, item in enumerate(platforms, 1):
