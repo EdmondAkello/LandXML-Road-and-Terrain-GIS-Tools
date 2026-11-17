@@ -45,6 +45,85 @@ def _ribbon(pv, points, width, ve, lift):
     return pv.PolyData(vertices, np.array(faces))
 
 
+LINE_NAMES = {"daylight": "Daylight line", "platform_outline": "Platform outline", "retained_edge": "Retained edge",
+              "batter_edge": "Batter", "road": "Road", "alignment": "Alignment", "feature_line": "Feature line",
+              "breakline": "Breakline", "contour": "Contour", "section": "Cross-section"}
+
+
+def _font(size):
+    from PIL import ImageFont
+
+    for name in ("DejaVuSans.ttf", "Arial.ttf", "arial.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _compose(scene, view, image, path):
+    """The 3D image with a side panel: compass, legend of the styled surfaces and line kinds, notes.
+    Nothing is drawn over the model."""
+    from PIL import Image, ImageDraw
+
+    height, width = image.shape[:2]
+    panel = max(int(width * 0.24), 360)
+    sheet = Image.new("RGB", (width + panel, height), "white")
+    sheet.paste(Image.fromarray(image[:, :, :3]), (0, 0))
+    draw = ImageDraw.Draw(sheet)
+    x0, unit = width + 30, max(height // 60, 14)
+    draw.line([(width, 0), (width, height)], fill="#bbbbbb", width=2)
+    # compass: north as seen from this camera (bearing of the view direction, looking from camera to target)
+    look = -np.asarray(view["direction"], float)
+    bearing = np.degrees(np.arctan2(look[0], look[1]))
+    angle = np.radians(-bearing)          # north, clockwise from screen-up
+
+    def at(a, radius):
+        return (cx + radius * np.sin(a), cy - radius * np.cos(a))
+
+    cx, cy, r = x0 + panel // 2 - 30, int(unit * 5.5), int(unit * 3.2)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline="#555555", width=2)
+    draw.polygon([at(angle, r * 0.85), at(angle + 2.6, r * 0.45), (cx, cy), at(angle - 2.6, r * 0.45)], fill="#222222")
+    draw.polygon([at(angle + np.pi, r * 0.85), at(angle + np.pi + 2.6, r * 0.45), (cx, cy),
+                  at(angle + np.pi - 2.6, r * 0.45)], outline="#222222", fill="white")
+    draw.text(at(angle, r + unit), "N", fill="#222222", font=_font(int(unit * 1.4)), anchor="mm")
+    y = cy + r + int(unit * 2.5)
+    title = _font(int(unit * 1.25))
+    text = _font(unit)
+    for surface in scene["surfaces"]:
+        style = surface.get("style") or {}
+        classes = style.get("classes") or []
+        if not classes:
+            continue
+        draw.text((x0, y), surface.get("name") or surface["id"], fill="black", font=title)
+        y += int(unit * 1.8)
+        for item in reversed(classes):
+            draw.rectangle([x0, y, x0 + unit, y + unit], fill=item["color"], outline="#888888")
+            draw.text((x0 + unit * 1.6, y - 1), item["label"], fill="black", font=text)
+            y += int(unit * 1.45)
+        y += unit
+    kinds = []
+    for line in scene["lines"]:
+        if line["kind"] not in [k for k, _c in kinds]:
+            kinds.append((line["kind"], line.get("color", "#333333")))
+    if kinds:
+        draw.text((x0, y), "Lines", fill="black", font=title)
+        y += int(unit * 1.8)
+        for kind, color in kinds:
+            draw.line([(x0, y + unit // 2), (x0 + unit * 1.2, y + unit // 2)], fill=color, width=4)
+            draw.text((x0 + unit * 1.6, y - 1), LINE_NAMES.get(kind, kind.replace("_", " ").capitalize()), fill="black", font=text)
+            y += int(unit * 1.45)
+    notes = [f"View: {view['name']}", f"Vertical exaggeration × {scene.get('vertical_exaggeration', 1):g}"]
+    crs = (scene.get("crs") or {}).get("authid")
+    if crs:
+        notes.append(f"CRS: {crs}")
+    y = height - int(unit * 1.5) * len(notes) - unit
+    for note in notes:
+        draw.text((x0, y), note, fill="#555555", font=text)
+        y += int(unit * 1.5)
+    sheet.save(path)
+
+
 def render(folder, size=(2400, 1600), only=None, out=None):
     import pyvista as pv
 
@@ -84,11 +163,6 @@ def render(folder, size=(2400, 1600), only=None, out=None):
             plotter.add_point_labels([[x, y, (z + float(label.get("lift", 3.0))) * ve]], [label["text"]], font_size=22,
                                      point_size=8, point_color="black", shape_color="#fffde7", text_color="black",
                                      shape_opacity=0.9, always_visible=True, render_points_as_spheres=True)
-        design = next((s for s in scene["surfaces"] if s["role"] == "design"), None)
-        if design and design.get("style"):
-            classes = [c for c in design["style"]["classes"]]
-            plotter.add_legend([[c["label"], c["color"]] for c in classes][::-1], bcolor="white", face="rectangle",
-                               size=(0.13, 0.024 * len(classes)), loc="lower right", font_family="arial")
         target = np.asarray(view["target"], float)
         target[2] *= ve
         direction = np.asarray(view["direction"], float)
@@ -98,8 +172,9 @@ def render(folder, size=(2400, 1600), only=None, out=None):
         plotter.camera.up = (0, 0, 1)
         plotter.camera.view_angle = float(view.get("view_angle", 30.0))
         path = os.path.join(out or folder, f"render_{view['name']}.png")
-        plotter.screenshot(path)
+        image = plotter.screenshot(return_img=True)
         plotter.close()
+        _compose(scene, view, image, path)
         paths.append(path)
     return paths
 
