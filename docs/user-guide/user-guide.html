@@ -503,6 +503,7 @@ a { color: var(--accent); }
 
 <h3 id="scene-viewer">Export 3D Scene and Viewer</h3>
 <p><b>Export 3D Scene and Viewer</b> (Reports and sheets) renders an area in 3D for road or site work. Choose what to show:</p>
+<p><b>On a phone or tablet</b>, open the same <code>viewer.html</code> (send the scene folder, or put it on a shared drive): the model fills the screen and <b>☰ Layers and tools</b> opens the panel as a sheet from the bottom. One finger rotates, two fingers pinch to zoom and pan, and a tap reads the surface. For phones, keep scenes under about 1.5 million triangles (Triangle budget, under Advanced).</p>
 <ul>
 <li><b>Area</b>: a map extent, a polygon layer, or a <b>corridor</b> — an alignment, a width either side and optionally a start and end station. A corridor gets views from its left and right sides and along it instead of compass views. Without an area, the chosen surfaces' extent is used.</li>
 <li><b>LandXML surfaces and styles</b>: <code>name = style</code> separated by semicolons, for example <code>EG = plain #cfd8c4; FG = depth over EG</code>. A surface drawn <code>over</code> another shows its cut and fill against it, and the ground under it is left out so it cannot show through. Styles are those of Surface Classes.</li>

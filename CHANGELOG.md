@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added (viewer on phones and tablets)
+- **The viewer works on phones and tablets.** On narrow screens the model fills the screen and the panel becomes a sheet from the bottom (☰ Layers and tools; `viewer.html#panel` opens it). One finger rotates, two fingers pinch to zoom and move to pan, a tap reads a surface. Saved views step back on portrait screens so the same width fits; the drawing buffer is capped at about 4 million pixels; station ticks give way to the callouts on small screens; a notice suggests a lower triangle budget when a scene is heavy for a phone.
+
 ### Added (choosing instead of typing)
 - **Pickers from the file.** Names that were typed can now be chosen from the LandXML: the 3D scene's corridor alignment (dropdown), synthetic-road alignments and the synthetic ground (checklists, which also list the chosen DEM layers), Earthwork Balance's volume surfaces, and Grading Revision Comparison's second-revision surfaces (read from the second file). The fields stay plain text, so models, scripts and batch runs are unchanged.
 - **Surfaces and styles table.** The 3D scene's *LandXML surfaces and styles* field has an **Edit…** table: surface (from the file), style, and the surface it is drawn over.
