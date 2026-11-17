@@ -591,7 +591,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                          f"along: {-ax:.3f}, {-ay:.3f}, 0.25")
             size = 1.3 * max(np.ptp(focus[:, 0] * ax + focus[:, 1] * ay), 1.0)
         views = parse_views(view_text)
-        writer.views(views, target=(low + high) / 2, size=size * 0.8)   # distance = 1.4 × this
+        writer.views(views, target=(low + high) / 2, size=size * (0.8 if corridor_axis is not None else 1.0))
         scene = writer.write()
         viewer = write_viewer(os.path.dirname(scene), writer.scene, title=title)
         fb.pushInfo(f"Scene: {len(writer.scene['surfaces'])} surfaces ({total:,} triangles), {len(writer.scene['lines']):,} lines, "
