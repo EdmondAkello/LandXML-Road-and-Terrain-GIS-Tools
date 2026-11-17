@@ -43,7 +43,33 @@ PRESETS = {
                           "#e41a1c"],
                "labels": ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"]},
 }
-UNITS = {"elevation": "{v}", "depth": "{v}", "slope": "%", "aspect": "°"}
+UNITS = {"elevation": "{v}", "depth": "{v}", "slope": "%", "aspect": "°", "road": "{v}"}
+ROAD_COLOURS = {"carriageway": "#4b4d50", "shoulder": "#8d8578", "verge": "#93a46e", "batter": "#a68a66",
+                "marking": "#f2f2ee", "centre": "#f2f2ee"}
+
+
+def road_style(carriageway=7.0, shoulder=1.5, lanes=2):
+    """A finished-road style: the viewer paints asphalt, edge and lane lines, a dashed centre line,
+    shoulders and verges from each point's offset from the alignment; batters by slope."""
+    return {"attribute": "road", "carriageway": float(carriageway), "shoulder": float(shoulder), "lanes": int(lanes),
+            "colors": ROAD_COLOURS,
+            "classes": [{"low": None, "high": None, "color": ROAD_COLOURS["carriageway"], "label": f"Carriageway {carriageway:g}"},
+                        {"low": None, "high": None, "color": ROAD_COLOURS["shoulder"], "label": f"Shoulders {shoulder:g}"},
+                        {"low": None, "high": None, "color": ROAD_COLOURS["verge"], "label": "Verge"},
+                        {"low": None, "high": None, "color": ROAD_COLOURS["batter"], "label": "Side slopes"}]}
+
+
+def road_colors(offset, slope, style):
+    """Per-vertex colours of a road surface (for renderers without the viewer's road shader)."""
+    half = style["carriageway"] / 2.0
+    rgb = {key: np.array([int(value[i:i + 2], 16) for i in (1, 3, 5)], np.uint8) for key, value in style["colors"].items()}
+    out = np.empty((len(offset), 3), np.uint8)
+    a = np.abs(np.asarray(offset, float))
+    out[:] = rgb["verge"]
+    out[np.asarray(slope) >= 30.0] = rgb["batter"]
+    out[a <= half + style["shoulder"]] = rgb["shoulder"]
+    out[a <= half] = rgb["carriageway"]
+    return out
 
 
 def triangle_values(xyz, faces, attribute, depth=None, vertical_factor=1.0):
@@ -80,6 +106,8 @@ def _nice(value, step):
 
 def resolve(style, values=None, vertical_unit="m"):
     """Classes of a style as [{"low", "high", "color", "label"}], computing data breaks if asked."""
+    if isinstance(style, dict) and style.get("attribute") == "road":
+        return dict(style, unit=vertical_unit)
     spec = dict(PRESETS.get(style.get("attribute"), {}), **style) if isinstance(style, dict) else dict(PRESETS[style])
     attribute = spec["attribute"]
     breaks = spec.get("breaks") if "classes" not in style else None
@@ -136,6 +164,9 @@ def parse_style(text, attribute=None):
     text = (text or "").strip()
     if not text:
         return dict(PRESETS[attribute or "elevation"])
+    if text.lower().startswith("road"):
+        values = [float(v) for v in text[4:].replace(":", " ").replace(",", " ").split()] if text[4:].strip() else []
+        return road_style(*values[:3]) if values else road_style()
     if text.lower().startswith("plain"):
         color = text[5:].strip() or "#cfd8c4"
         return {"attribute": attribute or "elevation", "breaks": [], "colors": [color], "labels": ["Surface"]}

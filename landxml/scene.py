@@ -1,6 +1,8 @@
 """3D scene export: ``scene.json`` plus binary PLY meshes, for any renderer.
 
-Format ``landxmltools-scene``, version 1. All coordinates are in the output CRS and units
+Format ``landxmltools-scene``, version 2 (version 1 plus optional ``paths``, extra per-vertex PLY
+properties such as ``station`` and ``offset``, the ``road`` style, and ``visible``/``pair`` on surfaces;
+readers ignore what they do not know). All coordinates are in the output CRS and units
 (x east, y north, z up), stored relative to ``origin`` so renderers that use 32-bit floats
 keep millimetre precision. Nothing is exaggerated in the file: ``vertical_exaggeration``
 is the suggested factor for the renderer to apply to z (lifts and label heights are given
@@ -33,7 +35,7 @@ import os
 import numpy as np
 
 FORMAT = "landxmltools-scene"
-VERSION = 1
+VERSION = 2
 DEFAULT_VIEWS = "sw: -0.6, -0.8, 0.55; se: 0.8, -0.5, 0.6"
 LINE_STYLES = {
     "daylight": ("#222222", 2, 0.05),
@@ -61,41 +63,87 @@ def parse_views(text, distance=None):
     return views
 
 
-def write_ply(path, xyz, faces, rgb, depth=None):
-    """Binary little-endian PLY: float x y z depth, uchar red green blue; int32 face lists."""
+BASE_VERTEX = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("depth", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
+PLY_TYPES = {"<f4": "float", "u1": "uchar"}
+
+
+def write_ply(path, xyz, faces, rgb, depth=None, extra=None):
+    """Binary little-endian PLY: float x y z depth, uchar red green blue, then any ``extra`` float
+    properties (name → per-vertex array, e.g. ``station`` and ``offset`` of a road surface); int32 faces."""
     xyz = np.asarray(xyz, np.float32)
     faces = np.asarray(faces, np.int32)
+    extra = extra or {}
     depth = np.full(len(xyz), np.nan, np.float32) if depth is None else np.asarray(depth, np.float32)
-    vertex = np.empty(len(xyz), dtype=[("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("depth", "<f4"),
-                                       ("red", "u1"), ("green", "u1"), ("blue", "u1")])
+    fields = BASE_VERTEX + [(name, "<f4") for name in extra]
+    vertex = np.empty(len(xyz), dtype=fields)
     vertex["x"], vertex["y"], vertex["z"], vertex["depth"] = xyz[:, 0], xyz[:, 1], xyz[:, 2], depth
     vertex["red"], vertex["green"], vertex["blue"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    for name, values in extra.items():
+        vertex[name] = values
     face = np.empty(len(faces), dtype=[("n", "u1"), ("v", "<i4", (3,))])
     face["n"], face["v"] = 3, faces
-    header = ("ply\nformat binary_little_endian 1.0\ncomment landxmltools-scene mesh\n"
-              f"element vertex {len(xyz)}\nproperty float x\nproperty float y\nproperty float z\n"
-              "property float depth\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n"
-              f"element face {len(faces)}\nproperty list uchar int vertex_indices\nend_header\n")
+    header = ["ply", "format binary_little_endian 1.0", "comment landxmltools-scene mesh", f"element vertex {len(xyz)}"]
+    header += [f"property {PLY_TYPES[kind]} {name}" for name, kind in fields]
+    header += [f"element face {len(faces)}", "property list uchar int vertex_indices", "end_header"]
     with open(path, "wb") as stream:
-        stream.write(header.encode("ascii"))
+        stream.write(("\n".join(header) + "\n").encode("ascii"))
         stream.write(vertex.tobytes())
         stream.write(face.tobytes())
 
 
-def read_ply(path):
-    """(xyz, faces, rgb, depth) from a PLY written by ``write_ply`` (for checks and renderers)."""
+def read_ply(path, extras=False):
+    """(xyz, faces, rgb, depth) from a PLY written by ``write_ply``; with ``extras``, also a dict of the
+    extra per-vertex properties."""
     with open(path, "rb") as stream:
         data = stream.read()
     end = data.index(b"end_header\n") + len(b"end_header\n")
     header = data[:end].decode("ascii").splitlines()
     count_v = int(next(line for line in header if line.startswith("element vertex")).split()[-1])
     count_f = int(next(line for line in header if line.startswith("element face")).split()[-1])
-    vertex = np.frombuffer(data, dtype=[("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("depth", "<f4"),
-                                         ("red", "u1"), ("green", "u1"), ("blue", "u1")], count=count_v, offset=end)
+    kinds = {"float": "<f4", "uchar": "u1"}
+    fields, in_vertex = [], False
+    for line in header:
+        if line.startswith("element"):
+            in_vertex = line.startswith("element vertex")
+        elif in_vertex and line.startswith("property "):
+            _p, kind, name = line.split()
+            fields.append((name, kinds[kind]))
+    vertex = np.frombuffer(data, dtype=fields, count=count_v, offset=end)
     face = np.frombuffer(data, dtype=[("n", "u1"), ("v", "<i4", (3,))], count=count_f, offset=end + vertex.nbytes)
     xyz = np.column_stack([vertex["x"], vertex["y"], vertex["z"]]).astype(float)
     rgb = np.column_stack([vertex["red"], vertex["green"], vertex["blue"]])
-    return xyz, face["v"].astype(np.int64), rgb, vertex["depth"].astype(float)
+    result = (xyz, face["v"].astype(np.int64), rgb, vertex["depth"].astype(float))
+    if extras:
+        names = [name for name, _k in fields if name not in dict(BASE_VERTEX)]
+        return (*result, {name: vertex[name].astype(float) for name in names})
+    return result
+
+
+def station_offset(points, path_xy, path_stations, chunk=2_000_000):
+    """Station and offset (positive to the right of the direction of travel) of each plan point
+    against a polyline with stations; the nearest segment decides."""
+    points = np.asarray(points, float)[:, :2]
+    a = np.asarray(path_xy, float)[:-1, :2]
+    b = np.asarray(path_xy, float)[1:, :2]
+    s0 = np.asarray(path_stations, float)[:-1]
+    d = b - a
+    length2 = np.maximum((d ** 2).sum(axis=1), 1e-12)
+    station = np.empty(len(points))
+    offset = np.empty(len(points))
+    step = max(1, chunk // max(len(a), 1))
+    for start in range(0, len(points), step):
+        p = points[start:start + step, None, :]
+        t = np.clip(((p - a) * d).sum(axis=2) / length2, 0.0, 1.0)
+        foot = a + t[..., None] * d
+        dist2 = ((p - foot) ** 2).sum(axis=2)
+        k = np.argmin(dist2, axis=1)
+        rows = np.arange(len(k))
+        tk = t[rows, k]
+        station[start:start + step] = s0[k] + tk * np.sqrt(length2[k])
+        rel = p[:, 0, :] - foot[rows, k]
+        cross = d[k, 0] * rel[:, 1] - d[k, 1] * rel[:, 0]
+        offset[start:start + step] = -np.sign(cross) * np.sqrt(dist2[rows, k])
+    return station, offset
 
 
 class SceneWriter:
@@ -121,7 +169,8 @@ class SceneWriter:
         self._high = np.maximum(self._high, points.max(axis=0))
         return points
 
-    def surface(self, surface_id, name, role, xyz, faces, rgb, resolved_style, depth=None, opacity=1.0, lift=0.0):
+    def surface(self, surface_id, name, role, xyz, faces, rgb, resolved_style, depth=None, opacity=1.0, lift=0.0,
+                extra=None, visible=True, pair=None):
         mesh = f"{surface_id}.ply"
         faces = np.asarray(faces, np.int64)
         used = np.unique(faces)
@@ -130,10 +179,22 @@ class SceneWriter:
             remap[used] = np.arange(len(used))
             xyz, rgb, faces = np.asarray(xyz)[used], np.asarray(rgb)[used], remap[faces]
             depth = None if depth is None else np.asarray(depth)[used]
-        write_ply(os.path.join(self.folder, mesh), self._relative(xyz), faces, rgb, depth)
-        self.scene["surfaces"].append({"id": surface_id, "name": name, "role": role, "mesh": mesh,
-                                       "style": resolved_style, "opacity": opacity, "lift": lift,
-                                       "vertices": int(len(xyz)), "triangles": int(len(faces))})
+            extra = {name: np.asarray(values)[used] for name, values in (extra or {}).items()}
+        write_ply(os.path.join(self.folder, mesh), self._relative(xyz), faces, rgb, depth, extra)
+        item = {"id": surface_id, "name": name, "role": role, "mesh": mesh, "style": resolved_style, "opacity": opacity,
+                "lift": lift, "vertices": int(len(xyz)), "triangles": int(len(faces))}
+        if not visible:
+            item["visible"] = False
+        if pair:
+            item["pair"] = pair            # {"before": [...ids], "after": [...ids]} for the before/after switch
+        self.scene["surfaces"].append(item)
+
+    def path(self, name, points, stations):
+        """A 3D path with stations (alignment at profile level), for drive-throughs and station read-outs."""
+        relative = self._relative(points)
+        self.scene.setdefault("paths", []).append({
+            "name": name, "points": [[round(float(v), 3) for v in point] for point in relative],
+            "stations": [round(float(v), 3) for v in stations]})
 
     def line(self, kind, name, points, properties=None, color=None, width=None, lift=None):
         default = LINE_STYLES.get(kind, ("#333333", 2, 0.1))

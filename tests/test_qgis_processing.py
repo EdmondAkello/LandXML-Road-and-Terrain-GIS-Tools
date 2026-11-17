@@ -699,7 +699,7 @@ class QgisProcessingTests(unittest.TestCase):
             result = algorithm.processAlgorithm(params, self.context, self.feedback)
             scene, folder = load_scene(result["SCENE"])
             self.assertEqual((scene["format"], scene["version"], scene["units"]["vertical"]),
-                             ("landxmltools-scene", 1, "meter"))
+                             ("landxmltools-scene", 2, "meter"))
             self.assertEqual(scene["origin"], [30, 30, 103])
             self.assertEqual(scene["crs"]["authid"], "EPSG:26915")
             self.assertEqual(scene["vertical_exaggeration"], 1.5)
@@ -803,7 +803,7 @@ class QgisProcessingTests(unittest.TestCase):
 
     def test_road_scene_with_surfaces_rasters_contours_and_linework(self):
         from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer
-        from landxml_plugin.landxml.scene import load_scene
+        from landxml_plugin.landxml.scene import load_scene, read_ply
 
         algorithm = self.algorithms["landxml_3d_scene"]
         with tempfile.TemporaryDirectory() as directory:
@@ -819,7 +819,12 @@ class QgisProcessingTests(unittest.TestCase):
             scene, folder = load_scene(result["SCENE"])
             self.assertEqual(scene["title"], "Test road")
             self.assertEqual([(s["id"], s["role"]) for s in scene["surfaces"]],
-                             [("s1", "surface"), ("s2", "design"), ("r1", "raster")])
+                             [("s1", "surface"), ("s2", "design"), ("r1", "raster"), ("s1_under", "existing_under")])
+            under = scene["surfaces"][3]
+            self.assertEqual((under["visible"], under["pair"]), (False, {"before": ["s1_under"], "after": ["s2"]}))
+            (drive_path,) = scene["paths"]
+            self.assertEqual(drive_path["name"], "Main")
+            self.assertAlmostEqual(drive_path["stations"][0], 1000.0, places=6)
             kinds = {line["kind"] for line in scene["lines"]}
             self.assertTrue({"contour", "index_contour", "alignment", "feature_line", "vector"} <= kinds)
             origin = np.array(scene["origin"])
@@ -848,6 +853,17 @@ class QgisProcessingTests(unittest.TestCase):
             ground = read_ply(str(Path(directory) / "part" / next(s["mesh"] for s in stretch["surfaces"] if s["name"] == "EG")))[0]
             self.assertLessEqual(np.ptp(ground[:, 0]), 70.0)    # stations 1050–1080 ± 15 m, whole 10 m cells (full corridor: 100)
             self.assertEqual([v["name"] for v in stretch["views"]], ["left", "right", "along"])
+            # a finished-road surface carries station and offset for the viewer's road painting
+            road = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", SURFACES="EG; Road FG = road: 8, 2, 2",
+                                                   OUTPUT_FOLDER=str(Path(directory) / "road")), self.context, self.feedback)
+            road_scene, road_folder = load_scene(road["SCENE"])
+            surface = next(s for s in road_scene["surfaces"] if s["name"] == "Road FG")
+            self.assertEqual((surface["style"]["attribute"], surface["style"]["carriageway"], surface["style"]["lanes"]), ("road", 8.0, 2))
+            xyz, _faces, rgb, _depth, extra = read_ply(str(Path(road_folder) / surface["mesh"]), extras=True)
+            xyz = xyz + road_scene["origin"]
+            self.assertTrue(np.allclose(extra["station"], 1000 + xyz[:, 0], atol=1e-3))
+            self.assertTrue(np.allclose(extra["offset"], -xyz[:, 1], atol=1e-3))     # right of travel (east) is south
+            self.assertIn("Drive through", Path(road["VIEWER"]).read_text(encoding="utf-8"))
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
 

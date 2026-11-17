@@ -57,6 +57,16 @@
   <div class="row"><span style="flex:1">Vertical exaggeration</span><span id="veval"></span></div>
   <input type="range" id="ve" min="1" max="6" step="0.1">
   <div class="row"><label><input type="checkbox" id="showlabels" checked> Labels</label></div>
+  <div id="beforeafter" style="display:none"><h2>Before / after</h2>
+    <button id="before">Existing ground</button><button id="after">Design</button></div>
+  <div id="drive" style="display:none"><h2>Drive through</h2>
+    <div class="row"><select id="drivepath" style="flex:1"></select></div>
+    <div class="row"><span style="flex:1">Station</span><span id="drivesta"></span></div>
+    <input type="range" id="driveslider" min="0" max="1" step="0.0005" value="0">
+    <div class="row"><button id="driveplay">Play</button><button id="driveexit">Exit</button>
+      <select id="drivespeed" title="Speed"><option value="8">30 km/h</option><option value="14" selected>50 km/h</option><option value="22">80 km/h</option></select></div>
+    <div class="row"><label><input type="checkbox" id="driverec"> Record video while playing (WebM)</label></div>
+  </div>
   <h2>Views</h2>
   <div id="views"></div>
   <div class="meta" style="margin-top:6px">Current view (paste into the tool's Views):</div>
@@ -123,15 +133,45 @@ function program(vs, fs) {
   return p;
 }
 const meshProgram = program(`#version 300 es
-  in vec3 p; in vec3 n; in vec3 c; uniform mat4 mvp; uniform float ve; uniform float lift;
-  out vec3 vc; out vec3 vn;
-  void main() { vc = c; vn = normalize(vec3(n.x * ve, n.y * ve, n.z)); gl_Position = mvp * vec4(p.x, p.y, (p.z + lift) * ve, 1.0); }`,
+  in vec3 p; in vec3 n; in vec3 c; in vec2 r; uniform mat4 mvp; uniform float ve; uniform float lift;
+  out vec3 vc; out vec3 vn; out vec2 vr; out vec3 vt; out vec2 vw;
+  void main() { vc = c; vr = r; vt = normalize(n); vw = p.xy; vn = normalize(vec3(n.x * ve, n.y * ve, n.z));
+    gl_Position = mvp * vec4(p.x, p.y, (p.z + lift) * ve, 1.0); }`,
   `#version 300 es
-  precision highp float; in vec3 vc; in vec3 vn; uniform float alpha; out vec4 o;
+  precision highp float; in vec3 vc; in vec3 vn; in vec2 vr; in vec3 vt; in vec2 vw; uniform float alpha;
+  uniform int road; uniform vec3 roadW; uniform vec3 cAsphalt; uniform vec3 cShoulder; uniform vec3 cVerge; uniform vec3 cBatter; uniform vec3 cLine; uniform int fogOn; uniform float fogNear; uniform float fogFar;
+  out vec4 o;
+  float hash(vec2 q) { return fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453); }
+  float band(float x, float c, float w) { float a = fwidth(x); return 1.0 - smoothstep(w * 0.5 - a, w * 0.5 + a, abs(x - c)); }
   void main() {
+    vec3 col = vc;
+    if (road == 1) {
+      // finished road painted from station (vr.x) and offset (vr.y): asphalt, markings, shoulders, verge, batters
+      float half_ = roadW.x * 0.5, sh = roadW.y, lanes = max(roadW.z, 1.0), a = abs(vr.y);
+      float steep = sqrt(max(1.0 - vt.z * vt.z, 0.0)) / max(vt.z, 1e-3);
+      float grain = (hash(floor(vw * 24.0)) + hash(floor(vw * 7.0))) * 0.018 - 0.018;
+      if (a <= half_) {
+        col = cAsphalt + grain;
+        float m = band(a, half_ - 0.2, 0.15);                                  // edge lines
+        float laneW = roadW.x / lanes;
+        for (int k = 1; k < 8; k++) {                                          // lane lines (dashed), centre line
+          if (float(k) >= lanes) break;
+          float pos = -half_ + laneW * float(k);
+          float dash = step(fract(vr.x / 12.0), 0.33);
+          m = max(m, band(vr.y, pos, 0.12) * dash);
+        }
+        col = mix(col, cLine, m);
+      } else if (a <= half_ + sh) {
+        col = cShoulder + grain;
+      } else {
+        col = (steep > 0.3 ? cBatter : cVerge) + grain * 0.6;
+      }
+    }
     vec3 nn = normalize(gl_FrontFacing ? vn : -vn);
     float l = 0.42 + 0.48 * max(dot(nn, normalize(vec3(-0.45, 0.35, 0.82))), 0.0) + 0.18 * max(dot(nn, normalize(vec3(0.6, -0.5, 0.4))), 0.0);
-    o = vec4(vc * min(l, 1.08), alpha); }`);
+    vec3 lit = col * min(l, 1.08);
+    float fog = fogOn == 1 ? clamp((gl_FragCoord.z / gl_FragCoord.w - fogNear) / fogFar, 0.0, 0.55) : 0.0;
+    o = vec4(mix(lit, vec3(0.86, 0.9, 0.95), fog), alpha); }`);
 const lineProgram = program(`#version 300 es
   in vec2 corner; in vec3 a; in vec3 b; uniform mat4 mvp; uniform float ve; uniform float lift; uniform float width; uniform vec2 screen;
   void main() {
@@ -151,6 +191,7 @@ for (const s of S.surfaces) {
   const m = S.meshes[s.id]; if (!m) continue;
   const pos = decode(m.positions, Float32Array), col = decode(m.colors, Uint8Array), idx = decode(m.indices, Uint32Array);
   const depth = m.depth ? decode(m.depth, Float32Array) : null;
+  const roadAttr = m.road ? decode(m.road, Float32Array) : new Float32Array(pos.length / 3 * 2);
   const nrm = new Float32Array(pos.length);
   for (let t = 0; t < idx.length; t += 3) {
     const i = idx[t] * 3, j = idx[t + 1] * 3, k = idx[t + 2] * 3;
@@ -161,14 +202,15 @@ for (const s of S.surfaces) {
     for (const v of [i, j, k]) { nrm[v] += nx; nrm[v + 1] += ny; nrm[v + 2] += nz; }
   }
   const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-  for (const [name, data, size, type, normalized] of [["p", pos, 3, gl.FLOAT, false], ["n", nrm, 3, gl.FLOAT, false], ["c", col, 3, gl.UNSIGNED_BYTE, true]]) {
+  for (const [name, data, size, type, normalized] of [["p", pos, 3, gl.FLOAT, false], ["n", nrm, 3, gl.FLOAT, false], ["c", col, 3, gl.UNSIGNED_BYTE, true], ["r", roadAttr, 2, gl.FLOAT, false]]) {
     const loc = gl.getAttribLocation(meshProgram, name); const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, type, normalized, 0, 0);
   }
   const ebo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
   gl.bindVertexArray(null);
-  surfaces.push({ info: s, vao, count: idx.length, pos, idx, depth, visible: true, opacity: s.opacity ?? 1 });
+  surfaces.push({ info: s, vao, count: idx.length, pos, idx, depth, visible: s.visible !== false, opacity: s.opacity ?? 1,
+                  road: !!(m.road && s.style && s.style.attribute === "road") });
 }
 const cornerBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuf);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, -1, 1, -1, 1, 1, 0, -1, 1, 1, 0, 1]), gl.STATIC_DRAW);
@@ -212,14 +254,16 @@ function setView(v) {
   cam.fov = v.view_angle || 30; draw();
 }
 function eye() {
+  if (cam.free) return cam.free.eye;
   const t = [cam.target[0], cam.target[1], cam.target[2] * ve];
   const c = Math.cos(cam.elevation);
   return [t[0] + cam.distance * c * Math.sin(cam.azimuth), t[1] + cam.distance * c * Math.cos(cam.azimuth), t[2] + cam.distance * Math.sin(cam.elevation)];
 }
 function matrices(width, height) {
-  const t = [cam.target[0], cam.target[1], cam.target[2] * ve], e = eye();
+  const t = cam.free ? cam.free.target : [cam.target[0], cam.target[1], cam.target[2] * ve], e = eye();
   const size = Math.hypot(ext.max[0] - ext.min[0], ext.max[1] - ext.min[1], (ext.max[2] - ext.min[2]) * ve) + 1;
-  const proj = perspective(cam.fov * Math.PI / 180, width / height, Math.max(cam.distance / 1000, 0.05), cam.distance + size * 3);
+  const near = cam.free ? 0.1 : Math.max(cam.distance / 1000, 0.05);
+  const proj = perspective((cam.free ? 55 : cam.fov) * Math.PI / 180, width / height, near, (cam.free ? 0 : cam.distance) + size * 3);
   return { mvp: mul(proj, lookAt(e, t, [0, 0, 1])), eye: e };
 }
 
@@ -228,12 +272,15 @@ let pending = false;
 function draw() { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; render(canvas.width, canvas.height); }); } }
 function render(width, height) {
   gl.viewport(0, 0, width, height);
-  gl.clearColor(...hex(S.background || "#ffffff"), 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.clearColor(...(cam.free ? [0.80, 0.87, 0.95] : hex(S.background || "#ffffff")), 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST);
   const { mvp } = matrices(width, height);
   gl.useProgram(meshProgram);
   gl.uniformMatrix4fv(gl.getUniformLocation(meshProgram, "mvp"), false, mvp);
   gl.uniform1f(gl.getUniformLocation(meshProgram, "ve"), ve);
+  gl.uniform1i(gl.getUniformLocation(meshProgram, "fogOn"), cam.free ? 1 : 0);
+  gl.uniform1f(gl.getUniformLocation(meshProgram, "fogNear"), 60.0);
+  gl.uniform1f(gl.getUniformLocation(meshProgram, "fogFar"), 900.0);
   const ordered = surfaces.filter(s => s.visible).sort((a, b) => (b.opacity >= 1) - (a.opacity >= 1));
   for (const s of ordered) {
     const translucent = s.opacity < 1;
@@ -241,6 +288,13 @@ function render(width, height) {
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 1);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "lift"), s.info.lift || 0);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "alpha"), s.opacity);
+    gl.uniform1i(gl.getUniformLocation(meshProgram, "road"), s.road ? 1 : 0);
+    if (s.road) {
+      const st = s.info.style, cc = st.colors;
+      gl.uniform3f(gl.getUniformLocation(meshProgram, "roadW"), st.carriageway, st.shoulder, st.lanes);
+      for (const [u, k] of [["cAsphalt", "carriageway"], ["cShoulder", "shoulder"], ["cVerge", "verge"], ["cBatter", "batter"], ["cLine", "marking"]])
+        gl.uniform3fv(gl.getUniformLocation(meshProgram, u), hex(cc[k]));
+    }
     gl.bindVertexArray(s.vao); gl.drawElements(gl.TRIANGLES, s.count, gl.UNSIGNED_INT, 0);
     gl.disable(gl.POLYGON_OFFSET_FILL);
     if (translucent) { gl.disable(gl.BLEND); gl.depthMask(true); }
@@ -252,7 +306,7 @@ function render(width, height) {
   const px = width / canvas.clientWidth;
   gl.uniform1f(gl.getUniformLocation(lineProgram, "alpha"), 1.0);
   for (const l of lines) {
-    if (!kinds[l.kind].visible) continue;
+    if (!kinds[l.kind].visible || (cam.free && XRAY.has(l.kind))) continue;     // the driver sees the road, not its centreline
     gl.uniform1f(gl.getUniformLocation(lineProgram, "lift"), l.lift);
     gl.uniform1f(gl.getUniformLocation(lineProgram, "width"), l.width * 0.5 * px);
     gl.uniform3fv(gl.getUniformLocation(lineProgram, "color"), l.color);
@@ -262,7 +316,7 @@ function render(width, height) {
   gl.depthFunc(gl.GREATER); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.uniform1f(gl.getUniformLocation(lineProgram, "alpha"), 0.35);
   for (const l of lines) {
-    if (!kinds[l.kind].visible || !XRAY.has(l.kind)) continue;
+    if (!kinds[l.kind].visible || !XRAY.has(l.kind) || cam.free) continue;
     gl.uniform1f(gl.getUniformLocation(lineProgram, "lift"), l.lift);
     gl.uniform1f(gl.getUniformLocation(lineProgram, "width"), l.width * 0.5 * px);
     gl.uniform3fv(gl.getUniformLocation(lineProgram, "color"), l.color);
@@ -271,7 +325,7 @@ function render(width, height) {
   gl.depthFunc(gl.LESS); gl.depthMask(true); gl.disable(gl.BLEND);
   gl.bindVertexArray(null);
   placeLabels(mvp, width, height);
-  const az = cam.azimuth * 180 / Math.PI;   // camera bearing from the target; the view looks the opposite way
+  const az = (cam.free ? Math.atan2(cam.free.eye[0] - cam.free.target[0], cam.free.eye[1] - cam.free.target[1]) : cam.azimuth) * 180 / Math.PI;   // camera bearing from the target; the view looks the opposite way
   document.getElementById("needle").setAttribute("transform", `rotate(${-(az + 180)})`);
   const d = [Math.cos(cam.elevation) * Math.sin(cam.azimuth), Math.cos(cam.elevation) * Math.cos(cam.azimuth), Math.sin(cam.elevation)];
   document.getElementById("viewtext").value = `view: ${d.map(v => v.toFixed(2)).join(", ")}`;
@@ -330,7 +384,7 @@ function placeLabels(mvp, width, height) {
   const scale = canvas.clientWidth / width, svg = document.getElementById("leaders");
   labelEls.forEach(e => e.style.display = "none");
   svg.innerHTML = "";
-  if (!showLabels) return;
+  if (!showLabels || cam.free) return;
   let lines = "";
   for (const c of labelPositions(mvp, width, height)) {
     const e = labelEls[c.i]; e.style.display = "block";
@@ -356,6 +410,7 @@ canvas.addEventListener("contextmenu", e => e.preventDefault());
 canvas.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, moved: false }; canvas.setPointerCapture(e.pointerId); canvas.classList.add("dragging"); });
 canvas.addEventListener("pointermove", e => {
   if (!drag) return;
+  if (cam.free) { stopDrive(true); }
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
   drag.x = e.clientX; drag.y = e.clientY;
   if (drag.pan) {
@@ -373,9 +428,9 @@ canvas.addEventListener("wheel", e => { e.preventDefault(); cam.distance *= Math
 function pick(e) {
   const rect = canvas.getBoundingClientRect();
   const nx = (e.clientX - rect.left) / rect.width * 2 - 1, ny = 1 - (e.clientY - rect.top) / rect.height * 2;
-  const origin = eye(), t = [cam.target[0], cam.target[1], cam.target[2] * ve];
+  const origin = eye(), t = cam.free ? cam.free.target : [cam.target[0], cam.target[1], cam.target[2] * ve];
   const f = norm(sub(t, origin)), r = norm(cross(f, [0, 0, 1])), up = cross(r, f);
-  const h = Math.tan(cam.fov * Math.PI / 360), w = h * rect.width / rect.height;
+  const h = Math.tan((cam.free ? 55 : cam.fov) * Math.PI / 360), w = h * rect.width / rect.height;
   const dir = norm([f[0] + r[0] * nx * w + up[0] * ny * h, f[1] + r[1] * nx * w + up[1] * ny * h, f[2] + r[2] * nx * w + up[2] * ny * h]);
   let best = null;
   for (const s of surfaces) {
@@ -416,7 +471,7 @@ document.getElementById("meta").textContent = [S.crs && S.crs.authid, S.units &&
 const layersDiv = document.getElementById("layers");
 for (const s of surfaces) {
   const row = document.createElement("div"); row.className = "row";
-  row.innerHTML = `<label><input type="checkbox" checked> ${s.info.name}</label><input type="range" min="0.2" max="1" step="0.05" value="${s.opacity}" style="width:70px" title="Opacity">`;
+  row.innerHTML = `<label><input type="checkbox" ${s.visible ? "checked" : ""}> ${s.info.name}</label><input type="range" min="0.2" max="1" step="0.05" value="${s.opacity}" style="width:70px" title="Opacity">`;
   row.querySelector("input[type=checkbox]").onchange = e => { s.visible = e.target.checked; draw(); };
   row.querySelector("input[type=range]").oninput = e => { s.opacity = +e.target.value; draw(); };
   layersDiv.appendChild(row);
@@ -440,9 +495,9 @@ veInput.value = ve; veVal.textContent = "× " + ve.toFixed(1);
 veInput.oninput = () => { ve = +veInput.value; veVal.textContent = "× " + ve.toFixed(1); draw(); };
 document.getElementById("showlabels").onchange = e => { showLabels = e.target.checked; draw(); };
 const viewsDiv = document.getElementById("views");
-for (const v of S.views) { const b = document.createElement("button"); b.textContent = v.name; b.onclick = () => setView(v); viewsDiv.appendChild(b); }
+for (const v of S.views) { const b = document.createElement("button"); b.textContent = v.name; b.onclick = () => { stopDrive(true); setView(v); }; viewsDiv.appendChild(b); }
 const planButton = document.createElement("button"); planButton.textContent = "plan";
-planButton.onclick = () => { cam.elevation = 1.55; cam.azimuth = Math.PI; draw(); }; viewsDiv.appendChild(planButton);
+planButton.onclick = () => { stopDrive(true); cam.elevation = 1.55; cam.azimuth = Math.PI; draw(); }; viewsDiv.appendChild(planButton);
 
 // ---------------------------------------------------------------- PNG with legend panel and compass beside the model
 document.getElementById("png").onclick = () => {
@@ -498,9 +553,89 @@ document.getElementById("png").onclick = () => {
   const a = document.createElement("a"); a.download = (document.title || "scene").replace(/[^\w.-]+/g, "_") + ".png"; a.href = out.toDataURL("image/png"); a.click();
   resize();
 };
+// ---------------------------------------------------------------- before / after
+const pairs = S.surfaces.filter(s => s.pair);
+if (pairs.length) {
+  document.getElementById("beforeafter").style.display = "block";
+  const ids = id => surfaces.find(x => x.info.id === id);
+  const show = before => {
+    for (const s of pairs) {
+      for (const id of s.pair.before) { const x = ids(id); if (x) x.visible = before; }
+      for (const id of s.pair.after) { const x = ids(id); if (x) x.visible = !before; }
+    }
+    document.querySelectorAll("#layers .row input[type=checkbox]").forEach((box, i) => { if (surfaces[i]) box.checked = surfaces[i].visible; });
+    draw();
+  };
+  document.getElementById("before").onclick = () => show(true);
+  document.getElementById("after").onclick = () => show(false);
+}
+
+// ---------------------------------------------------------------- drive through
+const paths = (S.paths || []).filter(p => p.points.length > 1);
+let drive = null;
+function pathAt(path, station) {
+  const st = path.stations, P = path.points;
+  let i = 1; while (i < st.length - 1 && st[i] < station) i++;
+  const q = Math.max(0, Math.min(1, (station - st[i - 1]) / Math.max(st[i] - st[i - 1], 1e-9)));
+  return [0, 1, 2].map(k => P[i - 1][k] + q * (P[i][k] - P[i - 1][k]));
+}
+function placeDriver(path, station) {
+  const eyeHeight = 1.3, look = 30;
+  const p = pathAt(path, station), ahead = pathAt(path, Math.min(station + look, path.stations[path.stations.length - 1]));
+  if (Math.hypot(ahead[0] - p[0], ahead[1] - p[1]) < 1) { const back = pathAt(path, station - look); ahead[0] = 2 * p[0] - back[0]; ahead[1] = 2 * p[1] - back[1]; ahead[2] = p[2]; }
+  cam.free = { eye: [p[0], p[1], p[2] * ve + eyeHeight], target: [ahead[0], ahead[1], ahead[2] * ve + eyeHeight * 0.8] };
+  document.getElementById("drivesta").textContent = stationText(station);
+  draw();
+}
+function stationText(st) { const k = Math.floor(st / 1000), m = st - 1000 * k; return `${k}+${m.toFixed(0).padStart(3, "0")}`; }
+function stopDrive(exit) {
+  if (drive && drive.timer) cancelAnimationFrame(drive.timer);
+  if (drive && drive.recorder && drive.recorder.state !== "inactive") drive.recorder.stop();
+  if (drive) drive.timer = null;
+  document.getElementById("driveplay").textContent = "Play";
+  if (exit) { cam.free = null; drive = null; document.getElementById("pick").style.display = "none"; draw(); }
+}
+if (paths.length) {
+  document.getElementById("drive").style.display = "block";
+  const select = document.getElementById("drivepath"), slider = document.getElementById("driveslider");
+  paths.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = `${p.name} (${stationText(p.stations[0])} – ${stationText(p.stations[p.stations.length - 1])})`; select.appendChild(o); });
+  const current = () => paths[+select.value];
+  const stationOf = () => { const p = current(), a = p.stations[0], b = p.stations[p.stations.length - 1]; return a + (+slider.value) * (b - a); };
+  slider.oninput = () => { drive = drive || {}; placeDriver(current(), stationOf()); };
+  select.onchange = () => { slider.value = 0; drive = drive || {}; placeDriver(current(), stationOf()); };
+  document.getElementById("driveexit").onclick = () => stopDrive(true);
+  document.getElementById("driveplay").onclick = () => {
+    if (drive && drive.timer) { stopDrive(false); return; }
+    drive = drive || {};
+    const p = current(), a = p.stations[0], b = p.stations[p.stations.length - 1];
+    if (+slider.value >= 0.999) slider.value = 0;
+    if (document.getElementById("driverec").checked && window.MediaRecorder) {
+      const chunks = [], rec = new MediaRecorder(canvas.captureStream(30), { mimeType: "video/webm" });
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.onstop = () => { const a_ = document.createElement("a"); a_.download = `${p.name}_drive.webm`.replace(/[^\w.-]+/g, "_");
+        a_.href = URL.createObjectURL(new Blob(chunks, { type: "video/webm" })); a_.click(); };
+      rec.start(); drive.recorder = rec;
+    }
+    document.getElementById("driveplay").textContent = "Pause";
+    let last = performance.now();
+    const tick = now => {
+      const speed = +document.getElementById("drivespeed").value, dt = Math.min((now - last) / 1000, 0.1); last = now;
+      const station = Math.min(stationOf() + speed * dt, b);
+      slider.value = (station - a) / Math.max(b - a, 1e-9);
+      placeDriver(p, station); render(canvas.width, canvas.height);
+      if (station >= b) { stopDrive(false); return; }
+      drive.timer = requestAnimationFrame(tick);
+    };
+    drive.timer = requestAnimationFrame(tick);
+  };
+}
+
 window.sceneViewer = { setView, render, cam, get ve() { return ve; } };
 resize();
 if (S.views.length) setView(S.views[0]);
+// viewer.html#drive=0.4 opens the drive-through 40 % along the first path (useful for shared links)
+const startDrive = /drive=([\d.]+)/.exec(location.hash);
+if (startDrive && paths.length) { const sl = document.getElementById("driveslider"); sl.value = startDrive[1]; sl.oninput(); }
 </script>
 </body>
 </html>

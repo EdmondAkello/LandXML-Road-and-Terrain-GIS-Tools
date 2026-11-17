@@ -36,7 +36,7 @@ from .landxml.grading import _inside_many
 from .landxml.plan_features import level_lines
 from .landxml.quantity_units import LINEAR_UNITS
 from .landxml.reports import station_label
-from .landxml.scene import SceneWriter, parse_views
+from .landxml.scene import SceneWriter, parse_views, station_offset
 from .landxml.scene_viewer import write_viewer
 from .landxml.tin_overlay import sample_tin
 from .params import number_param
@@ -306,6 +306,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             if not path:
                 raise QgsProcessingException("A corridor needs the LandXML file with its alignment.")
             name = match_name(read_catalog(path).alignments, corridor, "alignment")
+            self._corridor_name = name
             parts = _alignment_parts(path, 2.0, name)
             points = merge_parts(parts[0][4]) if parts else []
             if not points:
@@ -338,6 +339,19 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                                                 min(box[2], ring_box[2]), min(box[3], ring_box[3]))
         return Area(box, rings) if box else None
 
+    def _road_path(self, path, method, params, fb):
+        """(name, 3D points in output coordinates, stations) of the corridor alignment, or the first
+        alignment with a profile."""
+        wanted = self._corridor_name or ""
+        for name, start, _end, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled):
+            if wanted and name != wanted:
+                continue
+            xyz = transform_vertices(stored, method=method, **params)
+            raw = np.asarray(stored, float)
+            stations = start + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(raw[:, :2], axis=0).T))])
+            return name, xyz, stations
+        return None
+
     # ------------------------------------------------------------------ run
     def processAlgorithm(self, p, c, fb):
         path = self.parameterAsFile(p, "INPUT", c)
@@ -363,6 +377,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         unit_label = LINEAR_UNITS.get(vertical.lower(), (1, "m"))[1]
         intervals = parse_intervals(self.parameterAsString(p, "CONTOURS", c))
         self._axis = None
+        self._corridor_name = None
         area = self._area(p, c, path, method, params, crs, fb)
         corridor_axis = self._axis
         budget = int(self.parameterAsDouble(p, "MAX_TRIANGLES", c))
@@ -411,18 +426,24 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 cutouts.setdefault(base_name, []).append((xyz, faces))
         # ground under a design drawn over it is left out, and ground points just inside the design's edge
         # take the design level, so the ground cannot show through the design
+        unders = []        # ground removed under designs, kept for the viewer's before/after switch
         for index, mesh in enumerate(meshes):
             if mesh[1] not in cutouts:
                 continue
             xyz, faces = mesh[3].copy(), mesh[4]
+            removed = np.zeros(len(faces), bool)
             for dxyz, dfaces in cutouts[mesh[1]]:
-                under = sample_tin((dxyz, dfaces), xyz)
+                under = sample_tin((dxyz, dfaces), mesh[3])
                 inside = np.isfinite(under)
-                faces = faces[~inside[faces].all(axis=1)]
+                removed |= inside[faces].all(axis=1)
                 xyz[inside, 2] = under[inside]
-            if len(faces):
-                xyz, faces, _used = _compact(xyz, faces)
-                meshes[index] = (*mesh[:3], xyz, faces, *mesh[5:])
+            if removed.any():
+                uxyz, ufaces, _u = _compact(mesh[3], faces[removed])
+                unders.append((mesh[0], mesh[1], uxyz, ufaces, mesh[5]))
+            keep = faces[~removed]
+            if len(keep):
+                xyz, keep, _used = _compact(xyz, keep)
+                meshes[index] = (*mesh[:3], xyz, keep, *mesh[5:])
         try:
             raster_style = ss.parse_style(self.parameterAsString(p, "RASTER_STYLE", c), "elevation")
         except ValueError as exc:
@@ -451,11 +472,33 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                              {"file": os.path.basename(path) if path else "", "surfaces": [m[1] for m in meshes]},
                              self.parameterAsDouble(p, "EXAGGERATION", c))
         writer.scene["title"] = title
+        road_path = self._road_path(path, method, params, fb) if path and any(
+            m[5]["attribute"] == "road" for m in meshes) else None
+        if road_path is None and any(m[5]["attribute"] == "road" for m in meshes):
+            raise QgsProcessingException("A road style needs an alignment with a vertical profile in the LandXML file.")
+        designs = [m[0] for m in meshes if m[2] == "design"]
         for surface_id, name, role, xyz, faces, style, depth in meshes:
+            if style["attribute"] == "road":
+                station, offset = station_offset(xyz, road_path[1][:, :2], road_path[2])
+                slope = np.zeros(len(xyz))
+                np.maximum.at(slope, faces.ravel(), np.repeat(ss.triangle_values(xyz, faces, "slope", None, vertical_factor), 3))
+                resolved = ss.resolve(style, None, unit_label)
+                writer.surface(surface_id, name, role, xyz, faces, ss.road_colors(offset, slope, style), resolved, depth,
+                               extra={"station": station, "offset": offset})
+                continue
             values = ss.triangle_values(xyz, faces, style["attribute"], depth, vertical_factor)
             resolved = ss.resolve(style, values, unit_label)
             mesh = ss.mesh_colors(xyz, faces, resolved, depth, vertical_factor)
             writer.surface(surface_id, name, role, *mesh[:3], resolved, mesh[3])
+        for base_id, base_name, uxyz, ufaces, style in unders:
+            values = ss.triangle_values(uxyz, ufaces, style["attribute"], None, vertical_factor) \
+                if style["attribute"] not in ("depth", "road") else None
+            resolved = ss.resolve(style, values, unit_label) if values is not None else \
+                ss.resolve(ss.parse_style("plain #cfd8c4"), None, unit_label)
+            mesh = ss.mesh_colors(uxyz, ufaces, resolved, None, vertical_factor)
+            writer.surface(f"{base_id}_under", f"{base_name} (under the design)", "existing_under", *mesh[:3], resolved,
+                           visible=False, pair={"before": [f"{base_id}_under"], "after": designs})
+        written_paths = set()
 
         # ---- contours
         for surface_id, name, role, xyz, faces, _style, _depth in meshes:
@@ -497,14 +540,21 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
 
         # ---- LandXML linework
         if path and self.parameterAsBool(p, "ALIGNMENTS", c) and read_catalog(path).alignments:
-            profiled = {name: stored for name, _s, _e, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled)}
+            profiled = {name: (start_, stored) for name, start_, _e, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled)}
             every = self.parameterAsDouble(p, "STATION_LABELS", c)
             for name, _desc, sta0, _sta1, parts, _unsupported, distances in _alignment_parts(path, 2.0):
                 pts = merge_parts(parts)
                 if len(pts) < 2:
                     continue
                 if name in profiled:
-                    line3 = transform_vertices(profiled[name], method=method, **params)
+                    first_station, stored = profiled[name]
+                    line3 = transform_vertices(stored, method=method, **params)
+                    along = first_station + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
+                    inside = area.keep_points(line3)
+                    for run in np.split(np.arange(len(line3)), np.flatnonzero(np.diff(inside.astype(int))) + 1):
+                        if inside[run[0]] and len(run) > 1:      # paths for the viewer's drive-through
+                            writer.path(name, line3[run], along[run])
+                            written_paths.add(name)
                 else:
                     plan = transform_vertices(np.array([[x, y, 0.0] for x, y in pts]), method=method, **params)
                     line3 = drape_points(_densify(plan, step))
@@ -590,6 +640,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             view_text = (f"left: {-ay:.3f}, {ax:.3f}, 0.45; right: {ay:.3f}, {-ax:.3f}, 0.45; "
                          f"along: {-ax:.3f}, {-ay:.3f}, 0.25")
             size = 1.3 * max(np.ptp(focus[:, 0] * ax + focus[:, 1] * ay), 1.0)
+        if road_path is not None and road_path[0] not in written_paths:
+            inside = area.keep_points(road_path[1])
+            if inside.sum() > 1:
+                writer.path(road_path[0], road_path[1][inside], road_path[2][inside])
         views = parse_views(view_text)
         writer.views(views, target=(low + high) / 2, size=size * (0.8 if corridor_axis is not None else 1.0))
         scene = writer.write()

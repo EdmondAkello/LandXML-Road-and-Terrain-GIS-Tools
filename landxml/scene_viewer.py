@@ -31,11 +31,13 @@ def write_viewer(folder, scene, path=None, title=None):
     data["title"] = title or scene.get("title") or (scene.get("source") or {}).get("file") or "3D scene"
     meshes = {}
     for surface in scene["surfaces"]:
-        xyz, faces, rgb, depth = read_ply(os.path.join(folder, surface["mesh"]))
+        xyz, faces, rgb, depth, extra = read_ply(os.path.join(folder, surface["mesh"]), extras=True)
         meshes[surface["id"]] = {
             "positions": _b64(xyz, "<f4"), "colors": _b64(rgb, "u1"), "indices": _b64(faces, "<u4"),
             "depth": _b64(depth, "<f4") if np.isfinite(depth).any() else None,
         }
+        if "station" in extra and "offset" in extra:
+            meshes[surface["id"]]["road"] = _b64(np.column_stack([extra["station"], extra["offset"]]), "<f4")
     data["meshes"] = meshes
     with open(TEMPLATE, encoding="utf-8") as stream:
         template = stream.read()
