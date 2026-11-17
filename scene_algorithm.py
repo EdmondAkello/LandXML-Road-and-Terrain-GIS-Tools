@@ -140,6 +140,21 @@ def refine_near(xyz, faces, footprint, target, rounds=5):
     return refine(np.asarray(xyz, float), np.asarray(faces, np.int64), footprint, target, rounds)
 
 
+def refine_edges(xyz, faces, footprint, target=None):
+    """Split ground triangles that cross the edge of ``footprint`` (a design TIN) down to ``target``
+    (default: half a metre or a 64th of the ground's typical triangle, whichever is larger)."""
+    from .landxml.structures import refine
+
+    xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
+    if not len(faces):
+        return xyz, faces
+    if target is None:
+        tri = xyz[faces[: min(len(faces), 20000)]]
+        typical = float(np.median(np.linalg.norm(tri[:, 1, :2] - tri[:, 0, :2], axis=1)))
+        target = max(0.5, typical / 64.0)
+    return refine(xyz, faces, footprint, target, rounds=7, boundary=True)
+
+
 def _runs_inside(points, area):
     """Parts of a polyline inside the area (split where it leaves)."""
     inside = area.keep_points(points)
@@ -482,11 +497,12 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         for chosen in (t.strip() for t in self.parameterAsString(p, "SYN_GROUND", c).split(",")):
             if not chosen:
                 continue
-            named = [m for m in grounds if m[1].lower() == chosen.lower()] or \
-                [m for m in grounds if m[1].lower().startswith(chosen.lower())]
+            candidates = [m for m in meshes if not str(m[0]).startswith("syn")]       # designed surfaces may be named too
+            named = [m for m in candidates if m[1].lower() == chosen.lower()] or \
+                [m for m in candidates if m[1].lower().startswith(chosen.lower())]
             if not named:
                 raise QgsProcessingException(f"Synthetic ground '{chosen}' is not among the scene's surfaces and DEMs: "
-                                             + ", ".join(m[1] for m in grounds))
+                                             + ", ".join(m[1] for m in meshes if not str(m[0]).startswith("syn")))
             picked.append(named[0])
         if picked:
             grounds = picked + [m for m in grounds if all(m is not k for k in picked)]
@@ -590,18 +606,25 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
         bridge_rows = np.zeros(len(centre), bool)
+        auto = np.zeros(len(centre), bool)
         if self.parameterAsBool(p, "SYN_BRIDGES", c) and short.any():
             edges = np.flatnonzero(np.diff(np.concatenate([[0], short.astype(int), [0]])))
             for first_row, after in zip(edges[::2], edges[1::2]):
-                bridge_rows[max(first_row - 1, 0):min(after + 1, len(centre))] = True
-        spans = {}
+                auto[max(first_row - 1, 0):min(after + 1, len(centre))] = True
+        given = {}                          # first row of a scheduled bridge -> its item
         for item in schedule:
             if item["kind"] == "bridge":
                 end = item["end"] if item["end"] is not None else item["station"]
                 rows = (stations >= min(item["station"], end)) & (stations <= max(item["station"], end))
+                if not rows.any():
+                    continue
+                # a scheduled bridge replaces the automatic one it overlaps
+                labels = np.cumsum(np.diff(np.concatenate([[0], auto.astype(int)])) == 1) * auto
+                for label in set(labels[rows & auto]) - {0}:
+                    auto[labels == label] = False
                 bridge_rows |= rows
-                if item["span"]:
-                    spans[float(stations[rows][0]) if rows.any() else item["station"]] = item["span"]
+                given[int(np.flatnonzero(rows)[0])] = item
+        bridge_rows |= auto
         quads = len(faces) // 2
         quad_row = np.arange(quads) // 6
         quad_col = np.arange(quads) % 6
@@ -628,8 +651,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 rows = np.arange(first_row, after)
                 if len(rows) < 2:
                     continue
-                span = spans.get(float(stations[first_row]), default_span)
-                text, _piers = bridge(builder, centre, stations, normal, rows, 2 * edge + 1.0, span, ground_at)
+                item = next((given[k] for k in given if first_row <= k < after), None) or {}
+                text, _piers = bridge(builder, centre, stations, normal, rows, 2 * edge + 1.0,
+                                      item.get("span") or default_span, ground_at,
+                                      spans=item.get("spans"), piers=item.get("piers"))
                 notes.append(text)
                 middle = rows[len(rows) // 2]
                 n = normal[middle]
@@ -730,11 +755,12 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             gxyz, gfaces = mesh[3], mesh[4]
             for xyz, faces, target in cuts:
                 gxyz, gfaces = refine_near(gxyz, gfaces, (xyz, faces), target)
+                gxyz, gfaces = refine_edges(gxyz, gfaces, (xyz, faces))
             under = footprint_index.sample(gxyz)
             inside = np.isfinite(under)
             removed = inside[gfaces].all(axis=1)
             snapped = gxyz.copy()
-            snapped[inside, 2] = under[inside]
+            snapped[inside, 2] = np.minimum(snapped[inside, 2], under[inside])
             meshes[index] = (*mesh[:3], snapped, gfaces, *mesh[5:])
             if removed.any():
                 uxyz, ufaces, _u = _compact(gxyz, gfaces[removed])
@@ -838,13 +864,19 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         for index, mesh in enumerate(meshes):
             if mesh[1] not in cutouts:
                 continue
-            xyz, faces = mesh[3].copy(), mesh[4]
+            base, faces = mesh[3], mesh[4]
+            for dxyz, dfaces in cutouts[mesh[1]]:          # ground triangles across a design's edge are split finely,
+                base, faces = refine_edges(base, faces, (dxyz, dfaces))   # so the cut edge is not jagged
+            mesh = (*mesh[:3], base, faces, *mesh[5:])
+            xyz = base.copy()
             removed = np.zeros(len(faces), bool)
             for dxyz, dfaces in cutouts[mesh[1]]:
                 under = sample_tin((dxyz, dfaces), mesh[3])
                 inside = np.isfinite(under)
                 removed |= inside[faces].all(axis=1)
-                xyz[inside, 2] = under[inside]
+                # ground above the design comes down to it (so it cannot show through); ground below stays,
+                # so a wall's foot does not pull the ground up into spikes
+                xyz[inside, 2] = np.minimum(xyz[inside, 2], under[inside])
             if removed.any():
                 uxyz, ufaces, _u = _compact(mesh[3], faces[removed])
                 unders.append((mesh[0], mesh[1], uxyz, ufaces, mesh[5]))
@@ -896,7 +928,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 extra = self._synthetic_extra[surface_id]
                 station, offset = extra["station"], extra["offset"]
             elif style["attribute"] == "road":
-                station, offset = station_offset(xyz, road_path[1][:, :2], road_path[2])
+                station, offset = station_offset(xyz, road_path[1][:, :2], road_path[2], max_distance=250.0)
+                far = np.isnan(offset)                      # far from the road: verge colours
+                station, offset = np.where(far, 0.0, station), np.where(far, 1e6, offset)
             if style["attribute"] == "road":
                 slope = np.zeros(len(xyz))
                 np.maximum.at(slope, faces.ravel(), np.repeat(ss.triangle_values(xyz, faces, "slope", None, vertical_factor), 3))
@@ -908,7 +942,13 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             resolved = ss.resolve(style, values, unit_label)
             mesh = ss.mesh_colors(xyz, faces, resolved, depth, vertical_factor)
             writer.surface(surface_id, name, role, *mesh[:3], resolved, mesh[3])
+        merged = {}                       # one hidden "under" surface per ground, however many designs cut it
         for base_id, base_name, uxyz, ufaces, style in unders:
+            if base_id in merged:
+                _n, oxyz, ofaces, _s = merged[base_id]
+                uxyz, ufaces = np.vstack([oxyz, uxyz]), np.vstack([ofaces, ufaces + len(oxyz)])
+            merged[base_id] = (base_name, uxyz, ufaces, style)
+        for base_id, (base_name, uxyz, ufaces, style) in merged.items():
             values = ss.triangle_values(uxyz, ufaces, style["attribute"], None, vertical_factor) \
                 if style["attribute"] not in ("depth", "road") else None
             resolved = ss.resolve(style, values, unit_label) if values is not None else \

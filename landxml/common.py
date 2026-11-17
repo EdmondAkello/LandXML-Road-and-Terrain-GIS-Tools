@@ -19,6 +19,9 @@ def child(element, name: str):
 
 
 def descendants(element, name: str):
+    lookup = getattr(element, "descendants_named", None)
+    if lookup is not None:                      # the plugin's own parser: an index built once per tree
+        return iter(lookup(name))
     return (
         item
         for item in element.iter()

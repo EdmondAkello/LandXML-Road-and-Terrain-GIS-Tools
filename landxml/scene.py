@@ -119,31 +119,67 @@ def read_ply(path, extras=False):
     return result
 
 
-def station_offset(points, path_xy, path_stations, chunk=2_000_000):
+def station_offset(points, path_xy, path_stations, chunk=2_000_000, max_distance=None):
     """Station and offset (positive to the right of the direction of travel) of each plan point
-    against a polyline with stations; the nearest segment decides."""
+    against a polyline with stations; the nearest segment decides.
+
+    Segments are matched to points through a grid join on boxes grown by a search radius, which
+    widens only for the points still without a segment, so long roads and large surfaces do not
+    compare every point with every segment. Points further than ``max_distance`` from the path are
+    left as NaN."""
+    from .tin_overlay import candidate_pairs
+
     points = np.asarray(points, float)[:, :2]
     a = np.asarray(path_xy, float)[:-1, :2]
     b = np.asarray(path_xy, float)[1:, :2]
     s0 = np.asarray(path_stations, float)[:-1]
     d = b - a
     length2 = np.maximum((d ** 2).sum(axis=1), 1e-12)
-    station = np.empty(len(points))
-    offset = np.empty(len(points))
-    step = max(1, chunk // max(len(a), 1))
-    for start in range(0, len(points), step):
-        p = points[start:start + step, None, :]
-        t = np.clip(((p - a) * d).sum(axis=2) / length2, 0.0, 1.0)
-        foot = a + t[..., None] * d
-        dist2 = ((p - foot) ** 2).sum(axis=2)
-        k = np.argmin(dist2, axis=1)
-        rows = np.arange(len(k))
-        tk = t[rows, k]
-        station[start:start + step] = s0[k] + tk * np.sqrt(length2[k])
-        rel = p[:, 0, :] - foot[rows, k]
-        cross = d[k, 0] * rel[:, 1] - d[k, 1] * rel[:, 0]
-        offset[start:start + step] = -np.sign(cross) * np.sqrt(dist2[rows, k])
+    station = np.full(len(points), np.nan)
+    offset = np.full(len(points), np.nan)
+    if not len(points) or not len(a):
+        return station, offset
+    boxes = np.concatenate([np.minimum(a, b), np.maximum(a, b)], axis=1)
+    span = float(np.ptp(np.vstack([points, a, b]), axis=0).max()) + 1.0
+    radius = max(float(np.median(np.sqrt(length2))) * 4.0, 1.0)
+    if max_distance is not None:
+        radius = min(radius, max_distance)
+    todo = np.arange(len(points))
+    while len(todo):
+        per_point = max(1.0, len(a) * min(1.0, (2 * radius) / span) ** 2 * 4)      # rough segment count per point
+        step = int(max(1000, min(len(todo), chunk / per_point)))
+        for part in range(0, len(todo), step):
+            _nearest(points, todo[part:part + step], a, d, s0, length2, boxes, radius, station, offset, candidate_pairs)
+        todo = todo[np.isnan(station[todo])]
+        if radius > span or (max_distance is not None and radius >= max_distance):
+            break
+        radius *= 4.0
+        if max_distance is not None:
+            radius = min(radius, max_distance)
     return station, offset
+
+
+def _nearest(points, todo, a, d, s0, length2, boxes, radius, station, offset, candidate_pairs):
+    p = points[todo]
+    grown = np.concatenate([p - radius, p + radius], axis=1)
+    pi, si = candidate_pairs(grown, boxes)
+    if not len(pi):
+        return
+    pp = p[pi]
+    t = np.clip(((pp - a[si]) * d[si]).sum(axis=1) / length2[si], 0.0, 1.0)
+    foot = a[si] + t[:, None] * d[si]
+    dist2 = ((pp - foot) ** 2).sum(axis=1)
+    within = dist2 <= radius * radius
+    pi, si, t, foot, dist2 = pi[within], si[within], t[within], foot[within], dist2[within]
+    order = np.lexsort((dist2, pi))                     # nearest segment first for each point
+    pi, si, t, foot, dist2 = pi[order], si[order], t[order], foot[order], dist2[order]
+    first = np.concatenate([[True], pi[1:] != pi[:-1]]) if len(pi) else np.zeros(0, bool)
+    pi, si, t, foot, dist2 = pi[first], si[first], t[first], foot[first], dist2[first]
+    rows = todo[pi]
+    station[rows] = s0[si] + t * np.sqrt(length2[si])
+    rel = points[rows] - foot
+    cross = d[si, 0] * rel[:, 1] - d[si, 1] * rel[:, 0]
+    offset[rows] = -np.sign(cross) * np.sqrt(dist2)
 
 
 def triangulate_ring(ring):

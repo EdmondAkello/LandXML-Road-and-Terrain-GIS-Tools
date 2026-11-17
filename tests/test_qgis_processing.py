@@ -855,9 +855,11 @@ class QgisProcessingTests(unittest.TestCase):
             # a corridor keeps only the triangles near the alignment
             narrow = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", CORRIDOR="Main", CORRIDOR_WIDTH=15,
                                                      OUTPUT_FOLDER=str(Path(directory) / "corridor")), self.context, self.feedback)
-            corridor, _ = load_scene(narrow["SCENE"])
+            corridor, corridor_folder = load_scene(narrow["SCENE"])
             eg = next(s for s in corridor["surfaces"] if s["name"] == "EG")
-            self.assertLess(eg["triangles"], 200)
+            from landxml_plugin.landxml.scene import read_ply as _read_ply
+            exyz = _read_ply(str(Path(corridor_folder) / eg["mesh"]))[0] + corridor["origin"]
+            self.assertLess(np.abs(exyz[:, 1]).max(), 15 + 10 + 1e-6)     # only ground near the alignment is kept
             self.assertGreater(eg["triangles"], 10)          # the ground under the design is left out
             part = algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", CORRIDOR="Main", CORRIDOR_WIDTH=15,
                                                    STATION_FROM=1050, STATION_TO=1080,

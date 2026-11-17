@@ -281,7 +281,7 @@ def culvert(builder, item, centre, normal, left_length, right_length, ground_at,
     return f"{item['id']}: {label}, {length:.0f} m long, {source}"
 
 
-def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at, depth=None):
+def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at, depth=None, spans=None, piers=None):
     """Deck, parapets, piers and abutments over the centreline rows ``rows`` (a contiguous index range).
 
     The deck top is the road (drawn by the corridor); this adds the deck body below it, parapets on its
@@ -289,7 +289,14 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
     rows = np.asarray(rows)
     start, end = stations[rows[0]], stations[rows[-1]]
     length = end - start
-    depth = depth or float(np.clip(span / 15.0, 0.8, 2.0))
+    if piers:                                   # pier chainages given: they decide the spans
+        pier_stations = sorted(s for s in piers if start < s < end)
+    else:
+        count = int(spans) if spans else max(int(math.ceil(length / span)), 1)
+        pier_stations = [start + k * length / count for k in range(1, max(count, 1))]
+    spans = len(pier_stations) + 1
+    longest = float(np.max(np.diff([start, *pier_stations, end])))
+    depth = depth if depth is not None else float(np.clip(longest / 15.0, 0.8, 2.0))
     half = deck_width / 2
     for i in rows[:-1]:
         j = i + 1
@@ -305,10 +312,8 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
         ra, rb = a[:2] + na * half, b[:2] + nb * half
         builder.prism([[*la, a[2] - depth], [*ra, a[2] - depth], [*rb, b[2] - depth], [*lb, b[2] - depth]],
                       [[*la, a[2] - 0.15], [*ra, a[2] - 0.15], [*rb, b[2] - 0.15], [*lb, b[2] - 0.15]])
-    spans = max(int(math.ceil(length / span)), 1)
-    piers = []
-    for k in range(1, spans):
-        s = start + k * length / spans
+    placed = []
+    for s in pier_stations:
         i = int(np.clip(np.searchsorted(stations, s), 1, len(stations) - 1))
         t = (s - stations[i - 1]) / max(stations[i] - stations[i - 1], 1e-9)
         p = centre[i - 1] + (centre[i] - centre[i - 1]) * t
@@ -319,15 +324,15 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
         along = np.array([n[1], -n[0]])
         builder.box(p, along, n, 1.5, deck_width - 2.0, g - 1.0, p[2] - depth)
         builder.box(p, along, n, 2.0, deck_width, p[2] - depth - 1.0, p[2] - depth)          # pier head
-        piers.append(s)
+        placed.append(s)
     for i in (rows[0], rows[-1]):
         p, n = centre[i], normal[i]
         g = ground_at(np.array([p[:2]]))[0]
         g = p[2] - depth - 2.0 if not np.isfinite(g) else min(g, p[2] - depth - 0.5)
         along = np.array([n[1], -n[0]])
         builder.box(p, along, n, 2.0, deck_width + 2.0, g - 1.0, p[2] - depth)
-    return (f"bridge {start:.0f}–{end:.0f}: {length:.0f} m, {spans} span{'s' if spans > 1 else ''} of about "
-            f"{length / spans:.0f} m, {len(piers)} pier{'s' if len(piers) != 1 else ''}"), len(piers)
+    return (f"bridge {start:.0f}–{end:.0f}: {length:.0f} m, {spans} span{'s' if spans > 1 else ''} (longest "
+            f"{longest:.0f} m), {len(placed)} pier{'s' if len(placed) != 1 else ''}"), len(placed)
 
 
 def carve_channels(xyz, faces, channels, apron=30.0, bank=1.5, bed_rise=0.05):
@@ -362,9 +367,10 @@ def carve_channels(xyz, faces, channels, apron=30.0, bank=1.5, bed_rise=0.05):
     return xyz, faces, lowered
 
 
-def refine(xyz, faces, footprint, target, rounds=5):
+def refine(xyz, faces, footprint, target, rounds=5, boundary=False):
     """Split triangles touching ``footprint`` (a TIN) into four at their edge midpoints until their edges are at most
-    ``target`` long; the midpoints lie on the original planes, so the surface keeps its shape."""
+    ``target`` long; the midpoints lie on the original planes, so the surface keeps its shape. With ``boundary``,
+    only triangles that cross the footprint's edge are split."""
     from .tin_overlay import TinIndex, sample_tin
 
     low, high = footprint[0][:, :2].min(axis=0), footprint[0][:, :2].max(axis=0)
@@ -377,7 +383,9 @@ def refine(xyz, faces, footprint, target, rounds=5):
         if near.any():
             sub = tri[near]
             probes = np.concatenate([sub, (sub + np.roll(sub, 1, axis=1)) / 2, sub.mean(axis=1, keepdims=True)], axis=1)
-            touch[near] = np.isfinite(sample_tin(index, probes.reshape(-1, 3)[:, :2])).reshape(len(sub), 7).any(axis=1)
+            hits = np.isfinite(sample_tin(index, probes.reshape(-1, 3)[:, :2])).reshape(len(sub), 7)
+            # boundary: only triangles crossing the footprint's edge, so a cut follows the edge closely
+            touch[near] = (hits.any(axis=1) & ~hits.all(axis=1)) if boundary else hits.any(axis=1)
         chosen = touch
         if not chosen.any():
             break

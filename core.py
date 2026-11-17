@@ -352,50 +352,26 @@ def rasterize_tin(
             warnings.warn(message, RuntimeWarning, stacklevel=2)
 
     arr = np.full((rows, cols), np.float32(nodata), dtype=np.float32)
-    eps = max(resolution * 1e-8, 1e-9)
-    nfaces = len(faces)
-    for fi in range(nfaces):
+    from .landxml.tin_overlay import TinIndex
+
+    index = TinIndex(np.asarray(vertices, float), np.asarray(faces, np.int64))
+    # cell centres are sampled in bands of rows: the TIN is indexed once, so the cost follows the cells
+    # and the triangles' overlap rather than a Python loop over every triangle
+    xs = xmin_r + (np.arange(cols, dtype=np.float64) + 0.5) * resolution
+    band = max(1, 2_000_000 // max(cols, 1))
+    for r0 in range(0, rows, band):
         if cancel and cancel():
             raise RuntimeError("Conversion cancelled by user.")
-        ia, ib, ic = faces[fi]
-        x1, y1, z1 = vertices[ia]
-        x2, y2, z2 = vertices[ib]
-        x3, y3, z3 = vertices[ic]
-        det = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
-        if abs(det) < 1e-14:
-            continue
-        c0 = int(math.floor((min(x1, x2, x3) - xmin_r) / resolution))
-        c1 = int(math.ceil((max(x1, x2, x3) - xmin_r) / resolution))
-        r0 = int(math.floor((ymax_r - max(y1, y2, y3)) / resolution))
-        r1 = int(math.ceil((ymax_r - min(y1, y2, y3)) / resolution))
-        c0 = max(0, min(cols - 1, c0))
-        c1 = max(0, min(cols, c1 + 1))
-        r0 = max(0, min(rows - 1, r0))
-        r1 = max(0, min(rows, r1 + 1))
-        if c0 >= c1 or r0 >= r1:
-            continue
-        xs = xmin_r + (np.arange(c0, c1, dtype=np.float64) + 0.5) * resolution
+        r1 = min(rows, r0 + band)
         ys = ymax_r - (np.arange(r0, r1, dtype=np.float64) + 0.5) * resolution
-        X = xs[None, :]
-        Y = ys[:, None]
-        e1 = (x2 - x1) * (Y - y1) - (y2 - y1) * (X - x1)
-        e2 = (x3 - x2) * (Y - y2) - (y3 - y2) * (X - x2)
-        e3 = (x1 - x3) * (Y - y3) - (y1 - y3) * (X - x3)
-        inside = ((e1 >= -eps) & (e2 >= -eps) & (e3 >= -eps)) | (
-            (e1 <= eps) & (e2 <= eps) & (e3 <= eps)
-        )
-        if not inside.any():
-            continue
-        a = (z1 * (y2 - y3) + z2 * (y3 - y1) + z3 * (y1 - y2)) / det
-        b = (z1 * (x3 - x2) + z2 * (x1 - x3) + z3 * (x2 - x1)) / det
-        c = z1 - a * x1 - b * y1
-        Z = (a * X + b * Y + c).astype(np.float32, copy=False)
-        arr[r0:r1, c0:c1][inside] = Z[inside]
-        if progress and (fi % 5000 == 0 or fi == nfaces - 1):
-            progress(
-                12 + int(83 * (fi + 1) / nfaces),
-                f"Rasterizing triangles: {fi + 1:,}/{nfaces:,}",
-            )
+        X, Y = np.meshgrid(xs, ys)
+        z = index.sample(np.column_stack([X.ravel(), Y.ravel()]), tolerance=max(resolution * 1e-8, 1e-9))
+        found = np.isfinite(z)
+        block = arr[r0:r1].reshape(-1)
+        block[found] = z[found].astype(np.float32)
+        arr[r0:r1] = block.reshape(r1 - r0, cols)
+        if progress:
+            progress(12 + int(83 * r1 / rows), f"Rasterizing rows: {r1:,}/{rows:,}")
     return arr, xmin_r, ymax_r, resolution
 
 

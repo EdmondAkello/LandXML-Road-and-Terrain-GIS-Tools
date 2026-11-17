@@ -837,3 +837,33 @@ class ChannelAndIndexTests(unittest.TestCase):
         got = TinIndex(xyz, faces).sample(points)
         self.assertTrue(np.array_equal(np.isnan(expected), np.isnan(got)))
         self.assertTrue(np.allclose(expected[~np.isnan(expected)], got[~np.isnan(got)]))
+
+
+class FastLookupTests(unittest.TestCase):
+    def test_station_offset_matches_a_full_search(self):
+        from landxml_plugin.landxml.scene import station_offset
+
+        t = np.linspace(0, 10, 400)
+        path = np.column_stack([t * 50, np.sin(t) * 80])
+        stations = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(path, axis=0).T))])
+        points = np.random.default_rng(5).uniform([-50, -200], [550, 200], (3000, 2))
+        station, offset = station_offset(points, path, stations)
+        a, b = path[:-1], path[1:]
+        d = b - a
+        tt = np.clip((((points[:, None] - a) * d).sum(2)) / (d ** 2).sum(1), 0, 1)
+        dist = np.linalg.norm(points[:, None] - (a + tt[..., None] * d), axis=2)
+        self.assertTrue(np.allclose(np.abs(offset), dist.min(axis=1)))
+        near, _o = station_offset(points, path, stations, max_distance=30.0)
+        self.assertTrue(np.array_equal(np.isnan(near), dist.min(axis=1) > 30.0))
+
+    def test_descendant_index_matches_a_walk(self):
+        from landxml_plugin import safe_xml
+        from landxml_plugin.landxml.common import descendants, local_name
+
+        root = safe_xml.fromstring('<a xmlns="urn:x"><b><c/><d><c/></d></b><c><e/></c></a>')
+        walk = lambda e, n: [x for x in e.iter() if x is not e and local_name(x.tag) == n]
+        for element in root.iter():
+            for name in ("b", "c", "d", "e"):
+                self.assertEqual(list(descendants(element, name)), walk(element, name))
+        root[0].append(safe_xml.Element("{urn:x}c"))          # a change to the tree rebuilds the index
+        self.assertEqual(len(list(descendants(root, "c"))), 4)

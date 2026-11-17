@@ -32,7 +32,6 @@ from qgis.core import (
     QgsProcessingException,
     QgsProcessingOutputNumber,
     QgsProcessingOutputString,
-    QgsProcessingParameterEnum,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterField,
@@ -48,6 +47,8 @@ from .compat import FIELD_DOUBLE, FIELD_INT, FIELD_STRING
 from .core import _epsg_of, bounds, grid_for_bounds, rasterize_tin, read_tin, transform_vertices, write_geotiff
 from .earthworks_algorithm import (
     QUANTITY_HELP,
+    VERTICAL_UNITS,
+    _vertical_unit_param,
     _input_param,
     _resolve,
     _volume_parameter,
@@ -106,14 +107,6 @@ def _optional_number(parameters, name):
 # Site grading has its own group, apart from road corridors.
 GROUP = "9. Site grading (land development)"
 GROUP_ID = "site_grading"
-VERTICAL_UNITS = [("As declared in the file", None), ("Metre", "meter"), ("International foot", "foot"),
-                  ("US survey foot", "USSurveyFoot")]
-
-
-def _vertical_unit_param(algorithm):
-    algorithm.addParameter(QgsProcessingParameterEnum(
-        "VERTICAL_UNIT", "Vertical (elevation) unit — choose when the file does not declare it",
-        options=[name for name, _unit in VERTICAL_UNITS], defaultValue=0))
 
 
 def _grading_units(algorithm, p, c, documents, feedback, horizontal, volume_unit="auto"):
