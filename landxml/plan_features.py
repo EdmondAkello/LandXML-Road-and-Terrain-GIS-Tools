@@ -93,6 +93,38 @@ def _chain(segments, decimals):
     return lines
 
 
+def footprint_lines(xyz, faces, depth, tolerance=0.01, min_length=1.0, decimals=6):
+    """Outline of the earthworks footprint of a depth surface: closed lines around the
+    triangles where |depth| exceeds ``tolerance``, with elevations from ``xyz[:, 2]``
+    (pass design levels for daylight lines). Where design and existing ground coincide
+    (tie-ins, untouched islands) there is no footprint, so the outer line is the daylight
+    line and islands become holes. Rings shorter than ``min_length`` in plan are dropped.
+    """
+    from .grading import outline_polygons
+
+    xyz = np.asarray(xyz, float)
+    faces = np.asarray(faces, np.int64)
+    depth = np.asarray(depth, float)
+    worked = faces[np.abs(depth[faces]).max(axis=1) > tolerance]
+    if not len(worked):
+        return []
+    used = np.unique(worked)
+    keys = np.round(xyz[used, :2], decimals)
+    _unique, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
+    welded = xyz[used[first]]
+    remap = np.empty(int(used.max()) + 1, np.int64)
+    remap[used] = inverse.reshape(-1)
+    welded_faces = remap[worked]
+    area2 = np.cross(welded[welded_faces[:, 1], :2] - welded[welded_faces[:, 0], :2],
+                     welded[welded_faces[:, 2], :2] - welded[welded_faces[:, 0], :2])
+    welded_faces = welded_faces[np.abs(area2) > 0]
+    lines = []
+    for line in ring_lines(outline_polygons(welded, welded_faces, dims=3)):
+        if np.hypot(*np.diff(line[:, :2], axis=0).T).sum() >= min_length:
+            lines.append(line)
+    return lines
+
+
 def ring_lines(polygons):
     """Closed lines (first point repeated) from ``[(outer, [holes]), ...]`` rings with elevations."""
     lines = []

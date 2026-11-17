@@ -56,7 +56,7 @@ from .earthworks_algorithm import (
 )
 from .landxml.catalog import read_catalog
 from .landxml.parser import load_document
-from .landxml.plan_features import level_lines, write_plan_features
+from .landxml.plan_features import footprint_lines, level_lines, write_plan_features
 from .landxml.tin_overlay import depth_tin
 from .landxml.quantity_units import LINEAR_UNITS, quantity_units
 from .landxml.grading import (
@@ -224,7 +224,9 @@ def _depth_surface(path, surface, existing, method, params, feedback, existing_p
 FEATURE_LINES_HELP = (
     "\n\nCivil 3D feature lines (optional): a LandXML file of PlanFeatures in the input file's stored "
     "coordinates and units (northing easting elevation for Civil 3D), whatever coordinate interpretation "
-    "the GIS outputs use, so it imports back into the source drawing (Insert > LandXML).")
+    "the GIS outputs use, so it imports back into the source drawing (Insert > LandXML). Daylight lines "
+    "outline the earthworks footprint (where design and existing ground differ by more than 0.01 vertical "
+    "units); lines shorter than 1 horizontal unit are left out.")
 
 
 def _feature_lines_param(algorithm, label):
@@ -371,8 +373,9 @@ class GradingQuantitiesAlgorithm(ProjectSettingsAlgorithm):
                 levels = keep["raw"].copy()
                 levels[:, 2] = keep["design_z"]
                 daylight = [{"name": f"Daylight {k}", "points": line,
-                             "description": f"{surface} meets {existing}", "properties": {"source": "daylight"}}
-                            for k, line in enumerate(level_lines(levels, faces, 0.0, values=keep["raw"][:, 2]), 1)]
+                             "description": f"Earthworks limit of {surface} on {existing}",
+                             "properties": {"source": "daylight"}}
+                            for k, line in enumerate(footprint_lines(levels, faces, keep["raw"][:, 2]), 1)]
             else:
                 fb.pushWarning("Daylight feature lines need the design and existing-ground surfaces (a volume "
                                "surface holds depths, not levels); none were written.")

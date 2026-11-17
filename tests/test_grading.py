@@ -568,3 +568,25 @@ class LevelLineTests(unittest.TestCase):
         (line,) = level_lines(plane, np.array([[0, 1, 2], [0, 2, 3]]), 1.5)
         self.assertTrue(np.allclose(sorted(line[[0, -1], 1]), [0, 4]))
         self.assertTrue(np.allclose(line[:, 0], 1.5))
+
+
+class FootprintLineTests(unittest.TestCase):
+    def test_island_at_grade_becomes_a_hole_and_slivers_are_dropped(self):
+        from landxml_plugin.landxml.plan_features import footprint_lines
+
+        n = 7
+        xs, ys = np.meshgrid(np.arange(n, dtype=float), np.arange(n, dtype=float))
+        xyz = np.column_stack([xs.ravel(), ys.ravel(), 100 + xs.ravel()])
+        depth = np.where((np.abs(xs - 3) <= 1) & (np.abs(ys - 3) <= 1), 0.0, 1.0).ravel()
+        faces = []
+        for r in range(n - 1):
+            for c in range(n - 1):
+                a, b, d, e = r * n + c, r * n + c + 1, (r + 1) * n + c, (r + 1) * n + c + 1
+                faces += [(a, b, e), (a, e, d)]
+        lines = footprint_lines(xyz, np.array(faces), depth)
+        lengths = sorted(round(float(np.hypot(*np.diff(l[:, :2], axis=0).T).sum()), 6) for l in lines)
+        self.assertEqual(lengths, [8.0, 24.0])            # the 2 x 2 untouched island, inside the 6 x 6 edge
+        for line in lines:
+            self.assertTrue(np.allclose(line[:, 2], 100 + line[:, 0]))
+        self.assertEqual(len(footprint_lines(xyz, np.array(faces), depth, min_length=10.0)), 1)
+        self.assertEqual(footprint_lines(xyz, np.array(faces), np.zeros(len(xyz))), [])

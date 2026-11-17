@@ -613,13 +613,12 @@ class QgisProcessingTests(unittest.TestCase):
             (daylight,) = lines(out)
             self.assertEqual((daylight.kind, daylight.feature_code, daylight.name), ("FeatureLine", "FeatureLine", "Daylight 1"))
             self.assertEqual(load_document(out).vertical_unit, "meter")
-            # depth = (v - 10) / 5 is zero along v = 10, where the design is z = 98 + 0.1 u + 2.5
-            us = sorted(point[0] for point in daylight.points)
-            self.assertAlmostEqual(us[0], 0.0, places=6)
-            self.assertAlmostEqual(us[-1], 10.0, places=6)
+            # the whole 10 x 20 pad is worked, so the daylight line is its edge, at design levels z = 98 + 0.1 u + 0.25 v
+            ring = np.array(daylight.points)
+            self.assertTrue(np.allclose(ring[0], ring[-1]))
+            self.assertAlmostEqual(np.hypot(*np.diff(ring[:, :2], axis=0).T).sum(), 60.0, places=6)
             for u, v, z in daylight.points:
-                self.assertAlmostEqual(v, 10.0, places=6)
-                self.assertAlmostEqual(z, 100.5 + 0.1 * u, places=6)
+                self.assertAlmostEqual(z, 98 + 0.1 * u + 0.25 * v, places=6)
             warnings = []
             feedback = QgsProcessingFeedback()
             feedback.pushWarning = warnings.append
