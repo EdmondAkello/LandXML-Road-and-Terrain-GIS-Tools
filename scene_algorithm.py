@@ -282,7 +282,12 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             "Rasters: single-band DEMs, thinned to stay within the triangle budget.\n"
             "Linework: alignments (3D where a profile covers them, otherwise draped), station labels, LandXML "
             "feature lines and breaklines, and any QGIS line or polygon layers (their own Z, or draped on the first "
-            "surface). Roads stay lines over the terrain; nothing is cut into it.\n"
+            "surface). A road style ('TOP = road: 7, 1.5, 2') is painted as a finished road and cuts the ground under it.\n"
+            "Synthetic road (feasibility): choose alignments with a profile but no corridor; a concept road is built "
+            "on the profile (widths, crossfalls and slopes under Advanced) with side slopes run out to the chosen ground "
+            "(surfaces or DEMs; the first wins). Structures come from a CSV schedule or typed entries such as "
+            "'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9, skew 15; 1+364-2+293 = bridge, spans 7'. DEMs can be "
+            "shifted or fitted to the alignment's surveyed ground profile.\n"
             "Views: 'name: dx, dy, dz; ...' (direction from the area towards the camera). Coordinates are in the "
             "output CRS relative to the scene origin.")
 
@@ -310,37 +315,37 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
         self.addParameter(number_param("STRETCH", "Long corridors: a view every (stations; 0 = none)", 1000.0, 0.0, 1e6, decimals=0))
         self.addParameter(names_param(
-            "SYNTHETIC", "Synthetic corridor along alignments (concept road where no corridor is designed)", "alignments", ";"))
+            "SYNTHETIC", "Synthetic road: alignments (concept road on the profile)", "alignments", ";"))
         for key, label, default, lo, hi in (
-                ("SYN_CARRIAGEWAY", "Synthetic: carriageway width", 7.0, 2.0, 60.0),
-                ("SYN_SHOULDER", "Synthetic: shoulder width each side", 1.5, 0.0, 10.0),
-                ("SYN_LANES", "Synthetic: lanes", 2.0, 1.0, 8.0),
-                ("SYN_CAMBER", "Synthetic: carriageway crossfall (%)", 2.5, 0.0, 10.0),
-                ("SYN_SHOULDER_FALL", "Synthetic: shoulder crossfall (%)", 4.0, 0.0, 15.0),
-                ("SYN_CUT_SLOPE", "Synthetic: cut slope (horizontal per 1 vertical)", 1.5, 0.1, 10.0),
-                ("SYN_FILL_SLOPE", "Synthetic: fill slope (horizontal per 1 vertical)", 2.0, 0.1, 10.0),
-                ("SYN_MAX_WIDTH", "Synthetic: longest side slope (output units)", 40.0, 1.0, 500.0)):
+                ("SYN_CARRIAGEWAY", "Synthetic road: carriageway width", 7.0, 2.0, 60.0),
+                ("SYN_SHOULDER", "Synthetic road: shoulder width each side", 1.5, 0.0, 10.0),
+                ("SYN_LANES", "Synthetic road: lanes", 2.0, 1.0, 8.0),
+                ("SYN_CAMBER", "Synthetic road: carriageway crossfall (%)", 2.5, 0.0, 10.0),
+                ("SYN_SHOULDER_FALL", "Synthetic road: shoulder crossfall (%)", 4.0, 0.0, 15.0),
+                ("SYN_CUT_SLOPE", "Synthetic road: cut slope (horizontal per 1 vertical)", 1.5, 0.1, 10.0),
+                ("SYN_FILL_SLOPE", "Synthetic road: fill slope (horizontal per 1 vertical)", 2.0, 0.1, 10.0),
+                ("SYN_MAX_WIDTH", "Synthetic road: longest side slope (output units)", 40.0, 1.0, 500.0)):
             self.addParameter(number_param(key, label, default, lo, hi, decimals=2))
         self.addParameter(names_param(
-            "SYN_GROUND", "Synthetic: ground surfaces or DEMs, first wins where they overlap (blank = the first in the scene)",
+            "SYN_GROUND", "Synthetic road: ground (first wins; blank = first surface)",
             "surfaces", ",", layers_param="RASTERS"))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_BRIDGES", "Synthetic: bridges where the side slopes do not reach the ground", defaultValue=True))
-        self.addParameter(number_param("SYN_BRIDGE_SPAN", "Synthetic: bridge span", 25.0, 5.0, 200.0, decimals=1))
+            "SYN_BRIDGES", "Synthetic road: bridges where slopes miss the ground", defaultValue=True))
+        self.addParameter(number_param("SYN_BRIDGE_SPAN", "Synthetic road: bridge span", 25.0, 5.0, 200.0, decimals=1))
         self.addParameter(QgsProcessingParameterFile(
-            "SYN_STRUCTURES_CSV", "Synthetic: culvert and bridge schedule (CSV)", extension="csv", optional=True))
+            "SYN_STRUCTURES_CSV", "Synthetic road: culvert and bridge schedule (CSV)", extension="csv", optional=True))
         self.addParameter(QgsProcessingParameterString(
-            "SYN_STRUCTURES", "Synthetic: structures typed in (e.g. 1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9)",
+            "SYN_STRUCTURES", "Synthetic road: structures typed in (1+250 = box 3 x 2 x 2)",
             defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_FIT_PROFILE", "Synthetic: fit DEMs to the surveyed ground profile along the road (valleys at crossings)",
+            "SYN_FIT_PROFILE", "Synthetic road: fit DEMs to the surveyed ground profile",
             defaultValue=False))
-        self.addParameter(number_param("SYN_FIT_WIDTH", "Synthetic: profile fit fades out over (each side)", 60.0, 5.0, 1000.0,
+        self.addParameter(number_param("SYN_FIT_WIDTH", "Synthetic road: profile fit fades out over", 60.0, 5.0, 1000.0,
                                        decimals=1))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_CHANNELS", "Synthetic: cut a channel into the ground at each culvert", defaultValue=True))
+            "SYN_CHANNELS", "Synthetic road: cut a channel at each culvert", defaultValue=True))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_MATCH_PROFILE", "Synthetic: shift DEMs to match the alignment's surveyed ground profile", defaultValue=False))
+            "SYN_MATCH_PROFILE", "Synthetic road: shift DEMs to the surveyed ground profile", defaultValue=False))
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
         self.addParameter(number_param("EXTRUDE_HEIGHT", "Or raise all polygons by (0 = outlines only)", 0.0, 0.0, 1000.0, decimals=2))
