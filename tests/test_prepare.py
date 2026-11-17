@@ -139,6 +139,44 @@ class PreparationTests(unittest.TestCase):
             return dict(load_document(path, full=True).inspect(), source_file=None)
         self.assertEqual(summary(whole["OUTPUT"]), summary(result["OUTPUT"]))
 
+    def test_openroads_split_exports_give_the_same_result_spliced_or_whole(self):
+        """OpenRoads exports geometry and terrain separately, in US survey feet, with no vertical unit or CRS."""
+        from landxml_plugin.core import read_tin
+        from landxml_plugin.landxml import preparation
+        from landxml_plugin.landxml.features import read_line_features
+
+        head = ('<?xml version="1.0" encoding="UTF-8"?>\n<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" '
+                'version="1.2">\n  <Units><Imperial linearUnit="USSurveyFoot" areaUnit="squareFoot"/></Units>\n'
+                '  <Application name="OpenRoads Designer" manufacturer="Bentley Systems, Inc."/>\n')
+        geometry = self.write("ord_geometry.xml", head + f"  <Alignments>{alignment()}</Alignments>\n</LandXML>\n")
+        points = "".join(f'\n          <P id="{k}">{x} {y} {100 + 0.1 * x + 0.2 * y:.3f}</P>'
+                         for k, (x, y) in enumerate(((-10, -60), (50, -60), (50, 60), (-10, 60)), 1))
+        terrain = self.write("ord_terrain.xml", head + (
+            '  <Surfaces>\n    <Surface name="Existing Terrain">\n      <SourceData><Breaklines>\n'
+            '        <Breakline brkType="standard"><PntList3D>0 0 100 10 0 101</PntList3D>'
+            '<Feature code="Breakline"><Property label="id" value="1"/><Property label="UsrID" value="42"/></Feature></Breakline>\n'
+            '      </Breaklines></SourceData>\n      <Definition surfType="TIN">\n        <Pnts>' + points +
+            '\n        </Pnts>\n        <Faces>\n          <F>1 2 3</F>\n          <F>1 3 4</F>\n        </Faces>\n'
+            '      </Definition>\n    </Surface>\n  </Surfaces>\n</LandXML>\n'))
+        params = dict(INPUT=geometry, EXISTING_FILE=terrain, PROPOSED_FILE="", VERTICAL_UNIT=3, CONFIRM_MATCHING=True)
+        spliced = self.run_prepare(**params, OUTPUT=str(self.folder / "ord_spliced.xml"))
+        with patch.object(preparation.tin_stream, "open_skeleton", return_value=None):
+            whole = self.run_prepare(**params, OUTPUT=str(self.folder / "ord_whole.xml"))
+        for key in ("GENERATED_PROFILES", "GENERATED_SECTIONS", "COVERAGE_GAPS"):
+            self.assertEqual(spliced[key], whole[key])
+        self.assertGreater(spliced["GENERATED_SECTIONS"], 0)
+        docs = [load_document(result["OUTPUT"], full=True) for result in (spliced, whole)]
+        self.assertEqual(*[dict(doc.inspect(), source_file=None) for doc in docs])
+        self.assertEqual(docs[0].horizontal_unit.lower(), "ussurveyfoot")
+        source = read_tin(terrain, "Existing Terrain")
+        for result in (spliced, whole):
+            xyz, faces, _ = read_tin(result["OUTPUT"], "Prepared Existing Ground")
+            self.assertTrue(np.array_equal(xyz, source[0]) and np.array_equal(faces, source[1]))
+            records, _ = read_line_features(load_document(result["OUTPUT"]).root)
+            self.assertEqual([(r.breakline_type, r.properties.get("UsrID")) for r in records], [("standard", "42")])
+        sections = [read_corridor_sections(doc.root)[0] for doc in docs]
+        self.assertEqual(*[[(s.station, s.surface("Prepared Existing Ground").points) for s in found] for found in sections])
+
     def test_prefixed_tin_elements_fall_back_to_a_full_parse(self):
         from landxml_plugin.landxml import preparation
 
@@ -298,7 +336,8 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(output.read_text(), "keep old output")
         self.assertEqual(list(self.folder.glob("tmp*.xml")), [])
         result = self.run_prepare()
-        copied = load_document(result["OUTPUT"]).surfaces()[0]
+        copied = load_document(result["OUTPUT"], full=True).surfaces()[0]
+        self.assertTrue(any(local_name(node.tag) == "P" for node in copied.iter()))
         self.assertTrue(all(node.tag.startswith('{http://www.landxml.org/schema/LandXML-1.2}') for node in copied.iter()))
 
     def test_units_multiple_alignments_and_selection(self):
