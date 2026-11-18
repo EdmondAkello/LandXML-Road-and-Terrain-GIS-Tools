@@ -38,7 +38,7 @@ from .grading_algorithm import (
     _vertical_unit_param,
 )
 from .landxml.catalog import read_catalog
-from .landxml.edges import DEFAULT_BANDS, edge_analysis, edges_report_html
+from .landxml.edges import DEFAULT_BANDS, edge_analysis, edges_report_html, wall_top
 from .landxml.quantity_units import LINEAR_UNITS
 from .params import number_param
 from .processing_common import coordinate_choices
@@ -705,20 +705,3 @@ class GradingReportAlgorithm(ProjectSettingsAlgorithm):
                     f"{len(platforms['platforms'])} platforms.")
         return {"REPORT": report, "CUT_VOLUME": summary["cut_volume"], "FILL_VOLUME": summary["fill_volume"],
                 "PLAN_AREA": summary["plan_area"]}
-
-
-def wall_top(points, tolerance=0.15):
-    """A drawn edge along the top of a wall: a footprint outline steps down and back up a near-vertical
-    face at points that almost coincide in plan, which draws as a comb of ticks; such neighbours are
-    merged into one point at their highest level. Only the drawing uses this, not the schedule."""
-    points = np.asarray(points, float)
-    if len(points) < 3:
-        return points
-    out = [points[0].copy()]
-    for point in points[1:]:
-        if np.hypot(*(point[:2] - out[-1][:2])) <= tolerance:
-            if point[2] > out[-1][2]:
-                out[-1] = point.copy()
-        else:
-            out.append(point.copy())
-    return np.array(out)

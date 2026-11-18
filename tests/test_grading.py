@@ -911,7 +911,7 @@ class RenderEdgeTests(unittest.TestCase):
             np.testing.assert_array_equal(_inside_many(points, ring), plain(points, ring))
 
     def test_wall_top_merges_the_steps_down_a_wall_face(self):
-        from landxml_plugin.site_tools_algorithm import wall_top
+        from landxml_plugin.landxml.edges import wall_top
 
         comb = np.array([[0, 0, 10], [5, 0, 10], [5.01, 0, 7], [5.02, 0, 10], [10, 0, 10], [10.01, 0, 7], [15, 0, 10]])
         top = wall_top(comb)
