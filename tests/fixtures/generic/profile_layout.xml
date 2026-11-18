@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic survey coordinates, large stations, multiple profiles and a wider terrain. -->
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Metric linearUnit="meter"/></Units>
+  <Surfaces><Surface name="EG"><Definition surfType="TIN">
+    <Pnts><P id="1">499803 4499802 0</P><P id="2">500207 4499802 0</P><P id="3">499803 4500209 0</P></Pnts>
+    <Faces><F>1 2 3</F></Faces>
+  </Definition></Surface></Surfaces>
+  <Alignments>
+    <Alignment name="Road A" staStart="900000" length="200">
+      <CoordGeom><Line length="200"><Start>500000 4500000</Start><End>500200 4500000</End></Line></CoordGeom>
+      <Profile>
+        <ProfAlign name="Design"><PVI>900000 0</PVI><ParaCurve length="100">900100 100</ParaCurve><PVI>900200 0</PVI></ProfAlign>
+        <ProfAlign name="Existing"><PVI>900000 90</PVI><PVI>900200 90</PVI></ProfAlign>
+      </Profile>
+    </Alignment>
+    <Alignment name="Road B" staStart="300000" length="100">
+      <CoordGeom><Line length="100"><Start>500000 4500100</Start><End>500100 4500100</End></Line></CoordGeom>
+      <Profile><ProfAlign name="Design"><PVI>300000 -10</PVI><PVI>300100 -5</PVI></ProfAlign></Profile>
+    </Alignment>
+  </Alignments>
+</LandXML>

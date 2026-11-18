@@ -174,7 +174,8 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
             "cross-section, feature-line, breakline, surface-boundary, DEM and contour outputs. "
             "Enabled outputs without exportable data are skipped automatically. "
             "Load exported layers into the project is enabled by default; disable it to export files only. "
-            "Profile graphs use station/elevation coordinates, not map coordinates."
+            "Schematic profile graphs are scaled to the project size and stacked below the exported "
+            "plan and terrain bounds in the output CRS. Source station/elevation attributes are preserved."
         )
 
     def initAlgorithm(self, config=None):
@@ -319,6 +320,7 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         }
         base = os.path.splitext(os.path.basename(path))[0]
         terrain_outputs = []
+        terrain_bounds = []
         gpkg = os.path.join(out, base + "_GIS.gpkg")
         srs = _ogr_srs(crs)
         if os.path.exists(gpkg):
@@ -526,83 +528,6 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                     ) from exc
                 if len(samples) >= 2:
                     profile_records.append((alignment_name, element, samples, controls))
-            if flags["INCLUDE_PROFILES"]:
-                profile_layer = ds.CreateLayer("profiles", None, ogr.wkbLineString)
-                for field in (
-                    "alignment_name",
-                    "profile_name",
-                    "source_name",
-                    "source_description",
-                    "source_vendor",
-                    "source_file",
-                ):
-                    _fld(profile_layer, field)
-                for field in ("station_start", "station_end"):
-                    _fld(profile_layer, field, ogr.OFTReal)
-                control_layer = ds.CreateLayer("profile_controls", None, ogr.wkbPoint)
-                for field in (
-                    "alignment_name",
-                    "profile_name",
-                    "source_name",
-                    "source_description",
-                    "control_type",
-                    "curve_type",
-                    "source_vendor",
-                    "source_file",
-                ):
-                    _fld(control_layer, field)
-                for field in (
-                    "station",
-                    "elevation",
-                    "grade_in",
-                    "grade_out",
-                    "curve_length",
-                ):
-                    _fld(control_layer, field, ogr.OFTReal)
-                for key, element, samples, controls in profile_records:
-                    feature = ogr.Feature(profile_layer.GetLayerDefn())
-                    graph = ogr.Geometry(ogr.wkbLineString)
-                    for station, elevation in samples:
-                        graph.AddPoint_2D(station, elevation)
-                    feature.SetGeometry(graph)
-                    _set_fields(
-                        feature,
-                        dict(
-                            alignment_name=key,
-                            profile_name=element.attrib.get("name"),
-                            source_name=element.attrib.get("name"),
-                            source_description=element.attrib.get("desc"),
-                            source_vendor=document.vendor,
-                            source_file=os.path.basename(path),
-                            station_start=samples[0][0],
-                            station_end=samples[-1][0],
-                        ),
-                    )
-                    profile_layer.CreateFeature(feature)
-                    for control in controls:
-                        point = ogr.Feature(control_layer.GetLayerDefn())
-                        geom = ogr.Geometry(ogr.wkbPoint)
-                        geom.AddPoint_2D(control["station"], control["elevation"])
-                        point.SetGeometry(geom)
-                        _set_fields(
-                            point,
-                            dict(
-                                alignment_name=key,
-                                profile_name=element.attrib.get("name"),
-                                source_name=element.attrib.get("name"),
-                                source_description=element.attrib.get("desc"),
-                                control_type=control["control_type"],
-                                curve_type=control["curve_type"],
-                                source_vendor=document.vendor,
-                                source_file=os.path.basename(path),
-                                station=control["station"],
-                                elevation=control["elevation"],
-                                grade_in=control["grade_in"],
-                                grade_out=control["grade_out"],
-                                curve_length=control["curve_length"],
-                            ),
-                        )
-                        control_layer.CreateFeature(point)
             if flags["INCLUDE_CENTERLINES"]:
                 centerlines = ds.CreateLayer(
                     "centerlines_3d", srs, ogr.wkbLineString25D
@@ -934,6 +859,8 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                         warn_cells=self.parameterAsDouble(p, "GRID_WARNING", c) * 1_000_000,
                         warning=fb.pushWarning,
                     )
+                    terrain_bounds.append((xmin, xmin + array.shape[1] * resolution,
+                                           ymax - array.shape[0] * resolution, ymax))
                     terrain_name = output_names[surface_index]
                     dem = os.path.join(out, terrain_name + "_DEM.tif")
                     if os.path.exists(dem):
@@ -987,6 +914,116 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                         os.remove(dem)
                     else:
                         terrain_outputs.append((dem, terrain_name + "_DEM", QgsProcessingUtils.LayerHint.Raster, ORDER_RASTER))
+        if flags["INCLUDE_PROFILES"]:
+            plan_bounds = list(terrain_bounds)
+            for layer in ds:
+                if layer.GetGeomType() != ogr.wkbNone and layer.GetFeatureCount():
+                    plan_bounds.append(layer.GetExtent())
+            if not plan_bounds:
+                for alignment in al:
+                    plan_bounds.append(_ogr_line(alignment["points"], m, tp).GetEnvelope())
+            graph_bounds = []
+            for _, _, samples, controls in profile_records:
+                points = np.asarray(samples + [(v["station"], v["elevation"]) for v in controls])
+                graph_bounds.append((points[:, 0].min(), points[:, 0].max(),
+                                     points[:, 1].min(), points[:, 1].max()))
+            scale, left, top, gap = 1, 0, 0, 0
+            if plan_bounds:
+                left = min(b[0] for b in plan_bounds)
+                top = min(b[2] for b in plan_bounds)
+                span = max(max(b[1] for b in plan_bounds) - left,
+                           max(b[3] for b in plan_bounds) - top)
+                width = max((b[1] - b[0] for b in graph_bounds), default=1)
+                span = span or width or 1
+                scale, gap = span / (width or 1), span * 0.05
+            elif profile_records:
+                fb.pushWarning("No plan geometry is available to position profiles; "
+                               "retaining station/elevation graph coordinates without a map CRS.")
+            profile_srs = srs if plan_bounds else None
+            profile_layer = ds.CreateLayer("profiles", profile_srs, ogr.wkbLineString)
+            for field in (
+                "alignment_name",
+                "profile_name",
+                "source_name",
+                "source_description",
+                "source_vendor",
+                "source_file",
+            ):
+                _fld(profile_layer, field)
+            for field in ("station_start", "station_end"):
+                _fld(profile_layer, field, ogr.OFTReal)
+            control_layer = ds.CreateLayer("profile_controls", profile_srs, ogr.wkbPoint)
+            for field in (
+                "alignment_name",
+                "profile_name",
+                "source_name",
+                "source_description",
+                "control_type",
+                "curve_type",
+                "source_vendor",
+                "source_file",
+            ):
+                _fld(control_layer, field)
+            for field in (
+                "station",
+                "elevation",
+                "grade_in",
+                "grade_out",
+                "curve_length",
+            ):
+                _fld(control_layer, field, ogr.OFTReal)
+            for (key, element, samples, controls), bounds in zip(profile_records, graph_bounds):
+                station_origin, elevation_origin = 0, 0
+                if plan_bounds:
+                    station_origin, elevation_origin = bounds[0], bounds[3]
+                    top -= gap
+                feature = ogr.Feature(profile_layer.GetLayerDefn())
+                graph = ogr.Geometry(ogr.wkbLineString)
+                for station, elevation in samples:
+                    graph.AddPoint_2D(left + (station - station_origin) * scale,
+                                      top + (elevation - elevation_origin) * scale)
+                feature.SetGeometry(graph)
+                _set_fields(
+                    feature,
+                    dict(
+                        alignment_name=key,
+                        profile_name=element.attrib.get("name"),
+                        source_name=element.attrib.get("name"),
+                        source_description=element.attrib.get("desc"),
+                        source_vendor=document.vendor,
+                        source_file=os.path.basename(path),
+                        station_start=samples[0][0],
+                        station_end=samples[-1][0],
+                    ),
+                )
+                profile_layer.CreateFeature(feature)
+                for control in controls:
+                    point = ogr.Feature(control_layer.GetLayerDefn())
+                    geom = ogr.Geometry(ogr.wkbPoint)
+                    geom.AddPoint_2D(left + (control["station"] - station_origin) * scale,
+                                    top + (control["elevation"] - elevation_origin) * scale)
+                    point.SetGeometry(geom)
+                    _set_fields(
+                        point,
+                        dict(
+                            alignment_name=key,
+                            profile_name=element.attrib.get("name"),
+                            source_name=element.attrib.get("name"),
+                            source_description=element.attrib.get("desc"),
+                            control_type=control["control_type"],
+                            curve_type=control["curve_type"],
+                            source_vendor=document.vendor,
+                            source_file=os.path.basename(path),
+                            station=control["station"],
+                            elevation=control["elevation"],
+                            grade_in=control["grade_in"],
+                            grade_out=control["grade_out"],
+                            curve_length=control["curve_length"],
+                        ),
+                    )
+                    control_layer.CreateFeature(point)
+                if plan_bounds:
+                    top -= (bounds[3] - bounds[2]) * scale
         # Decide from actual exported features so filters and missing dependencies
         # cannot leave empty placeholders in the package or project.
         for index in reversed(range(ds.GetLayerCount())):
