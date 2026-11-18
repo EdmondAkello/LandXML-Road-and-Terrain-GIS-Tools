@@ -2,8 +2,8 @@
 name=LandXML Road & Terrain GIS Tools
 qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
-description=Civil 3D, OpenRoads and generic LandXML in QGIS: terrain, road geometry, profile and cross-section viewers, earthworks quantities, site-grading quantities, design reports and a geometric design review (alignment phasing, sight distance, barriers) against Kenya RDM 1.3 or AASHTO.
-version=1.10.0
+description=Civil 3D, OpenRoads and generic LandXML in QGIS: terrain, road geometry, profile and cross-section viewers, earthworks quantities, site-grading quantities and edges, offline 3D scenes, design reports and a geometric design review (alignment phasing, sight distance, barriers) against Kenya RDM 1.3 or AASHTO.
+version=1.11.0
 author=Edmond Akello
 email=francenicklaus@gmail.com
 about=Brings LandXML road and terrain data into QGIS and turns it into review-ready reports.
@@ -22,7 +22,15 @@ about=Brings LandXML road and terrain data into QGIS and turns it into review-re
 repository=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
 tracker=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools/issues
 homepage=https://github.com/EdmondAkello/LandXML-Road-and-Terrain-GIS-Tools
-changelog=1.10.0
+changelog=1.11.0
+    - Large LandXML files open and grade quickly: TIN blocks are streamed from the file, surfaces can be read only where they matter, and an optional binary cache makes second runs fast. Road tools are several times faster on large corridor exports.
+    - Civil 3D feature lines: PlanFeatures are read, and the grading tools write daylight lines, platform outlines and basin rims for import back into Civil 3D.
+    - Site grading: Grading Edge Analysis (walls and batters), surface styles and Surface Classes, a grading report, and an existing-ground file separate from the design.
+    - 3D scenes with an offline viewer: drive-through, callouts, A3 sheets, phones and tablets; feasibility roads along a profile with concept culverts and bridges on a DEM.
+    - Pickers for alignments and surfaces from the LandXML, a surfaces-and-styles table and saved user styles.
+    - Coordinate order: clearer label, advice when the other axis order fits the CRS, remembered per project.
+    - The user guide ships with the plugin and opens offline from the menu and each tool's Help.
+    1.10.0
     - Site grading group: exact Grading Quantities from a Civil 3D volume surface or from design and existing-ground surfaces, Platform Levels and Falls, Basin Stage–Storage, Earthwork Balance and Grading Revision Comparison, with visual reports and an explicit vertical-unit choice.
     - Geometric Design Review: A3 plan and profile sheets, a banded long section with numbered findings and phasing bands, finding numbers in every output, findings map points by default, and a comparison LandXML plus changed-PVI CSV for Civil 3D.
     - Roadway station equations across stationing, exports, reports and the Profile Viewer.
