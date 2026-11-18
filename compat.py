@@ -8,22 +8,16 @@ FIELD_INT = QMetaType.Type.Int
 
 
 def mark_advanced_definition(definition):
-    from qgis.core import Qgis, QgsProcessingParameterDefinition
+    from qgis.core import Qgis
 
-    flag = getattr(getattr(Qgis, "ProcessingParameterFlag", None), "Advanced", None)
-    if flag is None:
-        flag = QgsProcessingParameterDefinition.FlagAdvanced
-    definition.setFlags(definition.flags() | flag)
+    definition.setFlags(definition.flags() | Qgis.ProcessingParameterFlag.Advanced)
 
 
 def mark_advanced(algorithm, names):
     """Move the named parameters into the dialog's Advanced section (QGIS 3.44 and 4.x)."""
-    from qgis.core import Qgis, QgsProcessingParameterDefinition
+    from qgis.core import Qgis
 
-    flag = getattr(getattr(Qgis, "ProcessingParameterFlag", None), "Advanced", None)
-    if flag is None:
-        flag = QgsProcessingParameterDefinition.FlagAdvanced
     for name in names:
         definition = algorithm.parameterDefinition(name)
         if definition is not None:
-            definition.setFlags(definition.flags() | flag)
+            definition.setFlags(definition.flags() | Qgis.ProcessingParameterFlag.Advanced)

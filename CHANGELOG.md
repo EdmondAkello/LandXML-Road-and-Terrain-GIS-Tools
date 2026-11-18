@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.11.1 — 2026-11-18
+
+### Fixed
+- Qt6 compatibility check on plugins.qgis.org: the advanced-parameter flag uses `Qgis.ProcessingParameterFlag.Advanced` only (the plugin needs QGIS 3.44, which has it), without the old `FlagAdvanced` fallback.
+
 ## 1.11.0 — 2026-11-18
 
 ### Fixed (renders and long roads)
