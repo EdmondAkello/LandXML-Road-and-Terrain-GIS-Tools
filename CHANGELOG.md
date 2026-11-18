@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.11.0 — 2026-11-18
 
 ### Fixed (renders and long roads)
 - Flat faces now shade flat right up to their edges: the viewer splits vertex normals where faces meet at
@@ -46,7 +46,7 @@
 - Coordinate shifts, rotation and scale are under **Advanced parameters** in every tool, as are the finer 3D-scene options (lanes, crossfalls, slopes, bridges, channels, water, raised polygons, triangle budget, exaggeration, views, title).
 - **Export 3D Scene (Site Grading)** is now named **Export 3D Scene and Viewer (Site Grading)**, as it also writes the offline viewer (its id is unchanged, so saved models keep working).
 
-### Added (1.11.0, large files)
+### Added (large files)
 - **Large LandXML files open and grade quickly.** TIN `Pnts`, `Faces` and `Contours` blocks are no longer put into the XML tree: they are located in the memory-mapped file and read in blocks straight into arrays (`landxml/tin_stream.py`), with the same validation and error messages as before. A 1.7 GB Civil 3D export (two sites, 3.3 and 3.5 million existing-ground points) opens in about 15 s with tens of MB of working memory instead of failing; Inspect, the surface and alignment lists, and every tool that only reads alignments or profiles gain the same speed. The hardened parser and its DOCTYPE/entity refusal are unchanged.
 - Surfaces can be read **where they matter only**: a triangle is kept when its bounding box touches the requested area. Grading Quantities, Earthwork Balance and Grading Revision Comparison read existing ground only around the design area, and Surface Difference (Earthworks) reads the comparison surface only where it overlaps the base surface. On the 1.7 GB file, design minus existing ground for a site took about 30 s and matched the Civil 3D volume surface within the known existing-ground data differences; a 2 m surface difference dropped from 128 s to 2.7 s.
 - Grading Quantities, Earthwork Balance and Grading Revision Comparison accept an **Existing-ground LandXML file** separate from the design file (for example a survey TIN exported on its own); the declared vertical units must agree, and a file that does not reach the design area is refused rather than reporting zero volume.
