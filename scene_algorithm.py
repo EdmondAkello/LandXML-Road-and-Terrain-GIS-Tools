@@ -35,7 +35,7 @@ from .landxml import surface_style as ss
 from .landxml.catalog import match_name, read_catalog
 from .landxml.grading import _inside_many
 from .landxml.plan_features import level_lines
-from .landxml.quantity_units import LINEAR_UNITS
+from .landxml.quantity_units import LINEAR_UNITS, quantity_units
 from .landxml.reports import station_label
 from .landxml.scene import SceneWriter, extrude, parse_views, station_offset, water_mesh
 from .landxml.scene_viewer import write_viewer
@@ -198,7 +198,7 @@ def _coverage_message(layer, crs, area):
     return text
 
 
-def raster_mesh(layer, crs, area, budget, feedback):
+def raster_mesh(layer, crs, area, budget, feedback, vertical_unit=None, raster_unit=None):
     """(xyz, faces) of a single-band DEM raster in the output CRS, inside the area, thinned to ``budget`` triangles."""
     from osgeo import gdal, osr
 
@@ -208,6 +208,15 @@ def raster_mesh(layer, crs, area, budget, feedback):
         raise QgsProcessingException(f"Could not open raster '{layer.name()}'.")
     band = dataset.GetRasterBand(1)
     nodata = band.GetNoDataValue()
+    declared = band.GetUnitType().strip().lower()
+    aliases = {"m": "meter", "metres": "meter", "meters": "meter", "ft": "foot", "feet": "foot",
+               "us_survey_foot": "ussurveyfoot", "ftus": "ussurveyfoot", "us survey foot": "ussurveyfoot"}
+    source_unit = aliases.get(declared, declared) if declared else raster_unit
+    if source_unit not in LINEAR_UNITS and (source_unit or "").lower() not in LINEAR_UNITS:
+        raise QgsProcessingException(f"Raster '{layer.name()}' has unknown elevation units; choose Raster elevation unit explicitly.")
+    if not vertical_unit or vertical_unit.lower() not in LINEAR_UNITS:
+        raise QgsProcessingException("Choose the scene's vertical (elevation) unit explicitly.")
+    elevation_factor = LINEAR_UNITS[source_unit.lower()][0] / LINEAR_UNITS[vertical_unit.lower()][0]
     gt = dataset.GetGeoTransform()
     if gt[2] or gt[4]:
         raise QgsProcessingException(f"Raster '{layer.name()}' is rotated; warp it to a north-up grid first.")
@@ -233,7 +242,7 @@ def raster_mesh(layer, crs, area, budget, feedback):
     X = gt[0] + (columns + 0.5) * gt[1]
     Y = gt[3] + (rows + 0.5) * gt[5]
     gx, gy = np.meshgrid(X, Y)
-    xyz = np.column_stack([gx.ravel(), gy.ravel(), data.ravel()])
+    xyz = np.column_stack([gx.ravel(), gy.ravel(), data.ravel() * elevation_factor])
     if layer.crs() != crs:
         source_srs, target_srs = osr.SpatialReference(), osr.SpatialReference()
         source_srs.ImportFromWkt(layer.crs().toWkt())
@@ -353,6 +362,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
         self.addParameter(number_param("EXTRUDE_HEIGHT", "Or raise all polygons by (0 = outlines only)", 0.0, 0.0, 1000.0, decimals=2))
+        self.addParameter(QgsProcessingParameterEnum("RASTER_VERTICAL_UNIT", "Raster elevation unit (only for DEMs without a declared band unit)",
+                                                     options=[n for n, _u in VERTICAL_UNITS], defaultValue=0))
         self.addParameter(number_param("MAX_TRIANGLES", "Triangle budget (all surfaces)", 2_000_000, 10_000, 5e7, decimals=0))
         self.addParameter(number_param("EXAGGERATION", "Suggested vertical exaggeration", 1.5, 0.1, 20.0, decimals=2))
         self.addParameter(QgsProcessingParameterString("VIEWS", "Camera views (a corridor gets side and along views by default)",
@@ -502,7 +513,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             fb.pushInfo(message)
         return median
 
-    def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor, wanted, first=True):
+    def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor, wanted, first=True, horizontal_unit="meter", vertical_unit="meter", station_unit="meter"):
         """Add a synthetic finished road along an alignment's profile, cut into the ground meshes."""
         from .landxml.grading import volume_summary
         from .landxml.structures import (MeshBuilder, bridge, carve_channels, culvert, low_points, read_schedule_csv,
@@ -512,6 +523,13 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
 
         if not path:
             raise QgsProcessingException("A synthetic corridor needs the LandXML file with the alignment and profile.")
+        h = LINEAR_UNITS[horizontal_unit.lower()][0]
+        v = LINEAR_UNITS[vertical_unit.lower()][0]
+        if not station_unit or station_unit.lower() not in LINEAR_UNITS:
+            raise QgsProcessingException("Synthetic roads require declared horizontal station units; supply them with Prepare LandXML.")
+        station_metres = LINEAR_UNITS[station_unit.lower()][0]
+        length_label = LINEAR_UNITS[horizontal_unit.lower()][1]
+        depth_label = LINEAR_UNITS[vertical_unit.lower()][1]
         name = match_name(read_catalog(path).alignments, wanted, "alignment")
         lines = centerlines_3d(path, 2.0, name, fb.pushInfo, fb.isCanceled, max_step=2.0)
         if not lines:
@@ -615,7 +633,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             centre, stations, ground_index, width, shoulder,
             self.parameterAsDouble(p, "SYN_CAMBER", c) / 100.0, self.parameterAsDouble(p, "SYN_SHOULDER_FALL", c) / 100.0,
             self.parameterAsDouble(p, "SYN_CUT_SLOPE", c), self.parameterAsDouble(p, "SYN_FILL_SLOPE", c),
-            self.parameterAsDouble(p, "SYN_MAX_WIDTH", c))
+            self.parameterAsDouble(p, "SYN_MAX_WIDTH", c), step=0.5 / h, vertical_factor=vertical_factor)
         style = ss.road_style(width, shoulder, lanes)
         max_width = self.parameterAsDouble(p, "SYN_MAX_WIDTH", c)
         outer = xyz.reshape(len(centre), 7, 3)[:, [0, 6], :2].reshape(-1, 2)
@@ -631,14 +649,14 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         csv_path = self.parameterAsFile(p, "SYN_STRUCTURES_CSV", c)
         if csv_path:
             try:
-                items, notes = read_schedule_csv(csv_path)
+                items, notes = read_schedule_csv(csv_path, horizontal_unit, vertical_unit, station_unit)
             except (OSError, ValueError) as exc:
                 raise QgsProcessingException(f"Structure schedule: {exc}") from exc
             for note in notes:
                 fb.pushInfo(note)
             schedule += items
         try:
-            schedule += read_schedule_text(self.parameterAsString(p, "SYN_STRUCTURES", c))
+            schedule += read_schedule_text(self.parameterAsString(p, "SYN_STRUCTURES", c), horizontal_unit, vertical_unit, station_unit)
         except ValueError as exc:
             raise QgsProcessingException(str(exc)) from exc
         bridge_rows = np.zeros(len(centre), bool)
@@ -691,14 +709,14 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 middle_row = rows[len(rows) // 2]
                 self._synthetic_labels.append((f"Bridge {stations[rows[0]]:.0f}–{stations[rows[-1]]:.0f}",
                                                tuple(centre[middle_row])))
-                text, _piers = bridge(builder, centre, stations, normal, rows, 2 * edge + 1.0,
+                text, _piers = bridge(builder, centre, stations, normal, rows, 2 * edge + 1.0 / h,
                                       item.get("span") or default_span, ground_at,
-                                      spans=item.get("spans"), piers=item.get("piers"))
+                                      spans=item.get("spans"), piers=item.get("piers"), horizontal_unit=horizontal_unit, vertical_unit=vertical_unit, station_unit=station_unit)
                 notes.append(text)
                 middle = rows[len(rows) // 2]
                 n = normal[middle]
                 views.append((f"Bridge {stations[rows[0]]:.0f}–{stations[rows[-1]]:.0f}", (n[0], n[1], 0.25),
-                              centre[middle] - [0, 0, 5.0], max(1.2 * (stations[rows[-1]] - stations[rows[0]]), 60.0)))
+                              centre[middle] - [0, 0, 5.0 / v], max(1.2 * (stations[rows[-1]] - stations[rows[0]]) * station_metres / h, 60.0 / h)))
         culverts = []
         for item in schedule:
             if item["kind"] == "bridge":
@@ -715,10 +733,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             point = centre[i - 1] + (centre[i] - centre[i - 1]) * t
             reach = daylight[i - 1] + (daylight[i] - daylight[i - 1]) * t
             try:
-                notes.append(culvert(builder, item, point, normal[i - 1], edge + reach[0] + 0.5, edge + reach[1] + 0.5,
-                                     ground_at, record=channels))
-                size = (f"{item['cells']} x {item['span']:g} m pipe" if item["kind"] == "pipe"
-                        else f"{item['cells']} x {item['span']:g} x {item['rise']:g} m box")
+                notes.append(culvert(builder, item, point, normal[i - 1], edge + reach[0] + 0.5 / h, edge + reach[1] + 0.5 / h,
+                                     ground_at, record=channels, horizontal_unit=horizontal_unit, vertical_unit=vertical_unit))
+                size = (f"{item['cells']} x {item['span']:g} {length_label} pipe" if item["kind"] == "pipe"
+                        else f"{item['cells']} x {item['span']:g} {length_label} x {item['rise']:g} {depth_label} box")
                 self._synthetic_labels.append((f"{item['id']} {size}", (point[0], point[1], point[2])))
                 culverts.append(s)
                 n = normal[i - 1]
@@ -727,8 +745,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 outward = (end["right"] - end["left"]) / max(np.linalg.norm(end["right"] - end["left"]), 1e-9)
                 views.append((f"{item['id']} ({s:.0f})",
                               (outward[0] + along[0] * 0.35, outward[1] + along[1] * 0.35, 0.4),
-                              (end["right"][0], end["right"][1], end["z_right"] + 1.0),
-                              max(2.5 * end["width"], 30.0)))
+                              (end["right"][0], end["right"][1], end["z_right"] + 1.0 / v),
+                              max(2.5 * end["width"], 30.0 / h)))
             except ValueError as exc:
                 notes.append(str(exc))
         for note in notes:
@@ -742,7 +760,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         if channels and self.parameterAsBool(p, "SYN_CHANNELS", c):
             for index, mesh in enumerate(meshes):
                 if mesh[2] in ("surface", "raster"):
-                    cxyz, cfaces, lowered = carve_channels(mesh[3], mesh[4], channels)
+                    cxyz, cfaces, lowered = carve_channels(mesh[3], mesh[4], channels, horizontal_unit=horizontal_unit, vertical_unit=vertical_unit)
                     meshes[index] = (*mesh[:3], cxyz, cfaces, *mesh[5:])
             fb.pushInfo(f"Channels cut into the ground at {len(channels)} culvert{'s' if len(channels) > 1 else ''} "
                         "(barrel width, banks 1V:1.5H, beds rising 1:20 for 30 m beyond the headwalls).")
@@ -750,9 +768,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         # dips in the ground under fill with no structure near them
         road = centre[:, 2]
         surveyed = ground_at(centre)
-        candidates = [s for s in low_points(stations, road, surveyed)
+        candidates = [s for s in low_points(stations, road, surveyed, min_fill=1.5 / v, window=50.0 / station_metres)
                       if not bridge_rows[int(np.clip(np.searchsorted(stations, s), 0, len(stations) - 1))]
-                      and all(abs(s - k) > 50.0 for k in culverts)]
+                      and all(abs(s - k) > 50.0 / station_metres for k in culverts)]
         if candidates:
             fb.pushWarning("Possible crossings, not sized (ground low point under 1.5 m or more of fill with no culvert or "
                            "bridge within 50 m): " + ", ".join(f"{s:.0f}" for s in candidates[:20])
@@ -761,7 +779,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         def volumes(face_set):
             try:
                 depth_xyz, depth_faces, _stats = depth_tin((xyz, face_set), ground)
-                return volume_summary(depth_xyz, depth_faces)
+                return quantity_units(horizontal_unit, vertical_unit, True).volumes(volume_summary(depth_xyz, depth_faces))
             except ValueError:
                 return None
 
@@ -774,7 +792,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         whole = volumes(earth_faces if bridge_rows.any() else faces)
         if whole:
             fb.pushInfo(f"Synthetic corridor {stations[0]:.0f}–{stations[-1]:.0f}: about {whole['cut_volume']:,.0f} cut and "
-                        f"{whole['fill_volume']:,.0f} fill (cubic output units, concept section, no bulking"
+                        f"{whole['fill_volume']:,.0f} fill ({quantity_units(horizontal_unit, vertical_unit, True).volume}, concept section, no bulking"
                         + (", bridges left out" if bridge_rows.any() else "") + ").")
         if short.any() and not bridge_rows.any():
             rows = faces // 7
@@ -831,7 +849,11 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         if horizontal is None:
             raise QgsProcessingException("3D scenes need an output CRS in metres, feet or US survey feet.")
         chosen = VERTICAL_UNITS[self.parameterAsEnum(p, "VERTICAL_UNIT", c)][1]
-        vertical = (doc.vertical_unit if doc is not None else None) or chosen or horizontal or "meter"
+        vertical = (doc.vertical_unit if doc is not None else None) or chosen
+        if not vertical or vertical.lower() not in LINEAR_UNITS:
+            raise QgsProcessingException("The elevation unit is unknown. Choose Vertical unit explicitly; it is never inferred from the CRS.")
+        if doc and doc.vertical_unit and chosen and LINEAR_UNITS[chosen.lower()][0] != LINEAR_UNITS[vertical.lower()][0]:
+            raise QgsProcessingException("The chosen vertical unit contradicts the LandXML declaration.")
         vertical_factor = (LINEAR_UNITS[vertical.lower()][0] / LINEAR_UNITS[horizontal.lower()][0]
                            if horizontal and vertical.lower() in LINEAR_UNITS else 1.0)
         unit_label = LINEAR_UNITS.get(vertical.lower(), (1, "m"))[1]
@@ -935,14 +957,14 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             if area is None:
                 e = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance()).transformBoundingBox(layer.extent())
                 area = Area((e.xMinimum(), e.yMinimum(), e.xMaximum(), e.yMaximum()))
-            xyz, faces = raster_mesh(layer, crs, area, max(budget // max(len(rasters) + len(meshes), 1), 10_000), fb)
+            xyz, faces = raster_mesh(layer, crs, area, max(budget // max(len(rasters) + len(meshes), 1), 10_000), fb, vertical, VERTICAL_UNITS[self.parameterAsEnum(p, "RASTER_VERTICAL_UNIT", c)][1])
             meshes.append((f"r{k + 1}", layer.name(), "raster", xyz, faces, raster_style, None))
         wanted_roads = [n.strip() for n in self.parameterAsString(p, "SYNTHETIC", c).split(";") if n.strip()]
         built, outside = 0, []
         for synthetic_name in wanted_roads:
             try:
                 self._synthetic(p, c, fb, path, method, params, area, meshes, unders, vertical_factor, synthetic_name,
-                                first=not built)
+                                first=not built, horizontal_unit=horizontal, vertical_unit=vertical, station_unit=doc.horizontal_unit)
                 built += 1
             except _OutsideArea as error:          # one of several roads may lie beyond a limited area
                 outside.append(str(error))
@@ -970,6 +992,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                              {"file": os.path.basename(path) if path else "", "surfaces": [m[1] for m in meshes]},
                              self.parameterAsDouble(p, "EXAGGERATION", c))
         writer.scene["title"] = title
+        writer.scene["station_unit"] = doc.horizontal_unit if doc else horizontal
         road_path = self._road_path(path, method, params, fb) if path and any(
             m[5]["attribute"] == "road" for m in meshes) else None
         if road_path is None and any(m[5]["attribute"] == "road" and m[0] not in getattr(self, "_synthetic_extra", {})
@@ -987,7 +1010,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             if style["attribute"] == "road":
                 slope = np.zeros(len(xyz))
                 np.maximum.at(slope, faces.ravel(), np.repeat(ss.triangle_values(xyz, faces, "slope", None, vertical_factor), 3))
-                resolved = ss.resolve(style, None, unit_label)
+                resolved = ss.resolve(style, None, LINEAR_UNITS[horizontal.lower()][1])
                 writer.surface(surface_id, name, role, xyz, faces, ss.road_colors(offset, slope, style), resolved, depth,
                                extra={"station": station, "offset": offset})
                 continue
@@ -1064,7 +1087,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                     inside = area.keep_points(line3)
                     for run in np.split(np.arange(len(line3)), np.flatnonzero(np.diff(inside.astype(int))) + 1):
                         if inside[run[0]] and len(run) > 1:      # paths for the viewer's drive-through
-                            writer.path(name, line3[run], along[run])
+                            writer.path(name, line3[run], along[run], doc.horizontal_unit)
                             written_paths.add(name)
                 else:
                     plan = transform_vertices(np.array([[x, y, 0.0] for x, y in pts]), method=method, **params)
@@ -1206,7 +1229,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         if road_path is not None and road_path[0] not in written_paths:
             inside = area.keep_points(road_path[1])
             if inside.sum() > 1:
-                writer.path(road_path[0], road_path[1][inside], road_path[2][inside])
+                writer.path(road_path[0], road_path[1][inside], road_path[2][inside], doc.horizontal_unit)
         views = parse_views(view_text)
         writer.views(views, target=(low + high) / 2, size=size * (0.8 if corridor_axis is not None else 1.0))
         # long corridors: a side view of every stretch, so each part of the road can be reached in one click

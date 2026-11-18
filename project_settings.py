@@ -49,6 +49,11 @@ class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
         return guide_url(GUIDE_SECTIONS.get(self.name(), ""))
 
     def addParameter(self, definition, createOutput=True):
+        from .input_units import BASE_LABELS, unit_basis
+
+        basis = unit_basis(self.name(), definition.name())
+        if basis:
+            definition.setDescription(definition.description() + f" [{BASE_LABELS[basis]}]")
         if definition.name() in ADVANCED_EVERYWHERE:
             from .compat import mark_advanced_definition
 
@@ -87,6 +92,8 @@ class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
                     if self._inputs[name].type() == "file" and isinstance(value, str) and value:
                         self._saved[name] = self._project.pathResolver().readPath(value)
                 self.setParameters({})
+                from .input_units import connect_unit_labels
+                connect_unit_labels(self, algorithm)
                 self._project.cleared.connect(self._project_cleared)
                 self.algorithmFinished.connect(self._remember)
 

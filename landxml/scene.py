@@ -298,12 +298,13 @@ class SceneWriter:
             item["pair"] = pair            # {"before": [...ids], "after": [...ids]} for the before/after switch
         self.scene["surfaces"].append(item)
 
-    def path(self, name, points, stations):
+    def path(self, name, points, stations, station_unit=None):
         """A 3D path with stations (alignment at profile level), for drive-throughs and station read-outs."""
         relative = self._relative(points)
         self.scene.setdefault("paths", []).append({
             "name": name, "points": [[round(float(v), 3) for v in point] for point in relative],
-            "stations": [round(float(v), 3) for v in stations]})
+            "stations": [round(float(v), 3) for v in stations],
+            "station_unit": station_unit})
 
     def line(self, kind, name, points, properties=None, color=None, width=None, lift=None):
         default = LINE_STYLES.get(kind, ("#333333", 2, 0.1))

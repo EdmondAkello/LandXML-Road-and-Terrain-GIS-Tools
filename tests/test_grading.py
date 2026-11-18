@@ -941,3 +941,128 @@ class ViewerTemplateTests(unittest.TestCase):
         for needle in ("@media (max-width: 760px)", "touch-action: none", "pinchState()", "function composeA3",
                        "@page { size: A3 landscape", 'id="a3png"', 'id="a3print"', "function drawCallouts"):
             self.assertIn(needle, html)
+
+
+class CustomaryUnitRegressionTests(unittest.TestCase):
+    def test_structure_station_and_explicit_csv_dimensions(self):
+        from landxml_plugin.landxml.structures import (
+            read_schedule_csv,
+            read_schedule_text,
+        )
+
+        for unit in ("foot", "USSurveyFoot"):
+            item = read_schedule_text("12+50 = pipe 1 x 3", horizontal_unit=unit)[0]
+            self.assertEqual(item["station"], 1250)
+            rows, _ = read_schedule_csv(
+                "station,type,span_ft,rise_ft\n12+50,box,6,4\n", horizontal_unit=unit
+            )
+            self.assertAlmostEqual(
+                rows[0]["span"],
+                6 * 0.3048 / (1200 / 3937 if unit == "USSurveyFoot" else 0.3048),
+            )
+            self.assertIsNotNone(rows[0]["rise"])
+        rows, _ = read_schedule_csv(
+            "station,type,diameter_in\n1250,pipe,36\n", horizontal_unit="foot"
+        )
+        self.assertAlmostEqual(rows[0]["span"], 3)
+        rows, _ = read_schedule_csv(
+            "station,type,diameter\n1250,pipe,36\n", horizontal_unit="foot"
+        )
+        self.assertEqual(rows[0]["span"], 36)
+        rows, _ = read_schedule_csv(
+            "station_m,type,DiameterMM,invert_in,invert_out\n381,pipe,900,95,94\n",
+            horizontal_unit="foot",
+        )
+        self.assertAlmostEqual(rows[0]["station"], 1250)
+        self.assertAlmostEqual(rows[0]["span"], 2.952755905511811)
+        self.assertEqual((rows[0]["invert_in"], rows[0]["invert_out"]), (95, 94))
+
+    def test_schedule_conversions_reject_nonfinite_results(self):
+        from landxml_plugin.landxml.structures import read_schedule_csv
+        for station in ("nan", "inf", "1e308"):
+            rows, _ = read_schedule_csv(f"station_yd,type,span,rise\n{station},box,6,4\n", horizontal_unit="millimeter")
+            self.assertEqual(rows, [])
+        with self.assertRaisesRegex(ValueError, "numeric range"):
+            read_schedule_csv("station,type,span_m,rise\n1,box,1e308,1\n", horizontal_unit="millimeter")
+
+    def test_mixed_unit_camber_and_edge_face_area(self):
+        from landxml_plugin.landxml.synthetic_corridor import synthetic_corridor
+        from landxml_plugin.landxml.edges import edge_analysis
+
+        faces = np.array([[0, 1, 2], [0, 2, 3]])
+        ground = (
+            np.array(
+                [[-100, -100, 0], [200, -100, 0], [200, 100, 0], [-100, 100, 0]], float
+            ),
+            faces,
+        )
+        xyz, *_ = synthetic_corridor(
+            [[0, 0, 10], [100, 0, 10]],
+            [0, 100],
+            ground,
+            carriageway=20,
+            shoulder=0,
+            camber=0.02,
+            vertical_factor=1 / 0.3048,
+        )
+        self.assertAlmostEqual(10 - xyz[2, 2], 0.06096)
+        xyz = np.array([[0, 0, 2], [10, 0, 2], [10, 10, 2], [0, 10, 2]], float)
+        result = edge_analysis(xyz, faces, np.full(4, 2.0), vertical_factor=1 / 0.3048)
+        self.assertAlmostEqual(
+            result["schedule"]["retained_fill"]["face_over_1"], 262.4671916010499
+        )
+
+    def test_concept_structures_keep_physical_sizes_in_feet(self):
+        from landxml_plugin.landxml.structures import MeshBuilder, culvert, bridge
+
+        for h, v, name in (
+            (0.3048, 0.3048, "foot"),
+            (1200 / 3937, 1.0, "USSurveyFoot"),
+        ):
+            scale = np.array([h, h, v])
+            metric, customary = MeshBuilder(), MeshBuilder()
+            point = np.array([0.0, 0.0, 10.0])
+            item = dict(id="Box", kind="box", span=2.0, rise=1.0, cells=2, skew=0.0)
+            culvert(metric, item, point, [0, 1], 10, 10, lambda xy: np.zeros(len(xy)))
+            culvert(
+                customary,
+                dict(item, span=2 / h, rise=1 / v),
+                point / scale,
+                [0, 1],
+                10 / h,
+                10 / h,
+                lambda xy: np.zeros(len(xy)),
+                horizontal_unit=name,
+                vertical_unit=name if v != 1 else "meter",
+            )
+            np.testing.assert_allclose(
+                customary.result()[0] * scale, metric.result()[0], atol=1e-10
+            )
+            metric, customary = MeshBuilder(), MeshBuilder()
+            centre = np.array([[0, 0, 10], [50, 0, 10], [100, 0, 10]], float)
+            bridge(
+                metric,
+                centre,
+                np.array([0, 50, 100]),
+                np.tile([0, 1], (3, 1)),
+                [0, 1, 2],
+                10,
+                25,
+                lambda xy: np.zeros(len(xy)),
+            )
+            bridge(
+                customary,
+                centre / scale,
+                np.array([0, 50, 100]) / h,
+                np.tile([0, 1], (3, 1)),
+                [0, 1, 2],
+                10 / h,
+                25 / h,
+                lambda xy: np.zeros(len(xy)),
+                horizontal_unit=name,
+                vertical_unit=name if v != 1 else "meter",
+                station_unit=name,
+            )
+            np.testing.assert_allclose(
+                customary.result()[0] * scale, metric.result()[0], atol=1e-10
+            )

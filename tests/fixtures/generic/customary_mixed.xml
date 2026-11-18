@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic 100-foot road, northing/easting coordinates in feet, elevations in metres. -->
+<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2">
+  <Units><Imperial linearUnit="foot" verticalLinearUnit="meter"/></Units>
+  <Surfaces><Surface name="EG"><Definition surfType="TIN">
+    <Pnts><P id="1">-100 -100 100</P><P id="2">-100 200 100</P><P id="3">100 200 100</P><P id="4">100 -100 100</P></Pnts>
+    <Faces><F>1 2 3</F><F>1 3 4</F></Faces>
+  </Definition></Surface></Surfaces>
+  <Alignments><Alignment name="Road" staStart="1200" length="100">
+    <CoordGeom><Line length="100"><Start>0 0</Start><End>0 100</End></Line></CoordGeom>
+    <Profile><ProfAlign name="FG"><PVI>1200 102</PVI><PVI>1300 102</PVI></ProfAlign></Profile>
+  </Alignment></Alignments>
+</LandXML>

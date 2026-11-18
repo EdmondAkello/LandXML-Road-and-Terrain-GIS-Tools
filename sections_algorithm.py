@@ -256,9 +256,10 @@ class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
             x_range,
             progress=lambda value: fb.setProgress(int(value * 0.7)),
             cancel=fb.isCanceled,
+            vertical_unit=doc.vertical_unit,
         )
         fb.pushInfo(f"Wrote {len(views)} sections on {pages} {page} sheet(s).")
-        style = SectionStyle(x_range, exaggeration, doc.horizontal_unit, False, material_colors(views))
+        style = SectionStyle(x_range, exaggeration, doc.horizontal_unit, False, material_colors(views), vertical_unit=doc.vertical_unit)
         folder = self.parameterAsString(p, "PNG_FOLDER", c)
         if folder and p.get("PNG_FOLDER"):
             os.makedirs(folder, exist_ok=True)

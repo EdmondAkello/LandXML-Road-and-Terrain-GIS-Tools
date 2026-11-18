@@ -128,6 +128,21 @@
 "use strict";
 // LandXML Road & Terrain GIS Tools: self-contained 3D scene viewer (WebGL2, no libraries).
 const S = JSON.parse(document.getElementById("scene-data").textContent);
+const unitInfo = { meter: [1, "m"], metre: [1, "m"], foot: [0.3048, "ft"], internationalfoot: [0.3048, "ft"],
+  ussurveyfoot: [1200 / 3937, "ftUS"], millimeter: [0.001, "mm"], centimeter: [0.01, "cm"], kilometer: [1000, "km"] };
+const horizontalMetres = (unitInfo[(S.units.horizontal || "").toLowerCase()] || [1])[0];
+const verticalMetres = (unitInfo[(S.units.vertical || "").toLowerCase()] || [1])[0];
+const verticalLabel = (unitInfo[(S.units.vertical || "").toLowerCase()] || [1, "unknown units"])[1];
+const zFactor = verticalMetres / horizontalMetres;
+const stationUnit = "station_unit" in S ? S.station_unit : S.units.horizontal;
+const pointToRender = p => { p[2] *= zFactor; return p; };
+// Rendering uses horizontal units; stored coordinates and depth readouts keep their declared units.
+[S.extent.min, S.extent.max].forEach(pointToRender);
+for (const line of S.lines || []) { line.points.forEach(pointToRender); line.lift = (line.lift || 0) * zFactor; }
+for (const label of S.labels || []) { pointToRender(label.position); label.lift = (label.lift || 0) * zFactor; }
+for (const path of S.paths || []) path.points.forEach(pointToRender);
+for (const view of S.views || []) if (view.target) pointToRender(view.target);
+
 const canvas = document.getElementById("gl");
 const gl = canvas.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });
 const LINE_NAMES = { daylight: "Daylight line", platform_outline: "Platform outline", retained_edge: "Retained edge",
@@ -184,7 +199,7 @@ const meshProgram = program(`#version 300 es
     gl_Position = mvp * vec4(p.x, p.y, (p.z + lift) * ve, 1.0); }`,
   `#version 300 es
   precision highp float; in vec3 vc; in vec3 vn; in vec2 vr; in vec3 vt; in vec2 vw; uniform float alpha;
-  uniform int road; uniform vec3 roadW; uniform vec3 cAsphalt; uniform vec3 cShoulder; uniform vec3 cVerge; uniform vec3 cBatter; uniform vec3 cLine; uniform int fogOn; uniform float fogNear; uniform float fogFar;
+  uniform float metresToHorizontal; uniform int road; uniform vec3 roadW; uniform vec3 cAsphalt; uniform vec3 cShoulder; uniform vec3 cVerge; uniform vec3 cBatter; uniform vec3 cLine; uniform int fogOn; uniform float fogNear; uniform float fogFar;
   out vec4 o;
   float hash(vec2 q) { return fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453); }
   float band(float x, float c, float w) { float a = fwidth(x); return 1.0 - smoothstep(w * 0.5 - a, w * 0.5 + a, abs(x - c)); }
@@ -197,13 +212,13 @@ const meshProgram = program(`#version 300 es
       float grain = (hash(floor(vw * 24.0)) + hash(floor(vw * 7.0))) * 0.018 - 0.018;
       if (a <= half_) {
         col = cAsphalt + grain;
-        float m = band(a, half_ - 0.2, 0.15);                                  // edge lines
+        float m = band(a, half_ - 0.2 * metresToHorizontal, 0.15 * metresToHorizontal);                                  // edge lines
         float laneW = roadW.x / lanes;
         for (int k = 1; k < 8; k++) {                                          // lane lines (dashed), centre line
           if (float(k) >= lanes) break;
           float pos = -half_ + laneW * float(k);
-          float dash = step(fract(vr.x / 12.0), 0.33);
-          m = max(m, band(vr.y, pos, 0.12) * dash);
+          float dash = step(fract(vr.x / (12.0 * metresToHorizontal)), 0.33);
+          m = max(m, band(vr.y, pos, 0.12 * metresToHorizontal) * dash);
         }
         col = mix(col, cLine, m);
       } else if (a <= half_ + sh) {
@@ -235,8 +250,12 @@ const surfaces = [];
 for (const s of S.surfaces) {
   const m = S.meshes[s.id]; if (!m) continue;
   let pos = decode(m.positions, Float32Array), col = decode(m.colors, Uint8Array), idx = decode(m.indices, Uint32Array);
+  for (let i = 2; i < pos.length; i += 3) pos[i] *= zFactor;
+  s.lift = (s.lift || 0) * zFactor;
   let depth = m.depth ? decode(m.depth, Float32Array) : null;
   let roadAttr = m.road ? decode(m.road, Float32Array) : new Float32Array(pos.length / 3 * 2);
+  const stationScale = (unitInfo[(stationUnit || "").toLowerCase()] || [1])[0] / horizontalMetres;
+  for (let i = 0; i < roadAttr.length; i += 2) roadAttr[i] *= stationScale;
   const split = creaseNormals(pos, idx, S.crease ?? 30);
   let nrm = split.normals;
   if (split.extra.length) {               // corners on the far side of a crease get their own vertex
@@ -369,6 +388,7 @@ function render(width, height) {
   gl.useProgram(meshProgram);
   gl.uniformMatrix4fv(gl.getUniformLocation(meshProgram, "mvp"), false, mvp);
   gl.uniform1f(gl.getUniformLocation(meshProgram, "ve"), ve);
+  gl.uniform1f(gl.getUniformLocation(meshProgram, "metresToHorizontal"), 1 / horizontalMetres);
   gl.uniform1i(gl.getUniformLocation(meshProgram, "fogOn"), cam.free ? 1 : 0);
   gl.uniform1f(gl.getUniformLocation(meshProgram, "fogNear"), 60.0);
   gl.uniform1f(gl.getUniformLocation(meshProgram, "fogFar"), 900.0);
@@ -591,8 +611,8 @@ function pick(e) {
   if (!best) { box.style.display = "none"; return; }
   const { s, a, b, c, u, v } = best, P = s.pos, o = S.origin, wa = 1 - u - v;
   const X = wa * P[a * 3] + u * P[b * 3] + v * P[c * 3] + o[0], Y = wa * P[a * 3 + 1] + u * P[b * 3 + 1] + v * P[c * 3 + 1] + o[1];
-  const Z = wa * P[a * 3 + 2] + u * P[b * 3 + 2] + v * P[c * 3 + 2] + o[2];
-  const unit = (S.units && S.units.vertical === "meter") ? "m" : "";
+  const Z = (wa * P[a * 3 + 2] + u * P[b * 3 + 2] + v * P[c * 3 + 2]) / zFactor + o[2];
+  const unit = verticalLabel;
   let text = `<b>${s.info.name}</b><br>E ${X.toFixed(2)} · N ${Y.toFixed(2)}<br>Level ${Z.toFixed(3)} ${unit}`;
   if (s.depth) {
     const d = wa * s.depth[a] + u * s.depth[b] + v * s.depth[c];
@@ -603,7 +623,12 @@ function pick(e) {
 
 // ---------------------------------------------------------------- panel
 document.getElementById("title").textContent = S.title || (S.source && S.source.file) || "3D scene";
-document.getElementById("meta").textContent = [S.crs && S.crs.authid, S.units && `units: ${S.units.horizontal}`, S.created].filter(Boolean).join(" · ");
+document.getElementById("meta").textContent = [S.crs && S.crs.authid,
+  `XY: ${(unitInfo[(S.units.horizontal || "").toLowerCase()] || [1, "unknown"])[1]} · elevation: ${verticalLabel}`, S.created].filter(Boolean).join(" · ");
+const stationInput = document.getElementById("gotosta");
+const stationLabel = (unitInfo[(stationUnit || "").toLowerCase()] || [1, "unknown"])[1];
+stationInput.placeholder = `Station [${stationLabel}], e.g. ${stationText(1250)}`;
+stationInput.setAttribute("aria-label", `Station [${stationLabel}]`);
 const layersDiv = document.getElementById("layers");
 for (const s of surfaces) {
   const row = document.createElement("div"); row.className = "row";
@@ -850,6 +875,12 @@ if (pairs.length) {
 
 // ---------------------------------------------------------------- drive through
 const paths = (S.paths || []).filter(p => p.points.length > 1);
+if (["foot", "internationalfoot", "ussurveyfoot"].includes((stationUnit || "").toLowerCase())) {
+  const speeds = [[20, 8.9408], [30, 13.4112], [50, 22.352]];
+  [...document.getElementById("drivespeed").options].forEach((option, i) => {
+    option.textContent = `${speeds[i][0]} mph`; option.value = speeds[i][1];
+  });
+}
 let drive = null;
 function pathAt(path, station) {
   const st = path.stations, P = path.points;
@@ -858,15 +889,25 @@ function pathAt(path, station) {
   return [0, 1, 2].map(k => P[i - 1][k] + q * (P[i][k] - P[i - 1][k]));
 }
 function placeDriver(path, station) {
-  const eyeHeight = 1.3, look = 30;
+  const eyeHeight = 1.3 / horizontalMetres, look = 30 / (unitInfo[(path.station_unit ?? stationUnit ?? "").toLowerCase()] || [1])[0];
   const p = pathAt(path, station), ahead = pathAt(path, Math.min(station + look, path.stations[path.stations.length - 1]));
   if (Math.hypot(ahead[0] - p[0], ahead[1] - p[1]) < 1) { const back = pathAt(path, station - look); ahead[0] = 2 * p[0] - back[0]; ahead[1] = 2 * p[1] - back[1]; ahead[2] = p[2]; }
   cam.free = { eye: [p[0], p[1], p[2] * ve + eyeHeight], target: [ahead[0], ahead[1], ahead[2] * ve + eyeHeight * 0.8] };
-  document.getElementById("drivesta").textContent = stationText(station);
+  document.getElementById("drivesta").textContent = stationText(station, path.station_unit);
   markMinimap(p);
   draw();
 }
-function stationText(st) { const k = Math.floor(st / 1000), m = st - 1000 * k; return `${k}+${m.toFixed(0).padStart(3, "0")}`; }
+function stationText(st, unit = stationUnit) {
+  if (!unitInfo[(unit || "").toLowerCase()]) return String(Math.round(st));
+  const base = ["foot", "internationalfoot", "ussurveyfoot"].includes(unit.toLowerCase()) ? 100 : 1000;
+  const value = Math.abs(Math.round(st)), k = Math.floor(value / base), minor = value - base * k;
+  return `${st < 0 ? "-" : ""}${k}+${String(minor).padStart(base === 100 ? 2 : 3, "0")}`;
+}
+function advanceStation(path, station, metresPerSecond, seconds) {
+  const unit = unitInfo[(path.station_unit ?? stationUnit ?? "").toLowerCase()];
+  if (!unit) return station;
+  return Math.min(station + metresPerSecond * seconds / unit[0], path.stations[path.stations.length - 1]);
+}
 function stopDrive(exit) {
   if (drive && drive.timer) cancelAnimationFrame(drive.timer);
   if (drive && drive.recorder && drive.recorder.state !== "inactive") drive.recorder.stop();
@@ -877,12 +918,13 @@ function stopDrive(exit) {
 if (paths.length) {
   document.getElementById("drive").style.display = "block";
   const select = document.getElementById("drivepath"), slider = document.getElementById("driveslider");
-  paths.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = `${p.name} (${stationText(p.stations[0])} – ${stationText(p.stations[p.stations.length - 1])})`; select.appendChild(o); });
+  paths.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = `${p.name} (${stationText(p.stations[0], p.station_unit)} – ${stationText(p.stations[p.stations.length - 1], p.station_unit)})`; select.appendChild(o); });
   const current = () => paths[+select.value];
   const stationOf = () => { const p = current(), a = p.stations[0], b = p.stations[p.stations.length - 1]; return a + (+slider.value) * (b - a); };
   slider.oninput = () => { drive = drive || {}; placeDriver(current(), stationOf()); };
   select.onchange = () => { slider.value = 0; drive = drive || {}; placeDriver(current(), stationOf()); };
   document.getElementById("driveexit").onclick = () => stopDrive(true);
+  document.getElementById("driveplay").disabled = !unitInfo[(current().station_unit ?? stationUnit ?? "").toLowerCase()];
   document.getElementById("driveplay").onclick = () => {
     if (drive && drive.timer) { stopDrive(false); return; }
     drive = drive || {};
@@ -899,7 +941,7 @@ if (paths.length) {
     let last = performance.now(), station = stationOf();      // the station is kept here: the slider would round small steps away
     const tick = now => {
       const speed = +document.getElementById("drivespeed").value, dt = Math.min((now - last) / 1000, 0.25); last = now;
-      station = Math.min(station + speed * dt, b);
+      station = advanceStation(p, station, speed, dt);
       slider.value = (station - a) / Math.max(b - a, 1e-9);
       placeDriver(p, station); render(canvas.width, canvas.height);
       if (station >= b) { stopDrive(false); return; }
@@ -910,9 +952,14 @@ if (paths.length) {
 }
 
 // ---------------------------------------------------------------- along the road: minimap and go to station
-function parseStation(text) {
-  const m = /^\s*(\d+)\s*\+\s*([\d.]+)\s*$/.exec(text); if (m) return +m[1] * 1000 + +m[2];
-  const v = parseFloat(text); return isFinite(v) ? v : null;
+function parseStation(text, unit = stationUnit) {
+  const m = /^\s*([+-]?)(\d+)\s*\+\s*(\d+(?:\.\d*)?)\s*$/.exec(text);
+  if (m) {
+    if (!unitInfo[(unit || "").toLowerCase()]) return null;
+    const base = ["foot", "internationalfoot", "ussurveyfoot"].includes(unit.toLowerCase()) ? 100 : 1000;
+    return +m[3] < base ? (m[1] === "-" ? -1 : 1) * (+m[2] * base + +m[3]) : null;
+  }
+  const v = text.trim() ? Number(text) : NaN; return isFinite(v) ? v : null;
 }
 function lookAtStation(path, station) {
   const st = path.stations; station = Math.max(st[0], Math.min(st[st.length - 1], station));
