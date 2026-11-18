@@ -254,3 +254,20 @@ def edges_report_html(result, units, title_surfaces, source_file="", warnings=()
     if warnings:
         body.append("".join(f"<p class='note'>{html.escape(text)}</p>" for text in warnings))
     return _document("Grading edge analysis", "".join(body))
+
+
+def wall_top(points, tolerance=0.15):
+    """A drawn edge along the top of a wall: a footprint outline steps down and back up a near-vertical
+    face at points that almost coincide in plan, which draws as a comb of ticks; such neighbours are
+    merged into one point at their highest level. Only the drawing uses this, not the schedule."""
+    points = np.asarray(points, float)
+    if len(points) < 3:
+        return points
+    out = [points[0].copy()]
+    for point in points[1:]:
+        if np.hypot(*(point[:2] - out[-1][:2])) <= tolerance:
+            if point[2] > out[-1][2]:
+                out[-1] = point.copy()
+        else:
+            out.append(point.copy())
+    return np.array(out)
