@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Complete customary-unit handling for structure schedules, synthetic roads, mixed-unit scene rendering and DEM elevations, edge face areas, drive-through speeds/cameras, section area labels and surface pick readouts. Explicit structure CSV unit headings (including inches and legacy millimetre headings) are converted; generic dimensions stay in their stated model units, without magnitude guessing.
+
+### Added
+- Dimensional inputs across the Processing tools state their unit basis. Desktop dialogs show actual m, ft or ftUS, selected volume and criteria speed units beside fields and refresh from files, CRS and explicit unit choices without converting entered values. Unknown units stay unknown. The viewer docks also identify dimensional input units.
+- Raster elevation unit selection for DEMs without band-unit metadata. Tagged DEMs are explicitly converted to the scene elevation unit; unknown elevation units require a choice. Scene paths retain source station units through reprojection.
+
 ## 1.11.1 — 2026-11-18
 
 ### Fixed

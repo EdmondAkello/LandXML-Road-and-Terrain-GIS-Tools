@@ -20,6 +20,11 @@ jobs:
         run: python3 -m compileall -q -x '(^|/)(dist|\.git)/' .
       - name: No merge-conflict markers
         run: "! git grep -n -E '^(<<<<<<<|=======|>>>>>>>)( |$)' -- '*.py' '*.md' '*.html' '*.json' '*.txt' '*.yml'"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Viewer unit regressions
+        run: node --test tests/test_viewer_units.cjs
       - name: Run tests
         run: python3 -m unittest -v tests/test_landxml.py tests/test_earthworks.py tests/test_criteria_tables.py tests/test_grading.py
 

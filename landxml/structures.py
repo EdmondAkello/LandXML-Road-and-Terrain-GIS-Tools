@@ -14,6 +14,9 @@ import re
 
 import numpy as np
 
+from .quantity_units import LINEAR_UNITS
+from .stationing import parse_station as source_station
+
 # ------------------------------------------------------------------ schedule
 
 FIELDS = {          # field -> accepted headings (compared without case, spaces, units or punctuation)
@@ -37,15 +40,24 @@ def _key(heading):
     return re.sub(r"[^a-z0-9]", "", heading.lower().replace("(m)", "").replace("_m", "m"))
 
 
-def parse_station(text):
-    """'9+025.00', '9025', '9+025' -> 9025.0"""
-    text = str(text).strip().replace(" ", "")
-    if not text:
-        raise ValueError("empty chainage")
-    if "+" in text:
-        km, _sep, metres = text.partition("+")
-        return float(km or 0) * 1000.0 + float(metres or 0)
-    return float(text)
+def parse_station(text, horizontal_unit="meter"):
+    return source_station(str(text), horizontal_unit)
+
+
+def _heading(heading):
+    if _key(heading) in FIELDS["invert_in"]:
+        return heading, None
+    match = re.search(r"(?:[_ (]?)(mm|cm|ftus|ft|in|yd|m)\)?$", heading.strip(), re.I)
+    return (heading[:match.start()], match[1].lower()) if match else (heading, None)
+
+
+def _dimension(value, heading, target):
+    value = _number(value)
+    if value is None:
+        return None
+    unit = _heading(heading)[1]
+    factors = {"mm": .001, "cm": .01, "m": 1., "ft": .3048, "ftus": 1200 / 3937, "in": .0254, "yd": .9144}
+    return value if unit is None else value * factors[unit] / LINEAR_UNITS[target.lower()][0]
 
 
 def _number(value):
@@ -65,15 +77,17 @@ def _kind(text, has_diameter, has_rise):
     return "box"
 
 
-def read_schedule_csv(path_or_text):
+def read_schedule_csv(path_or_text, horizontal_unit="meter", vertical_unit=None, station_unit=None):
     """(structures, notes): structures from a CSV schedule, notes saying which column became which field."""
     text = path_or_text if "\n" in path_or_text else open(path_or_text, encoding="utf-8-sig").read()
+    vertical_unit = vertical_unit or horizontal_unit
+    station_unit = station_unit or horizontal_unit
     reader = csv.DictReader(io.StringIO(text))
     headings = reader.fieldnames or []
     mapping = {}
     for field, names in FIELDS.items():
         for heading in headings:
-            if _key(heading) in names and field not in mapping:
+            if _key(_heading(heading)[0]) in names and field not in mapping:
                 mapping[field] = heading
     if "station" not in mapping:
         raise ValueError("The structure schedule has no chainage column (accepted headings: chainage, station, ch).")
@@ -86,38 +100,48 @@ def read_schedule_csv(path_or_text):
     for line, row in enumerate(reader, 2):
         def get(field, row=row):
             return row.get(mapping[field]) if field in mapping else None
+        def station_value(text, field):
+            declared = _heading(mapping.get(field, ""))[1]
+            names = {"m": "meter", "mm": "millimeter", "cm": "centimeter", "ft": "foot", "ftus": "USSurveyFoot"}
+            unit = names.get(declared, station_unit)
+            if declared in {"in", "yd"}:
+                factor = .0254 if declared == "in" else .9144
+                return parse_station(text, None) * factor / LINEAR_UNITS[station_unit.lower()][0]
+            return parse_station(text, unit) * LINEAR_UNITS[unit.lower()][0] / LINEAR_UNITS[station_unit.lower()][0]
         try:
-            station = parse_station(get("station"))
+            station = station_value(get("station"), "station")
         except (ValueError, TypeError):
             notes.append(f"Row {line} skipped: chainage '{get('station')}' is not a number.")
             continue
-        diameter = _number(get("diameter"))
-        if diameter and diameter > 20:                     # millimetres
-            diameter /= 1000.0
-        rise = _number(get("rise"))
+        def dimension(field, unit):
+            return _dimension(get(field), mapping.get(field, ""), unit)
+        diameter = dimension("diameter", horizontal_unit)
+        rise = dimension("rise", vertical_unit)
         kind = _kind(get("type"), diameter is not None, rise is not None)
         end = None
         if get("end"):
             try:
-                end = parse_station(get("end"))
+                end = station_value(get("end"), "end")
             except ValueError:
                 end = None
         structures.append({
             "id": (get("id") or "").strip() or f"{kind} {station:.0f}", "kind": kind, "station": station, "end": end,
-            "cells": max(int(_number(get("cells")) or 1), 1), "span": _number(get("span")) or diameter,
-            "rise": rise or diameter, "skew": _number(get("skew")) or 0.0,
-            "invert_in": _number(get("invert_in")), "invert_out": _number(get("invert_out")),
+            "cells": max(int(_number(get("cells")) or 1), 1), "span": dimension("span", horizontal_unit) or diameter,
+            "rise": rise or (diameter * LINEAR_UNITS[horizontal_unit.lower()][0] / LINEAR_UNITS[vertical_unit.lower()][0] if diameter else None), "skew": _number(get("skew")) or 0.0,
+            "invert_in": dimension("invert_in", vertical_unit), "invert_out": dimension("invert_out", vertical_unit),
             "spans": _number(get("spans")),
-            "piers": [parse_station(t) for t in re.split(r"[\s;/|]+", get("piers").strip())] if get("piers") else None})
+            "piers": [station_value(t, "piers") for t in re.split(r"[\s;/|]+", get("piers").strip())] if get("piers") else None})
     return structures, notes
 
 
 _TYPED = re.compile(r"^\s*(?P<a>[\d+.]+)\s*(?:[-–]\s*(?P<b>[\d+.]+))?\s*=\s*(?P<kind>box|pipe|bridge)\b(?P<rest>.*)$", re.I)
 
 
-def read_schedule_text(text):
+def read_schedule_text(text, horizontal_unit="meter", vertical_unit=None, station_unit=None):
     """'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9; 2+410 = box 1 x 1.5 x 1.5, skew 15'; bridges:
     '1+364-2+293 = bridge, span 25', '... = bridge, spans 7' or '... = bridge, piers 1+500 1+640 1+780'."""
+    vertical_unit = vertical_unit or horizontal_unit
+    station_unit = station_unit or horizontal_unit
     structures = []
     for part in re.split(r"[;\n]", text or ""):
         if not part.strip():
@@ -131,10 +155,10 @@ def read_schedule_text(text):
         numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", rest.split(",")[0])]
         options = dict((k.lower(), float(v)) for k, v in re.findall(r"\b(skew|spans|span)\s*[:=]?\s*(-?\d+(?:\.\d+)?)", rest, re.I))
         pier_text = re.search(r"\bpiers?\s*[:=]?\s*([\d+.\s/]+)", rest, re.I)
-        piers = [parse_station(t) for t in re.split(r"[\s/]+", pier_text.group(1).strip())] if pier_text else None
-        station = parse_station(match["a"])
+        piers = [parse_station(t, station_unit) for t in re.split(r"[\s/]+", pier_text.group(1).strip())] if pier_text else None
+        station = parse_station(match["a"], station_unit)
         item = {"id": f"{kind} {match['a']}", "kind": kind, "station": station,
-                "end": parse_station(match["b"]) if match["b"] else None, "cells": 1, "span": None, "rise": None,
+                "end": parse_station(match["b"], station_unit) if match["b"] else None, "cells": 1, "span": None, "rise": None,
                 "skew": options.get("skew", 0.0), "invert_in": None, "invert_out": None}
         if kind == "box":
             if len(numbers) != 3:
@@ -143,7 +167,7 @@ def read_schedule_text(text):
         elif kind == "pipe":
             if len(numbers) != 2:
                 raise ValueError(f"'{part.strip()}': a pipe needs lines x diameter, for example 'pipe 2 x 0.9'.")
-            item.update(cells=int(numbers[0]), span=numbers[1], rise=numbers[1])
+            item.update(cells=int(numbers[0]), span=numbers[1], rise=numbers[1] * LINEAR_UNITS[horizontal_unit.lower()][0] / LINEAR_UNITS[vertical_unit.lower()][0])
         else:
             item.update(span=options.get("span"), spans=options.get("spans"), piers=piers)
         structures.append(item)
@@ -157,6 +181,11 @@ class MeshBuilder:
 
     def __init__(self):
         self.xyz, self.faces, self.count = [], [], 0
+
+    def add(self, xyz, faces):
+        self.xyz.append(np.asarray(xyz))
+        self.faces.append(np.asarray(faces) + self.count)
+        self.count += len(xyz)
 
     def quads(self, corners):
         """corners: (k, 4, 3) quads, counter-clockwise seen from outside."""
@@ -211,12 +240,30 @@ class MeshBuilder:
         return np.vstack(self.xyz), np.vstack(self.faces)
 
 
-def culvert(builder, item, centre, normal, left_length, right_length, ground_at, cover=0.6, record=None):
+def culvert(builder, item, centre, normal, left_length, right_length, ground_at, cover=0.6, record=None, horizontal_unit="meter", vertical_unit="meter"):
     """Add a box or pipe culvert at plan point ``centre`` crossing the road along ``normal`` rotated by the skew.
 
     ``left_length`` / ``right_length``: barrel length each side of the centreline (to the fill toes).
     ``ground_at(points)`` samples the ground; ``centre[2]`` is the road level, and the barrel keeps ``cover``
     under it. Returns a short description for the log."""
+    h = LINEAR_UNITS[horizontal_unit.lower()][0]
+    v = LINEAR_UNITS[vertical_unit.lower()][0]
+    if h != 1 or v != 1:
+        scale = np.array([h, h, v])
+        metric = dict(item, span=item["span"] * h if item["span"] else None,
+                      rise=item["rise"] * v if item["rise"] else None,
+                      invert_in=item.get("invert_in") * v if item.get("invert_in") is not None else None,
+                      invert_out=item.get("invert_out") * v if item.get("invert_out") is not None else None)
+        parts, channels = MeshBuilder(), []
+        text = culvert(parts, metric, np.asarray(centre) * scale, normal, left_length * h, right_length * h,
+                       lambda xy: ground_at(xy / h) * v, cover=cover, record=channels)
+        xyz, faces = parts.result()
+        builder.add(xyz / scale, faces)
+        if record is not None:
+            record.extend(dict(ch, left=ch["left"] / h, right=ch["right"] / h,
+                               z_left=ch["z_left"] / v, z_right=ch["z_right"] / v, width=ch["width"] / h)
+                          for ch in channels)
+        return text
     skew = math.radians(item.get("skew") or 0.0)
     cos, sin = math.cos(skew), math.sin(skew)
     u = np.array([normal[0] * cos - normal[1] * sin, normal[0] * sin + normal[1] * cos])      # barrel axis (to the right)
@@ -289,11 +336,25 @@ def culvert(builder, item, centre, normal, left_length, right_length, ground_at,
     return f"{item['id']}: {label}, {length:.0f} m long, {source}"
 
 
-def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at, depth=None, spans=None, piers=None):
+def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at, depth=None, spans=None, piers=None,
+           horizontal_unit="meter", vertical_unit="meter", station_unit="meter"):
     """Deck, parapets, piers and abutments over the centreline rows ``rows`` (a contiguous index range).
 
     The deck top is the road (drawn by the corridor); this adds the deck body below it, parapets on its
     edges, piers at about ``span`` spacing and an abutment wall at each end. Returns (description, pier count)."""
+    h = LINEAR_UNITS[horizontal_unit.lower()][0]
+    v = LINEAR_UNITS[vertical_unit.lower()][0]
+    st = LINEAR_UNITS[station_unit.lower()][0]
+    if h != 1 or v != 1 or st != 1:
+        scale = np.array([h, h, v])
+        parts = MeshBuilder()
+        result = bridge(parts, np.asarray(centre) * scale, np.asarray(stations) * st, normal, rows,
+                        deck_width * h, span * h, lambda xy: ground_at(xy / h) * v,
+                        depth=None if depth is None else depth * v, spans=spans,
+                        piers=[p * st for p in piers] if piers else None)
+        xyz, faces = parts.result()
+        builder.add(xyz / scale, faces)
+        return result
     rows = np.asarray(rows)
     start, end = stations[rows[0]], stations[rows[-1]]
     length = end - start
@@ -343,11 +404,19 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
             f"{longest:.0f} m), {len(placed)} pier{'s' if len(placed) != 1 else ''}"), len(placed)
 
 
-def carve_channels(xyz, faces, channels, apron=30.0, bank=1.5, bed_rise=0.05):
+def carve_channels(xyz, faces, channels, apron=30.0, bank=1.5, bed_rise=0.05, horizontal_unit="meter", vertical_unit="meter"):
     """Lower the ground along each culvert: a bed at the barrel inverts between the ends, rising ``bed_rise``
     per metre for ``apron`` beyond them, as wide as the structure, with banks at ``bank`` H:1V. The ground is
     only ever lowered. Returns (xyz, faces, number of vertices lowered); triangles near the channels are split
     first so the cut has a shape."""
+    h = LINEAR_UNITS[horizontal_unit.lower()][0]
+    v = LINEAR_UNITS[vertical_unit.lower()][0]
+    if h != 1 or v != 1:
+        scale = np.array([h, h, v])
+        metric = [dict(ch, left=np.asarray(ch["left"]) * h, right=np.asarray(ch["right"]) * h,
+                       z_left=ch["z_left"] * v, z_right=ch["z_right"] * v, width=ch["width"] * h) for ch in channels]
+        xyz, faces, count = carve_channels(np.asarray(xyz) * scale, faces, metric, apron, bank, bed_rise)
+        return xyz / scale, faces, count
     xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
     lowered = 0
     for item in channels:

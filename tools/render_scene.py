@@ -189,7 +189,12 @@ def render(folder, size=(2400, 1600), only=None, out=None):
 
     pv.OFF_SCREEN = True
     scene = _load(folder)
-    ve = float(scene.get("vertical_exaggeration", 1.0))
+    factors = {"meter": 1., "metre": 1., "foot": .3048, "internationalfoot": .3048,
+               "ussurveyfoot": 1200 / 3937, "millimeter": .001, "centimeter": .01, "kilometer": 1000.}
+    units = scene.get("units") or {}
+    ve = float(scene.get("vertical_exaggeration", 1.0)) * (
+        factors.get(units.get("vertical", "meter").lower(), 1.) /
+        factors.get(units.get("horizontal", "meter").lower(), 1.))
     meshes = []
     for surface in scene["surfaces"]:
         mesh = pv.read(os.path.join(folder, surface["mesh"]))

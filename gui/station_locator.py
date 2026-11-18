@@ -79,6 +79,7 @@ class StationOffsetDock(QgsDockWidget):
         row.addWidget(browse)
         layout.addLayout(row)
         form = QFormLayout()
+        self.input_form = form
         self.alignment_combo = QComboBox()
         form.addRow("Alignment", self.alignment_combo)
         self.method_combo = QComboBox()
@@ -171,6 +172,13 @@ class StationOffsetDock(QgsDockWidget):
             self.result_label.setText(str(exc))
             return False
         self.path, self.document = path, document
+        from ..input_units import short_unit
+        unit_label = short_unit(document.horizontal_unit)
+        self.numbers["SEGMENT"].setSuffix(" " + unit_label)
+        self.input_form.labelForField(self.station_edit).setText("Station [" + unit_label + "]")
+        self.input_form.labelForField(self.offset_edit).setText("Offset (− left / + right) [" + unit_label + "]")
+        self.station_edit.setToolTip("Station in " + unit_label)
+        self.offset_edit.setToolTip("Signed source offset in " + unit_label)
         self.file_edit.setText(path)
         for alignment in alignments:
             self.alignment_combo.addItem(alignment["name"])

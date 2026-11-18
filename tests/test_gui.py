@@ -200,6 +200,21 @@ class ProfileViewerTests(unittest.TestCase):
             self.dock.cleanup()
             self.dock.canvas = None
 
+    def test_foot_section_area_labels_in_shared_renderer(self):
+        from landxml_plugin.gui.section_chart import section_svg, SectionStyle
+
+        self.dock.tabs.setCurrentIndex(1)
+        view = self.dock.section_panel.chart.current()
+        svg = section_svg(
+            view, SectionStyle(unit="USSurveyFoot", vertical_unit="USSurveyFoot")
+        )
+        self.assertIn("ftUS²", svg)
+        self.assertNotIn("m²", svg)
+        svg = section_svg(view, SectionStyle(unit="foot", vertical_unit="meter"))
+        self.assertIn("ft·m", svg)
+        svg = section_svg(view, SectionStyle(unit="foot"))
+        self.assertIn("ft·unknown", svg)
+
     def test_cross_section_tab_and_exports(self):
         self.assertTrue(self.dock.tabs.isTabEnabled(1))
         self.dock.tabs.setCurrentIndex(1)

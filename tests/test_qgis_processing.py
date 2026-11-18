@@ -811,7 +811,9 @@ class QgisProcessingTests(unittest.TestCase):
         ds.SetGeoTransform((-20, 2, 0, 70, 0, -2))
         from osgeo import osr
         srs = osr.SpatialReference(); srs.ImportFromEPSG(26915); ds.SetProjection(srs.ExportToWkt())
-        band = ds.GetRasterBand(1); band.SetNoDataValue(-9999)
+        band = ds.GetRasterBand(1)
+        band.SetNoDataValue(-9999)
+        band.SetUnitType("m")
         grid = np.fromfunction(lambda r, c: 95 + 0.1 * c, (60, 60), dtype=float); grid[0, 0] = -9999
         band.WriteArray(grid); ds = None
         return str(path), str(tif)
@@ -919,8 +921,84 @@ class QgisProcessingTests(unittest.TestCase):
                 algorithm.processAlgorithm(dict(params, RASTERS=[], VECTORS=[], CONTOURS="", WATER="", SURFACES="EG",
                                                 SYNTHETIC="Main", SYN_GROUND="Nothing", OUTPUT_FOLDER=str(Path(directory) / "x")),
                                            self.context, self.feedback)
+            params["RASTERS"] = []
+            del raster
         with self.assertRaises(QgsProcessingException):
             algorithm.processAlgorithm(dict(params, SURFACES="Road FG = depth"), self.context, self.feedback)
+
+    def test_mixed_unit_scene_and_explicit_dem_elevations(self):
+        from qgis.core import QgsRasterLayer
+        from landxml_plugin.landxml.scene import load_scene, read_ply
+        from landxml_plugin.scene_algorithm import Area, raster_mesh
+
+        source = str(ROOT / "tests/fixtures/generic/customary_mixed.xml")
+        crs = QgsCoordinateReferenceSystem.fromProj(
+            "+proj=utm +zone=15 +datum=NAD83 +units=ft +no_defs"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            params = dict(
+                INPUT=source,
+                METHOD=1,
+                OUTPUT_CRS=crs,
+                SURFACES="EG",
+                SYNTHETIC="Road",
+                SYN_CARRIAGEWAY=20,
+                SYN_SHOULDER=0,
+                SYN_CAMBER=2,
+                SYN_BRIDGES=False,
+                SYN_STRUCTURES="12+50 = box 1 x 3 x 1",
+                OUTPUT_FOLDER=str(Path(directory) / "scene"),
+            )
+            result = self.algorithms["landxml_3d_scene"].processAlgorithm(
+                params, self.context, self.feedback
+            )
+            scene, folder = load_scene(result["SCENE"])
+            surface = next(s for s in scene["surfaces"] if "synthetic" in s["name"])
+            xyz, _f, _rgb, _d, extra = read_ply(
+                str(Path(folder) / surface["mesh"]), extras=True
+            )
+            xyz += scene["origin"]
+            self.assertAlmostEqual(
+                float(xyz[np.isclose(extra["offset"], 10), 2][0]), 101.93904, places=5
+            )
+            self.assertEqual(scene["paths"][0]["station_unit"], "foot")
+            self.assertTrue(any("box 12+50" in s["text"] for s in scene["labels"]))
+            missing = Path(directory) / "missing.xml"
+            missing.write_text(
+                Path(source).read_text().replace(' verticalLinearUnit="meter"', "")
+            )
+            with self.assertRaisesRegex(QgsProcessingException, "unit is unknown"):
+                self.algorithms["landxml_3d_scene"].processAlgorithm(
+                    dict(params, INPUT=str(missing)), self.context, self.feedback
+                )
+            path = str(Path(directory) / "dem.tif")
+            ds = gdal.GetDriverByName("GTiff").Create(path, 3, 3, 1, gdal.GDT_Float32)
+            ds.SetGeoTransform((0, 1, 0, 3, 0, -1))
+            ds.SetProjection(crs.toWkt())
+            ds.GetRasterBand(1).WriteArray(np.full((3, 3), 30.48))
+            ds.GetRasterBand(1).SetUnitType("m")
+            ds = None
+            raster = QgsRasterLayer(path, "metric DEM")
+            xyz, _f = raster_mesh(
+                raster, crs, Area((0, 0, 3, 3)), 1000, self.feedback, "foot"
+            )
+            self.assertTrue(np.allclose(xyz[:, 2], 100, atol=1e-5))
+            del raster
+            ds = gdal.Open(path, gdal.GA_Update)
+            ds.GetRasterBand(1).SetUnitType("")
+            ds = None
+            raster = QgsRasterLayer(path, "unknown DEM")
+            with self.assertRaisesRegex(
+                QgsProcessingException, "Raster elevation unit"
+            ):
+                raster_mesh(
+                    raster, crs, Area((0, 0, 3, 3)), 1000, self.feedback, "foot"
+                )
+            xyz, _f = raster_mesh(
+                raster, crs, Area((0, 0, 3, 3)), 1000, self.feedback, "foot", "meter"
+            )
+            self.assertTrue(np.allclose(xyz[:, 2], 100, atol=1e-5))
+            del raster
 
     def test_centreline_levels_follow_the_profile_across_near_equal_element_joins(self):
         from landxml_plugin.road_features import centerlines_3d
@@ -1973,6 +2051,7 @@ class RasterCoverageMessageTests(unittest.TestCase):
             elsewhere = _coverage_message(layer, crs, Area((500_000, 100_000, 500_100, 100_100)))
             self.assertNotIn("Swap X / Y", elsewhere)
             self.assertIn("raster covers X 200,000–201,000", elsewhere)
+            del layer
 
 
 class CoordinateOrderAdviceTests(unittest.TestCase):

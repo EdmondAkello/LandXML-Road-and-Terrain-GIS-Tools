@@ -141,7 +141,7 @@ class SectionPanel(QWidget):
     def rebuild(self):
         station = self.chart.current()["station"] if self.chart.current() else None
         unit = self.document.horizontal_unit if self.document else None
-        self.chart.set_views(self.views(), unit, self.exaggeration.value())
+        self.chart.set_views(self.views(), unit, self.exaggeration.value(), self.document.vertical_unit if self.document else None)
         if station is not None:
             self.chart.show_station(station)
         self._update_label()
@@ -213,7 +213,7 @@ class SectionPanel(QWidget):
 
     def _style(self):
         return SectionStyle(None, self.exaggeration.value(), self.document.horizontal_unit if self.document else None,
-                            False, material_colors(self.chart.views))
+                            False, material_colors(self.chart.views), vertical_unit=self.document.vertical_unit if self.document else None)
 
     def write_png(self, path):
         view = self.chart.current()
@@ -245,6 +245,7 @@ class SectionPanel(QWidget):
             self.document.horizontal_unit if self.document else None,
             "Cross-sections",
             self.alignment or "",
+            vertical_unit=self.document.vertical_unit if self.document else None,
         )
 
     def export_png(self):

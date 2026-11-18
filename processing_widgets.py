@@ -67,8 +67,8 @@ BUILT_IN_STYLES = [
     ("Aspect (8 directions)", "aspect"),
     ("Plain grey-green", "plain #cfd8c4"),
     ("Plain sand", "plain #e3d3b0"),
-    ("Finished road: 7 m, 1.5 m shoulders, 2 lanes", "road: 7, 1.5, 2"),
-    ("Finished road: 11 m, 2.5 m shoulders, 4 lanes", "road: 11, 2.5, 4"),
+    ("Finished road: 7 output units, 1.5 shoulders, 2 lanes", "road: 7, 1.5, 2"),
+    ("Finished road: 11 output units, 2.5 shoulders, 4 lanes", "road: 11, 2.5, 4"),
 ]
 STYLE_SETTINGS_KEY = "LandXMLTools/userStyles"
 

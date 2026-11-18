@@ -25,6 +25,7 @@ from qgis.PyQt.QtGui import (
 )
 from qgis.PyQt.QtWidgets import QSizePolicy, QWidget
 
+from ..landxml.quantity_units import LINEAR_UNITS
 from ..landxml.reports import CUT_COLOR, DESIGN_COLOR, FILL_COLOR, GROUND_COLOR, station_label
 from .profile_chart import nice_ticks
 
@@ -58,10 +59,11 @@ def material_colors(views):
 
 
 class SectionStyle:
-    def __init__(self, x_range=None, exaggeration=1.0, unit=None, compact=False, colors=None, z_span=None):
+    def __init__(self, x_range=None, exaggeration=1.0, unit=None, compact=False, colors=None, z_span=None, vertical_unit=None):
         self.x_range = x_range
         self.exaggeration = exaggeration
         self.unit = unit
+        self.vertical_unit = vertical_unit
         self.compact = compact
         self.colors = colors or {}
         self.z_span = z_span
@@ -239,9 +241,12 @@ def draw_section(painter, rect, view, style, hover=None):
     painter.drawText(QPointF(header_left, rect.top() + line_height * 1.25), f"CH {chainage}")
     painter.setFont(font)
     parts = []
+    horizontal = LINEAR_UNITS.get((style.unit or "").lower(), (None, "unknown"))[1]
+    vertical = LINEAR_UNITS.get((style.vertical_unit or "").lower(), (None, "unknown"))[1]
+    area_unit = horizontal + "²" if horizontal == vertical and horizontal != "unknown" else horizontal + "·" + vertical
     if view["cut_area"] is not None:
-        parts.append((f"Cut {view['cut_area']:.2f} m²", CUT_COLOR))
-        parts.append((f"Fill {view['fill_area']:.2f} m²", FILL_COLOR))
+        parts.append((f"Cut {view['cut_area']:.2f} {area_unit}", CUT_COLOR))
+        parts.append((f"Fill {view['fill_area']:.2f} {area_unit}", FILL_COLOR))
         if view["design_cl"] is not None and view["ground_cl"] is not None:
             depth = view["design_cl"] - view["ground_cl"]
             parts.append((f"CL {depth:+.2f}", FILL_COLOR if depth > 0 else CUT_COLOR))
@@ -282,9 +287,9 @@ class SectionChart(QWidget):
         self._hover = None
         self._mappers = None
 
-    def set_views(self, views, unit=None, exaggeration=1.0):
+    def set_views(self, views, unit=None, exaggeration=1.0, vertical_unit=None):
         self.views = views
-        self.style = SectionStyle(None, exaggeration, unit, False, material_colors(views))
+        self.style = SectionStyle(None, exaggeration, unit, False, material_colors(views), vertical_unit=vertical_unit)
         self.index = 0 if views else -1
         self.update()
 
@@ -443,6 +448,7 @@ def write_section_sheets(
     x_range=None,
     progress=None,
     cancel=None,
+    vertical_unit=None,
 ):
     """Write a multi-page PDF of section sheets; returns the page count."""
     if not views:
@@ -456,7 +462,7 @@ def write_section_sheets(
     colors = material_colors(views)
     # Each section fits its own window at the chosen vertical exaggeration,
     # unless a fixed offset window was requested.
-    style = SectionStyle(x_range, exaggeration, unit, per_page > 2, colors)
+    style = SectionStyle(x_range, exaggeration, unit, per_page > 2, colors, vertical_unit=vertical_unit)
 
     writer = QPdfWriter(path)
     writer.setPageSize(QPageSize(page_id))
