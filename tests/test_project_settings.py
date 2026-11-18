@@ -116,18 +116,28 @@ class ProjectSettingsTests(unittest.TestCase):
             any(t.startswith("Civil 3D cut volume") and "[CF]" in t for t in labels())
         )
 
-    def test_every_tool_declares_dimensional_input_bases(self):
-        from landxml_plugin.input_units import unit_basis, BASE_LABELS
-
+    def test_dimensional_input_bases_match_the_tool_contract(self):
+        expected = {
+            "prepare_landxml": {"PROFILE_INTERVAL": "source horizontal", "LEFT_WIDTH": "source horizontal"},
+            "landxml_station_points": {"INTERVAL": "source horizontal"},
+            "landxml_profiles_to_vector": {"POINT_INTERVAL": "source horizontal", "MAP_OFFSET": "source horizontal"},
+            "landxml_complete_road_design": {"RESOLUTION": "output CRS", "CONTOUR_INTERVAL": "source elevation"},
+            "landxml_profile_cut_fill": {"INTERVAL": "source horizontal", "FORMATION_WIDTH": "source horizontal", "HIGH_FILL": "source elevation"},
+            "landxml_corridor_quantities": {"MAX_SPACING": "source horizontal"},
+            "landxml_cross_section_sheets": {"HALF_WIDTH": "source horizontal"},
+            "landxml_design_review": {"MAX_CHANGE": "source elevation", "DESIGN_SPEED": "criteria speed"},
+            "landxml_basin_storage": {"FREEBOARD": "source elevation", "REQUIRED_VOLUME": "selected volume"},
+            "landxml_grading_quantities": {"CIVIL3D_AREA": "output CRS units²", "CIVIL3D_CUT": "selected volume"},
+            "landxml_platform_levels": {"MIN_AREA": "output CRS units²"},
+            "landxml_earthwork_balance": {"TOPSOIL_DEPTH": "source elevation"},
+            "landxml_3d_scene": {"STATION_FROM": "source horizontal", "SYN_CARRIAGEWAY": "output CRS", "WATER": "source elevation"},
+        }
         for algorithm in self.provider.algorithms():
-            for p in algorithm.parameterDefinitions():
-                basis = unit_basis(algorithm.name(), p.name())
-                if basis:
-                    self.assertIn(
-                        BASE_LABELS[basis],
-                        p.description(),
-                        (algorithm.name(), p.name()),
-                    )
+            contract = dict(expected.get(algorithm.name(), {}))
+            if algorithm.parameterDefinition("DX") is not None:
+                contract["DX"] = "output CRS"
+            for name, units in contract.items():
+                self.assertIn(units, algorithm.parameterDefinition(name).description(), (algorithm.name(), name))
 
     def test_round_trip_project_file_and_input_types(self):
         with tempfile.TemporaryDirectory() as folder:
