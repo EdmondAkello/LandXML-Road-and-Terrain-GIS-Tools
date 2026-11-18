@@ -57,7 +57,10 @@ def _dimension(value, heading, target):
         return None
     unit = _heading(heading)[1]
     factors = {"mm": .001, "cm": .01, "m": 1., "ft": .3048, "ftus": 1200 / 3937, "in": .0254, "yd": .9144}
-    return value if unit is None else value * factors[unit] / LINEAR_UNITS[target.lower()][0]
+    converted = value if unit is None else value * factors[unit] / LINEAR_UNITS[target.lower()][0]
+    if not math.isfinite(converted):
+        raise ValueError(f"Structure dimension '{heading}' is outside the supported numeric range.")
+    return converted
 
 
 def _number(value):
@@ -106,8 +109,8 @@ def read_schedule_csv(path_or_text, horizontal_unit="meter", vertical_unit=None,
             unit = names.get(declared, station_unit)
             if declared in {"in", "yd"}:
                 factor = .0254 if declared == "in" else .9144
-                return parse_station(text, None) * factor / LINEAR_UNITS[station_unit.lower()][0]
-            return parse_station(text, unit) * LINEAR_UNITS[unit.lower()][0] / LINEAR_UNITS[station_unit.lower()][0]
+                return parse_station(str(parse_station(text, None) * factor / LINEAR_UNITS[station_unit.lower()][0]), None)
+            return parse_station(str(parse_station(text, unit) * LINEAR_UNITS[unit.lower()][0] / LINEAR_UNITS[station_unit.lower()][0]), None)
         try:
             station = station_value(get("station"), "station")
         except (ValueError, TypeError):

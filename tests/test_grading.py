@@ -977,6 +977,14 @@ class CustomaryUnitRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["span"], 2.952755905511811)
         self.assertEqual((rows[0]["invert_in"], rows[0]["invert_out"]), (95, 94))
 
+    def test_schedule_conversions_reject_nonfinite_results(self):
+        from landxml_plugin.landxml.structures import read_schedule_csv
+        for station in ("nan", "inf", "1e308"):
+            rows, _ = read_schedule_csv(f"station_yd,type,span,rise\n{station},box,6,4\n", horizontal_unit="millimeter")
+            self.assertEqual(rows, [])
+        with self.assertRaisesRegex(ValueError, "numeric range"):
+            read_schedule_csv("station,type,span_m,rise\n1,box,1e308,1\n", horizontal_unit="millimeter")
+
     def test_mixed_unit_camber_and_edge_face_area(self):
         from landxml_plugin.landxml.synthetic_corridor import synthetic_corridor
         from landxml_plugin.landxml.edges import edge_analysis
