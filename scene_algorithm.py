@@ -795,6 +795,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             if mesh[2] not in ("surface", "raster"):
                 continue
             gxyz, gfaces = mesh[3], mesh[4]
+            original = (np.asarray(gxyz, float), np.asarray(gfaces, np.int64))
             for xyz, faces, target in cuts:
                 gxyz, gfaces = refine_near(gxyz, gfaces, (xyz, faces), target)
                 gxyz, gfaces = refine_edges(gxyz, gfaces, (xyz, faces))
@@ -805,7 +806,14 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             snapped[inside, 2] = np.minimum(snapped[inside, 2], under[inside])
             meshes[index] = (*mesh[:3], snapped, gfaces, *mesh[5:])
             if removed.any():
-                uxyz, ufaces, _u = _compact(gxyz, gfaces[removed])
+                # the hidden "before" copy only has to show the ground under the roads: the original
+                # triangles there, not the refinement the cut edges need (which can run to millions)
+                oxyz, ofaces = original
+                centroid = oxyz[ofaces].mean(axis=1)
+                below = np.isfinite(footprint_index.sample(centroid[:, :2]))
+                for corner in range(3):
+                    below |= np.isfinite(footprint_index.sample(oxyz[ofaces[:, corner], :2]))
+                uxyz, ufaces, _u = _compact(oxyz, ofaces[below])
                 unders.append((mesh[0], mesh[1], uxyz, ufaces, mesh[5]))
                 keep = gfaces[~removed]
                 if len(keep):
