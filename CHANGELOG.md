@@ -15,7 +15,13 @@
   instead of flat grey (a Ground section in the panel switches between Terrain, As exported and Grey).
 - Contours on the ground, drawn in the viewer so they stay sharp at any zoom: the interval is chosen from
   the ground's range and can be changed, every fifth contour is heavier, and they can be shown on designs
-  too. The legend (and A3 sheets) show the tint range and the contour interval.
+  too. The legend (and A3 sheets) show the tint range and the contour interval. A plain LandXML surface
+  with the default style counts as ground; one you styled keeps its colours.
+
+### Changed
+- Smaller road scenes: the hidden "before" copy of the ground under synthetic roads keeps the original
+  triangles instead of the fine refinement the cut edges need (on a 6 km set of roads over a survey TIN,
+  2.08 M triangles became 36 k and the viewer went from 110 MB to 46 MB).
 
 ## 1.11.1 — 2026-11-18
 

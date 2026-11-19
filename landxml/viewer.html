@@ -384,7 +384,11 @@ const ext = S.extent || { min: [-100, -100, 0], max: [100, 100, 10] };
 let ve = S.vertical_exaggeration || 1;
 // ---------------------------------------------------------------- ground styling
 const GROUND_ROLES = ["existing", "context", "raster", "existing_under"];
-const isGround = sf => GROUND_ROLES.includes(sf.info.role);
+// a plain LandXML surface counts as ground when it kept the default single-colour style; one the user
+// styled (slope, depth, classes) keeps its own colours
+const plainStyle = st => !st || !st.classes || (st.classes.length === 1 && st.classes[0].low == null && st.classes[0].high == null && st.attribute !== "road");
+const groundInfo = info => GROUND_ROLES.includes(info.role) || (info.role === "surface" && plainStyle(info.style));
+const isGround = sf => groundInfo(sf.info);
 const groundZ = (() => {                 // elevation range of all ground, for the tint and the contour interval
   const zs = [];
   for (const sf of surfaces.filter(isGround)) { const P = sf.pos, step = Math.max(3, Math.floor(P.length / 3 / 40000)) * 3; for (let i = 2; i < P.length; i += step) zs.push(P[i] + S.origin[2]); }
@@ -444,7 +448,7 @@ function render(width, height) {
     if (translucent) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
     // ground (existing, context) sits a step further back than designs, so where the two meet at a
     // daylight line or platform edge the design wins cleanly instead of flickering in a saw-tooth
-    const back = ["existing", "context"].includes(s.info.role) ? 4 : 1;
+    const back = ["existing", "context"].includes(s.info.role) || (s.info.role === "surface" && isGround(s)) ? 4 : 1;
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(back, back);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "lift"), s.info.lift || 0);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "alpha"), s.opacity);
@@ -762,7 +766,7 @@ function legendRows() {
   let groundShown = false;
   for (const s of S.surfaces) {
     const st = s.style; if (!st || !st.classes || layerHidden(s)) continue;
-    if (groundZ && GROUND_ROLES.includes(s.role) && ground.mode !== "exported") {
+    if (groundZ && groundInfo(s) && ground.mode !== "exported") {
       if (!groundShown) { rows.push({ head: "Ground" }); if (ground.mode === "terrain") rows.push({ ramp: true, text: `${groundZ[0].toFixed(0)} – ${groundZ[1].toFixed(0)} elevation` }); groundShown = true; }
       continue;
     }
