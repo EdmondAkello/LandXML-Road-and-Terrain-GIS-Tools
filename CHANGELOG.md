@@ -5,6 +5,15 @@
 ### Fixed
 - Complete Road Design places schematic profile lines and controls beside the exported project in the output CRS, scaled to the project size and stacked below the plan and terrain bounds with clear gaps. Large source stations no longer place the drawings far away. Source station/elevation attributes and units are preserved. Synthetic tests cover metric and US survey feet, multiple profiles, terrain, coordinate shifts, reprojection and profile-only exports. Issue #77.
 
+## Unreleased
+
+### Added (viewer)
+- Ground styling: existing ground, context surfaces and DEMs get an elevation tint with hillshading
+  instead of flat grey (a Ground section in the panel switches between Terrain, As exported and Grey).
+- Contours on the ground, drawn in the viewer so they stay sharp at any zoom: the interval is chosen from
+  the ground's range and can be changed, every fifth contour is heavier, and they can be shown on designs
+  too. The legend (and A3 sheets) show the tint range and the contour interval.
+
 ## 1.11.1 — 2026-11-18
 
 ### Fixed

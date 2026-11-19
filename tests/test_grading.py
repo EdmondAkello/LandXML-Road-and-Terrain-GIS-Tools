@@ -929,7 +929,8 @@ class RenderEdgeTests(unittest.TestCase):
 
     def test_viewer_splits_normals_at_creases_and_layers_shared_edges(self):
         html = (Path(__file__).resolve().parents[1] / "landxml" / "viewer.html").read_text(encoding="utf-8")
-        for needle in ("function creaseNormals", "linesByWidth", 'includes(s.info.role) ? 4 : 1'):
+        for needle in ("function creaseNormals", "linesByWidth", 'includes(s.info.role) ? 4 : 1',
+                       "float contour(", "vec3 tint(", 'id="groundmode"', 'id="contourint"', "GROUND_ROLES"):
             self.assertIn(needle, html)
 
 

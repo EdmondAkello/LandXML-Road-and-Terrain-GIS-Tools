@@ -92,6 +92,13 @@
   <div class="row"><span style="flex:1">Vertical exaggeration</span><span id="veval"></span></div>
   <input type="range" id="ve" min="1" max="6" step="0.1">
   <div class="row"><label><input type="checkbox" id="showlabels" checked> Labels</label></div>
+  <div id="groundbox" style="display:none"><h2>Ground</h2>
+    <div class="row"><span style="flex:1">Colour</span><select id="groundmode">
+      <option value="terrain">Terrain (elevation tint, hillshade)</option><option value="exported">As exported</option><option value="grey">Grey, hillshaded</option></select></div>
+    <div class="row"><label style="flex:1"><input type="checkbox" id="contours" checked> Contours every</label>
+      <input id="contourint" type="number" min="0.1" step="any" style="width:4.5em"><span id="contourunit"></span></div>
+    <div class="row"><label><input type="checkbox" id="contourdesign"> Contours on designs too</label></div>
+    <div class="meta" id="contourmeta"></div></div>
   <div id="beforeafter" style="display:none"><h2>Before / after</h2>
     <button id="before">Existing ground</button><button id="after">Design</button></div>
   <div id="goto" style="display:none"><h2>Along the road</h2>
@@ -179,15 +186,27 @@ function program(vs, fs) {
 }
 const meshProgram = program(`#version 300 es
   in vec3 p; in vec3 n; in vec3 c; in vec2 r; uniform mat4 mvp; uniform float ve; uniform float lift;
-  out vec3 vc; out vec3 vn; out vec2 vr; out vec3 vt; out vec2 vw;
-  void main() { vc = c; vr = r; vt = normalize(n); vw = p.xy; vn = normalize(vec3(n.x * ve, n.y * ve, n.z));
+  out vec3 vc; out vec3 vn; out vec2 vr; out vec3 vt; out vec2 vw; out float vz;
+  void main() { vc = c; vr = r; vt = normalize(n); vw = p.xy; vz = p.z + lift; vn = normalize(vec3(n.x * ve, n.y * ve, n.z));
     gl_Position = mvp * vec4(p.x, p.y, (p.z + lift) * ve, 1.0); }`,
   `#version 300 es
-  precision highp float; in vec3 vc; in vec3 vn; in vec2 vr; in vec3 vt; in vec2 vw; uniform float alpha;
+  precision highp float; in vec3 vc; in vec3 vn; in vec2 vr; in vec3 vt; in vec2 vw; in float vz; uniform float alpha;
+  uniform int terrain; uniform vec2 zr; uniform float zo; uniform int contours; uniform float cint; uniform float cmaj; uniform vec3 cContour;
   uniform int road; uniform vec3 roadW; uniform vec3 cAsphalt; uniform vec3 cShoulder; uniform vec3 cVerge; uniform vec3 cBatter; uniform vec3 cLine; uniform int fogOn; uniform float fogNear; uniform float fogFar;
   out vec4 o;
   float hash(vec2 q) { return fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453); }
   float band(float x, float c, float w) { float a = fwidth(x); return 1.0 - smoothstep(w * 0.5 - a, w * 0.5 + a, abs(x - c)); }
+  vec3 tint(float t) {                     // hypsometric ramp: valley green, upland tan, high brown, summit grey
+    t = clamp(t, 0.0, 1.0);
+    vec3 c0 = vec3(0.30, 0.52, 0.32), c1 = vec3(0.55, 0.69, 0.40), c2 = vec3(0.84, 0.82, 0.56), c3 = vec3(0.76, 0.60, 0.42), c4 = vec3(0.60, 0.47, 0.38), c5 = vec3(0.90, 0.89, 0.87);
+    if (t < 0.2) return mix(c0, c1, t / 0.2);
+    if (t < 0.45) return mix(c1, c2, (t - 0.2) / 0.25);
+    if (t < 0.7) return mix(c2, c3, (t - 0.45) / 0.25);
+    if (t < 0.9) return mix(c3, c4, (t - 0.7) / 0.2);
+    return mix(c4, c5, (t - 0.9) / 0.1); }
+  float contour(float z, float step, float px) {   // anti-aliased line px pixels wide at every multiple of step
+    float f = z / step, d = abs(fract(f - 0.5) - 0.5) / max(fwidth(f), 1e-6);
+    return 1.0 - clamp(d - px * 0.5 + 0.5, 0.0, 1.0); }
   void main() {
     vec3 col = vc;
     if (road == 1) {
@@ -212,9 +231,17 @@ const meshProgram = program(`#version 300 es
         col = (steep > 0.3 ? cBatter : cVerge) + grain * 0.6;
       }
     }
+    float zabs = vz + zo;
+    if (terrain == 1) col = tint((zabs - zr.x) / max(zr.y - zr.x, 1e-3));
+    else if (terrain == 2) col = vec3(0.74, 0.75, 0.77);
     vec3 nn = normalize(gl_FrontFacing ? vn : -vn);
     float l = 0.42 + 0.48 * max(dot(nn, normalize(vec3(-0.45, 0.35, 0.82))), 0.0) + 0.18 * max(dot(nn, normalize(vec3(0.6, -0.5, 0.4))), 0.0);
-    vec3 lit = col * min(l, 1.08);
+    if (terrain > 0) l = 0.30 + 0.78 * max(dot(nn, normalize(vec3(-0.5, 0.45, 0.74))), 0.0) + 0.12 * max(dot(nn, normalize(vec3(0.6, -0.5, 0.4))), 0.0);  // hillshade: low sun from the north-west
+    vec3 lit = col * min(l, 1.12);
+    if (contours == 1) {
+      float minor = contour(zabs, cint, 1.0), major = contour(zabs, cint * cmaj, 1.8);
+      lit = mix(lit, cContour, max(minor * 0.45, major * 0.8));
+    }
     float fog = fogOn == 1 ? clamp((gl_FragCoord.z / gl_FragCoord.w - fogNear) / fogFar, 0.0, 0.55) : 0.0;
     o = vec4(mix(lit, vec3(0.86, 0.9, 0.95), fog), alpha); }`);
 const lineProgram = program(`#version 300 es
@@ -336,6 +363,25 @@ const kinds = {}; for (const l of lines) if (!(l.kind in kinds)) kinds[l.kind] =
 // ---------------------------------------------------------------- camera
 const ext = S.extent || { min: [-100, -100, 0], max: [100, 100, 10] };
 let ve = S.vertical_exaggeration || 1;
+// ---------------------------------------------------------------- ground styling
+const GROUND_ROLES = ["existing", "context", "raster", "existing_under"];
+const isGround = sf => GROUND_ROLES.includes(sf.info.role);
+const groundZ = (() => {                 // elevation range of all ground, for the tint and the contour interval
+  const zs = [];
+  for (const sf of surfaces.filter(isGround)) { const P = sf.pos, step = Math.max(3, Math.floor(P.length / 3 / 40000)) * 3; for (let i = 2; i < P.length; i += step) zs.push(P[i] + S.origin[2]); }
+  if (!zs.length) return null;
+  zs.sort((a, b) => a - b);
+  // full range, so a narrow gorge floor still gets the valley colours; only far outliers (stray nodata) are dropped
+  const q = f => zs[Math.min(zs.length - 1, Math.floor(zs.length * f))], iqr = Math.max(q(0.75) - q(0.25), 1e-3);
+  const lo = zs.find(z => z >= q(0.25) - 6 * iqr), hi = [...zs].reverse().find(z => z <= q(0.75) + 6 * iqr);
+  return [lo, hi];
+})();
+function niceStep(range, bands) {
+  const raw = range / bands, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * p) return m * p;
+  return 10 * p;
+}
+const ground = { mode: S.ground_mode || "terrain", contours: S.contours !== false, interval: groundZ ? niceStep(groundZ[1] - groundZ[0], 25) : 1, onDesign: false };
 const cam = { target: [0, 0, 0], azimuth: 0, elevation: 0.6, distance: 300, fov: 30 };
 function setView(v) {
   // views are framed for a landscape window; on a portrait screen step back so the same width fits
@@ -383,6 +429,14 @@ function render(width, height) {
     gl.uniform1f(gl.getUniformLocation(meshProgram, "lift"), s.info.lift || 0);
     gl.uniform1f(gl.getUniformLocation(meshProgram, "alpha"), s.opacity);
     gl.uniform1i(gl.getUniformLocation(meshProgram, "road"), s.road ? 1 : 0);
+    const onGround = isGround(s) && groundZ;
+    gl.uniform1i(gl.getUniformLocation(meshProgram, "terrain"), onGround ? ({ terrain: 1, grey: 2 }[ground.mode] || 0) : 0);
+    gl.uniform2f(gl.getUniformLocation(meshProgram, "zr"), ...(groundZ || [0, 1]));
+    gl.uniform1f(gl.getUniformLocation(meshProgram, "zo"), S.origin[2]);
+    gl.uniform1i(gl.getUniformLocation(meshProgram, "contours"), ground.contours && groundZ && (onGround || (ground.onDesign && ["design", "solid"].includes(s.info.role) && !s.road)) ? 1 : 0);
+    gl.uniform1f(gl.getUniformLocation(meshProgram, "cint"), ground.interval);
+    gl.uniform1f(gl.getUniformLocation(meshProgram, "cmaj"), 5);
+    gl.uniform3f(gl.getUniformLocation(meshProgram, "cContour"), 0.33, 0.25, 0.17);
     if (s.road) {
       const st = s.info.style, cc = st.colors;
       gl.uniform3f(gl.getUniformLocation(meshProgram, "roadW"), st.carriageway, st.shoulder, st.lanes);
@@ -630,6 +684,18 @@ const veInput = document.getElementById("ve"), veVal = document.getElementById("
 veInput.value = ve; veVal.textContent = "× " + ve.toFixed(1);
 veInput.oninput = () => { ve = +veInput.value; veVal.textContent = "× " + ve.toFixed(1); draw(); };
 document.getElementById("showlabels").onchange = e => { showLabels = e.target.checked; draw(); };
+if (groundZ) {
+  const unit = (S.units && S.units.vertical && S.units.vertical !== "unknown") ? ({ meter: "m", foot: "ft", USSurveyFoot: "ftUS" }[S.units.vertical] || S.units.vertical) : "";
+  const box = document.getElementById("groundbox"), mode = document.getElementById("groundmode"), cb = document.getElementById("contours");
+  const iv = document.getElementById("contourint"), dz = document.getElementById("contourdesign"), meta = document.getElementById("contourmeta");
+  box.style.display = ""; mode.value = ground.mode; cb.checked = ground.contours; iv.value = ground.interval; document.getElementById("contourunit").textContent = unit;
+  const note = () => { meta.textContent = `Ground ${groundZ[0].toFixed(0)}–${groundZ[1].toFixed(0)} ${unit}; every 5th contour is heavier (${(ground.interval * 5).toPrecision(3).replace(/\.0+$/, "")} ${unit}).`; };
+  note();
+  mode.onchange = () => { ground.mode = mode.value; draw(); };
+  cb.onchange = () => { ground.contours = cb.checked; draw(); };
+  iv.onchange = () => { const v = +iv.value; if (v > 0) { ground.interval = v; note(); draw(); } else iv.value = ground.interval; };
+  dz.onchange = () => { ground.onDesign = dz.checked; draw(); };
+}
 const viewsDiv = document.getElementById("views");
 for (const v of S.views) { const b = document.createElement("button"); b.textContent = v.name; b.onclick = () => { stopDrive(true); setView(v); }; viewsDiv.appendChild(b); }
 const planButton = document.createElement("button"); planButton.textContent = "plan";
@@ -668,13 +734,19 @@ function drawCompass(g, cx, cy, r, k) {
 function layerHidden(info) { const sf = surfaces.find(x => x.info === info); return sf ? !sf.visible : info.visible === false; }
 function legendRows() {
   const rows = [], seen = new Map();          // surfaces with the same classes share one legend entry
+  let groundShown = false;
   for (const s of S.surfaces) {
     const st = s.style; if (!st || !st.classes || layerHidden(s)) continue;
+    if (groundZ && GROUND_ROLES.includes(s.role) && ground.mode !== "exported") {
+      if (!groundShown) { rows.push({ head: "Ground" }); if (ground.mode === "terrain") rows.push({ ramp: true, text: `${groundZ[0].toFixed(0)} – ${groundZ[1].toFixed(0)} elevation` }); groundShown = true; }
+      continue;
+    }
     const key = JSON.stringify(st.classes.map(c => [c.color, c.label]));
     if (seen.has(key)) { rows.splice(rows.indexOf(seen.get(key)) + 1 + (seen.get(key).extra++), 0, { head: s.name }); continue; }
     const head = { head: s.name, extra: 0 }; seen.set(key, head); rows.push(head);
     for (const c of st.classes.slice().reverse()) rows.push({ swatch: c.color, text: c.label });
   }
+  if (groundShown && ground.contours) rows.push({ line: "#54402b", text: `Contours ${ground.interval} (heavy ${+(ground.interval * 5).toFixed(3)})` });
   const shown = Object.entries(kinds).filter(([, v]) => v.visible);
   if (shown.length) { rows.push({ head: "Lines" }); for (const [kind, v] of shown) rows.push({ line: v.css, text: LINE_NAMES[kind] || kind }); }
   return rows;
@@ -685,7 +757,8 @@ function drawLegend(g, x0, y, k, maxY = Infinity) {
     if (y > maxY) break;
     if (r.head) { g.font = `600 ${13 * k}px system-ui, Arial`; g.fillStyle = "#222"; g.fillText(r.head, x0, y + 4 * k); y += 21 * k; continue; }
     g.font = `${12 * k}px system-ui, Arial`;
-    if (r.swatch) { g.fillStyle = r.swatch; g.fillRect(x0, y, 12 * k, 12 * k); g.strokeStyle = "#888"; g.lineWidth = k; g.strokeRect(x0, y, 12 * k, 12 * k); }
+    if (r.ramp) { const gr = g.createLinearGradient(x0, 0, x0 + 18 * k, 0); [["#4d8552", 0], ["#8cb066", 0.2], ["#d6d18f", 0.45], ["#c2996b", 0.7], ["#997861", 0.9], ["#e6e3de", 1]].forEach(([c, t]) => gr.addColorStop(t, c)); g.fillStyle = gr; g.fillRect(x0, y, 18 * k, 12 * k); }
+    else if (r.swatch) { g.fillStyle = r.swatch; g.fillRect(x0, y, 12 * k, 12 * k); g.strokeStyle = "#888"; g.lineWidth = k; g.strokeRect(x0, y, 12 * k, 12 * k); }
     else { g.fillStyle = r.line; g.fillRect(x0, y + 4 * k, 18 * k, 3 * k); }
     g.fillStyle = "#222"; g.fillText(r.text, x0 + 24 * k, y - k); y += 17 * k;
   }
