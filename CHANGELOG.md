@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Complete Road Design places schematic profile lines and controls beside the exported project in the output CRS, scaled to the project size and stacked below the plan and terrain bounds with clear gaps. Large source stations no longer place the drawings far away. Source station/elevation attributes and units are preserved. Synthetic tests cover metric and US survey feet, multiple profiles, terrain, coordinate shifts, reprojection and profile-only exports. Issue #77.
+
 ## 1.11.1 — 2026-11-18
 
 ### Fixed
