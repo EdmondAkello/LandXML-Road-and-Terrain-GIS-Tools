@@ -1278,7 +1278,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 value = str(feature[cad_field]) if cad_field else None
                 name = f"{layer.name()}: {value}" if cad_field else layer.name()
                 if name not in seen:
-                    seen[name] = colours.get(value) or colours.get(None) or palette[(layer_index + len(seen)) % len(palette)]
+                    seen[name] = colours.get(value) or (None if cad_field else colours.get(None)) or palette[(layer_index + len(seen)) % len(palette)]
                 return name, seen[name]
 
             for feature in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):

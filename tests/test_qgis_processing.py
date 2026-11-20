@@ -880,6 +880,8 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertTrue(np.allclose(sxyz[centre, 2] + origin[2], 101.5, atol=1e-6))
             kinds = {line["kind"] for line in scene["lines"]}
             self.assertTrue({"Lines: Fence", "Lines: Hedge"} <= kinds, kinds)
+            colour = {line["kind"]: str(line.get("color")) for line in scene["lines"]}
+            self.assertNotEqual(colour["Lines: Fence"], colour["Lines: Hedge"])   # one colour per CAD layer
             solids = next(s for s in scene["surfaces"] if s["id"] == "solids")
             pole = read_ply(str(Path(folder) / solids["mesh"]))[0] + origin
             self.assertAlmostEqual(float(np.ptp(pole[:, 2])), 6.0, places=4)          # a post becomes a 6 m pole
