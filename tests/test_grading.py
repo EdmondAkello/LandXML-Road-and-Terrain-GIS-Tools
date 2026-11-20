@@ -888,6 +888,57 @@ class BridgeLayoutTests(unittest.TestCase):
         self.assertIn("longest 40 m", text)
 
 
+class StructureScheduleTests(unittest.TestCase):
+    def test_roads_piers_and_deck_options_in_the_typed_schedule(self):
+        from landxml_plugin.landxml.structures import for_road, read_schedule_text
+
+        items = read_schedule_text("Main road @ 1+360.9-2+242.2 = viaduct, depth 2.6, width 12; "
+                                   "1+403-2+203 = piers every 40, 5.0 x 3.2, cap 10.5 x 2.5; "
+                                   "1+723 = pier 7.5 x 5.5, cap 12.6 x 12.6 x 2.5; "
+                                   "A9 @ 0+773.6-0+831.4 = bridge, spans 1, deck 1235 to 1240; 1+250 = box 3 x 2.0 x 2.0")
+        viaduct = items[0]
+        self.assertEqual((viaduct["kind"], viaduct["road"], viaduct["deck_depth"], viaduct["deck_width"]), ("bridge", "Main road", 2.6, 12.0))
+        piers = [i for i in items if i["kind"] == "pier"]
+        self.assertEqual(len(piers), 22)
+        self.assertEqual([p["station"] for p in piers[:21]], [1403.0 + 40 * k for k in range(21)])
+        self.assertEqual((piers[-1]["station"], piers[-1]["pier_width"], piers[-1]["cap"]), (1723.0, 7.5, (12.6, 12.6, 2.5)))
+        self.assertEqual(piers[0]["cap"], (10.5, 10.5, 2.5))
+        a9 = for_road(items, "A9 highway")
+        self.assertEqual([i["kind"] for i in a9 if i["kind"] != "pier"], ["bridge", "box"])
+        self.assertEqual(next(i for i in a9 if i["kind"] == "bridge")["deck_levels"], (1235.0, 1240.0))
+        self.assertNotIn(viaduct, a9)
+        with self.assertRaises(ValueError):
+            read_schedule_text("1+400 = piers every 40, 5 x 3")            # equal spacing needs a range
+
+    def test_csv_schedule_reads_road_pier_and_deck_columns(self):
+        from landxml_plugin.landxml.structures import read_schedule_csv
+
+        items, notes = read_schedule_csv("Road,Chainage,To,Type,Pier width,Pier length,Pile cap,Deck depth,Deck level\n"
+                                         "Main,1+360,2+240,viaduct,,,,2.6,\nMain,1+403,,pier,5.0,3.2,9 x 2.5,,\n"
+                                         "A9,0+773.6,0+831.4,bridge,,,,,1235 to 1240\n")
+        self.assertIn("Road → road", notes[0])
+        self.assertEqual([(i["kind"], i["road"]) for i in items], [("bridge", "Main"), ("pier", "Main"), ("bridge", "A9")])
+        self.assertEqual((items[1]["pier_width"], items[1]["pier_length"], items[1]["cap"]), (5.0, 3.2, (9.0, 9.0, 2.5)))
+        self.assertEqual((items[0]["deck_depth"], items[2]["deck_levels"]), (2.6, (1235.0, 1240.0)))
+
+    def test_bridge_draws_scheduled_piers_with_their_sections(self):
+        from landxml_plugin.landxml.structures import MeshBuilder, bridge
+
+        stations = np.arange(0.0, 101.0, 2.0)
+        centre = np.column_stack([stations, np.zeros_like(stations), np.full_like(stations, 50.0)])
+        normal = np.tile([0.0, 1.0], (len(stations), 1))
+        builder = MeshBuilder()
+        specs = [{"station": 30.0, "pier_width": 6.0, "pier_length": 2.0, "cap": (8.0, 8.0, 2.0)},
+                 {"station": 70.0, "pier_width": 4.0, "pier_length": 1.5, "cap": None}]
+        text, count = bridge(builder, centre, stations, normal, np.arange(len(stations)), 10.0, 25.0,
+                             lambda pts: np.zeros(len(pts)), depth=2.0, pier_specs=specs)
+        self.assertEqual(count, 2)
+        self.assertIn("2 from the pier schedule", text)
+        xyz, _faces = builder.result()
+        cap = xyz[(np.abs(xyz[:, 0] - 30.0) <= 4.0 + 1e-9) & (xyz[:, 2] < 0.31)]
+        self.assertAlmostEqual(float(cap[:, 2].min()), 0.3 - 2.0)          # pile cap 2.0 deep, top 0.3 above ground
+
+
 class RenderEdgeTests(unittest.TestCase):
     def test_banded_point_in_polygon_matches_the_plain_even_odd_rule(self):
         from landxml_plugin.landxml.grading import _inside_many

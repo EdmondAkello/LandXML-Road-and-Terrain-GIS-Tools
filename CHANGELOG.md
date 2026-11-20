@@ -18,7 +18,25 @@
   too. The legend (and A3 sheets) show the tint range and the contour interval. A plain LandXML surface
   with the default style counts as ground; one you styled keeps its colours.
 
+### Added (feasibility roads and context)
+- Structures belong to a road: start an item with the road name and `@` (`A9 @ 0+238.1 = box 1 x 2.0 x 1.5`), or
+  give a Road column in the CSV. Items without a road apply to every synthetic road, as before.
+- Scheduled piers: `1+403 = pier 5.0 x 3.2, cap 9.0 x 2.5` (section across x along, pile cap side x depth or
+  L x W x D), or equally spaced `1+403-2+203 = piers every 40, 5.0 x 3.2, cap 10.5 x 2.5`; a later pier row at
+  the same chainage overrides it, so pier groups take their own sections. Pier rows under a bridge set its spans.
+- Bridge options: `depth 2.6`, `width 12` and fixed deck levels `deck 1235 to 1240` (an existing bridge on a
+  context road). CSV columns: Pier width, Pier length, Pile cap, Deck depth, Deck level, Deck width.
+- Roads without a profile: with "roads without a profile follow the ground" ticked, a plan-only alignment
+  (an existing road, a service road) is drawn on the ground smoothed over 40, said so in the log, and gets no
+  automatic bridges; a scheduled bridge's deck levels are blended in. Without the option the error says how.
+- When synthetic roads are generated and no corridor, extent or area polygon is chosen, the scene is a strip
+  along the roads (half the section plus the longest side slope plus 20 either side) instead of the whole DEM;
+  station limits apply to the first road. The log says whether roads were generated (#81).
+- Other layers: points become poles (the extrusion height, or 6), and a layer with a CAD `Layer` field (a DXF
+  import) is split into one toggle per CAD layer, coloured from the QGIS categorised style.
+
 ### Changed
+- The ground next to synthetic roads is refined less finely when the triangle budget would be overrun.
 - Smaller road scenes: the hidden "before" copy of the ground under synthetic roads keeps the original
   triangles instead of the fine refinement the cut edges need (on a 6 km set of roads over a survey TIN,
   2.08 M triangles became 36 k and the viewer went from 110 MB to 46 MB).

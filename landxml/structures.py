@@ -33,6 +33,13 @@ FIELDS = {          # field -> accepted headings (compared without case, spaces,
     "piers": ("piers", "pierchainages", "pierstations", "pierlocations"),
     "invert_in": ("invertin", "inletinvert", "usinvert", "upstreaminvert", "invertus", "inletil"),
     "invert_out": ("invertout", "outletinvert", "dsinvert", "downstreaminvert", "invertds", "outletil"),
+    "road": ("road", "alignment", "route", "roadname", "alignmentname"),
+    "pier_width": ("pierwidth", "pieracross", "piertransverse", "sectionwidth"),
+    "pier_length": ("pierlength", "pieralong", "pierlongitudinal", "sectionlength", "pierthickness"),
+    "cap": ("pilecap", "cap", "capsize", "pilecapsize", "pierbase"),
+    "deck_depth": ("deckdepth", "depth", "deckthickness", "superstructuredepth"),
+    "deck_levels": ("decklevel", "decklevels", "deckrl", "decklevelstartend"),
+    "deck_width": ("deckwidth", "bridgewidth"),
 }
 
 
@@ -73,11 +80,45 @@ def _number(value):
 
 def _kind(text, has_diameter, has_rise):
     text = (text or "").lower()
-    if "bridge" in text:
+    if "bridge" in text or "viaduct" in text:
         return "bridge"
+    if "pier" in text:
+        return "pier"
     if "pipe" in text or "ring" in text or (has_diameter and not has_rise):
         return "pipe"
     return "box"
+
+
+def _cap(text):
+    """'9.0 x 9.0 x 2.5' or '9 x 2.5' (square) -> (length, width, depth)."""
+    numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", str(text or ""))]
+    if len(numbers) == 3:
+        return tuple(numbers)
+    if len(numbers) == 2:
+        return numbers[0], numbers[0], numbers[1]
+    return None
+
+
+def _levels(text):
+    """'1240 to 1235', '1240-1235', '1240 1235' -> (1240.0, 1235.0); one number -> level deck."""
+    numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", str(text or ""))]
+    if len(numbers) >= 2:
+        return numbers[0], numbers[1]
+    if len(numbers) == 1:
+        return numbers[0], numbers[0]
+    return None
+
+
+def _road_matches(item_road, road):
+    """A structure with no road belongs to every road; otherwise the names match like the alignment pickers."""
+    if not item_road:
+        return True
+    a, b = item_road.strip().lower(), road.strip().lower()
+    return a == b or b.startswith(a)
+
+
+def for_road(schedule, road):
+    return [item for item in schedule if _road_matches(item.get("road"), road)]
 
 
 def read_schedule_csv(path_or_text, horizontal_unit="meter", vertical_unit=None, station_unit=None):
@@ -134,6 +175,10 @@ def read_schedule_csv(path_or_text, horizontal_unit="meter", vertical_unit=None,
             except ValueError:
                 end = None
         structures.append({
+            "road": (get("road") or "").strip() or None,
+            "pier_width": dimension("pier_width", horizontal_unit), "pier_length": dimension("pier_length", horizontal_unit),
+            "cap": _cap(get("cap")), "deck_depth": dimension("deck_depth", vertical_unit),
+            "deck_levels": _levels(get("deck_levels")), "deck_width": dimension("deck_width", horizontal_unit),
             "id": (get("id") or "").strip() or f"{kind} {station:.0f}", "kind": kind, "station": station, "end": end,
             "cells": max(int(_number(get("cells")) or 1), 1), "span": dimension("span", horizontal_unit) or diameter,
             "rise": rise or (diameter * LINEAR_UNITS[horizontal_unit.lower()][0] / LINEAR_UNITS[vertical_unit.lower()][0] if diameter else None), "skew": _number(get("skew")) or 0.0,
@@ -143,12 +188,17 @@ def read_schedule_csv(path_or_text, horizontal_unit="meter", vertical_unit=None,
     return structures, notes
 
 
-_TYPED = re.compile(r"^\s*(?P<a>[\d+.]+)\s*(?:[-–]\s*(?P<b>[\d+.]+))?\s*=\s*(?P<kind>box|pipe|bridge)\b(?P<rest>.*)$", re.I)
+_TYPED = re.compile(r"^\s*(?:(?P<road>[^@=;]+?)\s*@\s*)?(?P<a>[\d+.]+)\s*(?:[-–]\s*(?P<b>[\d+.]+))?\s*=\s*"
+                    r"(?P<kind>box|pipe|bridge|viaduct|piers|pier)\b(?P<rest>.*)$", re.I)
 
 
 def read_schedule_text(text, horizontal_unit="meter", vertical_unit=None, station_unit=None):
     """'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9; 2+410 = box 1 x 1.5 x 1.5, skew 15'; bridges:
-    '1+364-2+293 = bridge, span 25', '... = bridge, spans 7' or '... = bridge, piers 1+500 1+640 1+780'."""
+    '1+364-2+293 = bridge, span 25', '... = bridge, spans 7' or '... = bridge, piers 1+500 1+640 1+780', with
+    'depth 2.6', 'width 12' and 'deck 1240 to 1235' (fixed deck levels, start to end).
+    Piers: '1+403 = pier 5.0 x 3.2, cap 9.0 x 2.5' (across x along; pile cap side x depth, or L x W x D), or
+    '1+403-2+203 = piers every 40, 5.0 x 3.2, cap 9.0 x 2.5'. Any item can start with a road name and '@'
+    ('A9 highway @ 0+238.1 = box 1 x 2.0 x 1.5') so it belongs to that road only."""
     vertical_unit = vertical_unit or horizontal_unit
     station_unit = station_unit or horizontal_unit
     structures = []
@@ -159,14 +209,19 @@ def read_schedule_text(text, horizontal_unit="meter", vertical_unit=None, statio
         if not match:
             raise ValueError(f"Cannot read structure '{part.strip()}'. Use for example '1+250 = box 3 x 2.0 x 2.0', "
                              "'1+840 = pipe 2 x 0.9' or '1+364-2+293 = bridge, span 25'.")
-        kind = match["kind"].lower()
+        kind = match["kind"].lower().replace("viaduct", "bridge")
         rest = match["rest"]
+        road = match["road"].strip() if match["road"] else None
         numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", rest.split(",")[0])]
-        options = dict((k.lower(), float(v)) for k, v in re.findall(r"\b(skew|spans|span)\s*[:=]?\s*(-?\d+(?:\.\d+)?)", rest, re.I))
-        pier_text = re.search(r"\bpiers?\s*[:=]?\s*([\d+.\s/]+)", rest, re.I)
+        options = dict((k.lower(), float(v)) for k, v in re.findall(r"\b(skew|spans|span|depth|width|every)\s*[:=]?\s*(-?\d+(?:\.\d+)?)", rest, re.I))
+        cap_text = re.search(r"\bcap\s*[:=]?\s*([\d.]+(?:\s*x\s*[\d.]+){1,2})", rest, re.I)
+        deck_text = re.search(r"\bdeck\s*[:=]?\s*(-?[\d.]+(?:\s*(?:to|-|–)\s*-?[\d.]+)?)", rest, re.I)
+        pier_text = re.search(r"\bpiers?\s*[:=]?\s*([\d+.\s/]+)", rest, re.I) if kind == "bridge" else None
         piers = [parse_station(t, station_unit) for t in re.split(r"[\s/]+", pier_text.group(1).strip())] if pier_text else None
         station = parse_station(match["a"], station_unit)
-        item = {"id": f"{kind} {match['a']}", "kind": kind, "station": station,
+        item = {"road": road, "pier_width": None, "pier_length": None, "cap": None, "deck_depth": options.get("depth"),
+                "deck_levels": _levels(deck_text.group(1)) if deck_text else None, "deck_width": options.get("width"),
+                "id": f"{kind} {match['a']}", "kind": kind, "station": station,
                 "end": parse_station(match["b"], station_unit) if match["b"] else None, "cells": 1, "span": None, "rise": None,
                 "skew": options.get("skew", 0.0), "invert_in": None, "invert_out": None}
         if kind == "box":
@@ -177,6 +232,20 @@ def read_schedule_text(text, horizontal_unit="meter", vertical_unit=None, statio
             if len(numbers) != 2:
                 raise ValueError(f"'{part.strip()}': a pipe needs lines x diameter, for example 'pipe 2 x 0.9'.")
             item.update(cells=int(numbers[0]), span=numbers[1], rise=numbers[1] * LINEAR_UNITS[horizontal_unit.lower()][0] / LINEAR_UNITS[vertical_unit.lower()][0])
+        elif kind in ("pier", "piers"):
+            section = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", re.split(r"\bcap\b", re.sub(r"\bevery\s*[:=]?\s*[\d.]+", "", rest, flags=re.I), flags=re.I)[0])]
+            if len(section) != 2:
+                raise ValueError(f"'{part.strip()}': a pier needs its section across x along, for example 'pier 5.0 x 3.2, cap 9.0 x 2.5'.")
+            item.update(kind="pier", pier_width=section[0], pier_length=section[1], cap=_cap(cap_text.group(1)) if cap_text else None)
+            if kind == "piers":
+                every = options.get("every")
+                if not every or item["end"] is None:
+                    raise ValueError(f"'{part.strip()}': equally spaced piers need a range and 'every', for example "
+                                     "'1+403-2+203 = piers every 40, 5.0 x 3.2'.")
+                count = int(round((item["end"] - station) / every))
+                for k in range(count + 1):
+                    structures.append(dict(item, id=f"pier {k + 1}", station=station + k * every, end=None))
+                continue
         else:
             item.update(span=options.get("span"), spans=options.get("spans"), piers=piers)
         structures.append(item)
@@ -346,11 +415,13 @@ def culvert(builder, item, centre, normal, left_length, right_length, ground_at,
 
 
 def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at, depth=None, spans=None, piers=None,
-           horizontal_unit="meter", vertical_unit="meter", station_unit="meter"):
+           horizontal_unit="meter", vertical_unit="meter", station_unit="meter", pier_specs=None):
     """Deck, parapets, piers and abutments over the centreline rows ``rows`` (a contiguous index range).
 
     The deck top is the road (drawn by the corridor); this adds the deck body below it, parapets on its
-    edges, piers at about ``span`` spacing and an abutment wall at each end. Returns (description, pier count)."""
+    edges, piers at about ``span`` spacing and an abutment wall at each end. ``pier_specs`` (scheduled pier
+    rows: station, section across x along, pile cap) place and shape the piers instead. Returns
+    (description, pier count)."""
     h = LINEAR_UNITS[horizontal_unit.lower()][0]
     v = LINEAR_UNITS[vertical_unit.lower()][0]
     st = LINEAR_UNITS[station_unit.lower()][0]
@@ -360,13 +431,20 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
         result = bridge(parts, np.asarray(centre) * scale, np.asarray(stations) * st, normal, rows,
                         deck_width * h, span * h, lambda xy: ground_at(xy / h) * v,
                         depth=None if depth is None else depth * v, spans=spans,
-                        piers=[p * st for p in piers] if piers else None)
+                        piers=[p * st for p in piers] if piers else None,
+                        pier_specs=[dict(k, station=k["station"] * st, pier_width=(k.get("pier_width") or 0) * h or None,
+                                         pier_length=(k.get("pier_length") or 0) * h or None,
+                                         cap=(k["cap"][0] * h, k["cap"][1] * h, k["cap"][2] * v) if k.get("cap") else None)
+                                    for k in pier_specs] if pier_specs else None)
         xyz, faces = parts.result()
         builder.add(xyz / scale, faces)
         return result
     rows = np.asarray(rows)
     start, end = stations[rows[0]], stations[rows[-1]]
     length = end - start
+    specs = {round(item["station"], 3): item for item in (pier_specs or []) if start < item["station"] < end}
+    if specs:
+        piers = sorted(item["station"] for item in specs.values())
     if piers:                                   # pier chainages given: they decide the spans
         pier_stations = sorted(s for s in piers if start < s < end)
     else:
@@ -400,8 +478,19 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
         if not np.isfinite(g) or g > p[2] - depth - 0.5:
             continue
         along = np.array([n[1], -n[0]])
-        builder.box(p, along, n, 1.5, deck_width - 2.0, g - 1.0, p[2] - depth)
-        builder.box(p, along, n, 2.0, deck_width, p[2] - depth - 1.0, p[2] - depth)          # pier head
+        spec = specs.get(round(s, 3))
+        if spec and spec.get("pier_width") and spec.get("pier_length"):
+            across, thick = spec["pier_width"], spec["pier_length"]
+            base = g - 1.0
+            if spec.get("cap"):
+                cap_length, cap_width, cap_depth = spec["cap"]
+                builder.box(p, along, n, cap_length, cap_width, g + 0.3 - cap_depth, g + 0.3)   # pile cap, top at ground
+                base = g + 0.3
+            builder.box(p, along, n, thick, across, base, p[2] - depth - 1.2)
+            builder.box(p, along, n, thick + 1.0, max(across + 2.0, deck_width - 1.0), p[2] - depth - 1.2, p[2] - depth)
+        else:
+            builder.box(p, along, n, 1.5, deck_width - 2.0, g - 1.0, p[2] - depth)
+            builder.box(p, along, n, 2.0, deck_width, p[2] - depth - 1.0, p[2] - depth)          # pier head
         placed.append(s)
     for i in (rows[0], rows[-1]):
         p, n = centre[i], normal[i]
@@ -409,8 +498,10 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
         g = p[2] - depth - 2.0 if not np.isfinite(g) else min(g, p[2] - depth - 0.5)
         along = np.array([n[1], -n[0]])
         builder.box(p, along, n, 2.0, deck_width + 2.0, g - 1.0, p[2] - depth)
+    shaped = sum(1 for s in placed if round(s, 3) in specs)
     return (f"bridge {start:.0f}–{end:.0f}: {length:.0f} m, {spans} span{'s' if spans > 1 else ''} (longest "
-            f"{longest:.0f} m), {len(placed)} pier{'s' if len(placed) != 1 else ''}"), len(placed)
+            f"{longest:.0f} m), {len(placed)} pier{'s' if len(placed) != 1 else ''}"
+            + (f" ({shaped} from the pier schedule)" if shaped else "") + f", deck {depth:.2f} deep"), len(placed)
 
 
 def carve_channels(xyz, faces, channels, apron=30.0, bank=1.5, bed_rise=0.05, horizontal_unit="meter", vertical_unit="meter"):
