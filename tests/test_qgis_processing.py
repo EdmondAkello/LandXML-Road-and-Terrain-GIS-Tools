@@ -816,6 +816,72 @@ class QgisProcessingTests(unittest.TestCase):
         band.WriteArray(grid); ds = None
         return str(path), str(tif)
 
+    def test_feasibility_schedule_context_roads_cad_layers_and_road_strip(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsProcessingFeedback, QgsVectorLayer
+        from landxml_plugin.landxml.scene import load_scene, read_ply
+
+        class Recorder(QgsProcessingFeedback):
+            def __init__(self):
+                super().__init__()
+                self.text = []
+
+            def pushInfo(self, info):
+                self.text.append(info)
+
+            def pushWarning(self, warning):
+                self.text.append(warning)
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, _tif = self._road_scene_files(directory)
+            text = Path(path).read_text(encoding="utf-8").replace(
+                "</Alignments>", '<Alignment name="Side" staStart="0" length="100"><CoordGeom><Line length="100">'
+                '<Start>30 0</Start><End>30 100</End></Line></CoordGeom></Alignment></Alignments>')
+            Path(path).write_text(text, encoding="utf-8")
+            cad = QgsVectorLayer("LineString?crs=EPSG:26915&field=Layer:string", "Lines", "memory")
+            features = []
+            for name, y in (("Fence", -20), ("Hedge", 20)):
+                feature = QgsFeature(cad.fields())
+                feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(10, y), QgsPointXY(90, y)]))
+                feature["Layer"] = name
+                features.append(feature)
+            cad.dataProvider().addFeatures(features)
+            posts = QgsVectorLayer("Point?crs=EPSG:26915", "Posts", "memory")
+            post = QgsFeature(); post.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(50, 40)))
+            posts.dataProvider().addFeatures([post])
+            params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG", RASTERS=[], CONTOURS="", WATER="",
+                          SYNTHETIC="Main; Side", SYN_GROUND="EG", SYN_CARRIAGEWAY=6.0, SYN_SHOULDER=1.5, SYN_MAX_WIDTH=10.0,
+                          SYN_STRUCTURES="Main @ 1+040-1+090 = viaduct, depth 0.3; Main @ 1+042-1+052 = piers every 5, 2.0 x 1.0, "
+                                         "cap 3 x 0.5; Side @ 0+040-0+060 = bridge, deck 101.5 to 101.5",
+                          VECTORS=[cad, posts], EXTRUDE_HEIGHT=0.0, OUTPUT_FOLDER=str(Path(directory) / "plain"))
+            with self.assertRaises(QgsProcessingException) as caught:        # no profile and no opt-in: a clear stop
+                algorithm.processAlgorithm(params, self.context, Recorder())
+            self.assertIn("follow the ground", str(caught.exception))
+            log = Recorder()
+            result = algorithm.processAlgorithm(dict(params, SYN_AT_GRADE=True, OUTPUT_FOLDER=str(Path(directory) / "s")),
+                                                self.context, log)
+            joined = "\n".join(log.text)
+            self.assertIn("Scene area: a strip", joined)
+            self.assertIn("'Side' has no profile", joined)
+            self.assertIn("3 piers (3 from the pier schedule)", joined)
+            self.assertIn("deck 0.30 deep", joined)
+            self.assertIn("deck from 101.5 to 101.5", joined)
+            self.assertIn("Feasibility roads generated: 2 of 2", joined)
+            scene, folder = load_scene(result["SCENE"])
+            origin = np.array(scene["origin"])
+            eg = next(s for s in scene["surfaces"] if s["name"] == "EG")
+            ground = read_ply(str(Path(folder) / eg["mesh"]))[0] + origin
+            self.assertGreater(ground[:, 1].min(), -45.0)           # the strip, not the whole TIN (y from -50)
+            side = next(s for s in scene["surfaces"] if s["name"].startswith("Side"))
+            sxyz, _f, _rgb, _d, extra = read_ply(str(Path(folder) / side["mesh"]), extras=True)
+            centre = (np.abs(extra["offset"]) < 1e-6) & (extra["station"] > 41) & (extra["station"] < 59)
+            self.assertTrue(np.allclose(sxyz[centre, 2] + origin[2], 101.5, atol=1e-6))
+            kinds = {line["kind"] for line in scene["lines"]}
+            self.assertTrue({"Lines: Fence", "Lines: Hedge"} <= kinds, kinds)
+            solids = next(s for s in scene["surfaces"] if s["id"] == "solids")
+            pole = read_ply(str(Path(folder) / solids["mesh"]))[0] + origin
+            self.assertAlmostEqual(float(np.ptp(pole[:, 2])), 6.0, places=4)          # a post becomes a 6 m pole
+
     def test_road_scene_with_surfaces_rasters_contours_and_linework(self):
         from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer
         from landxml_plugin.landxml.scene import load_scene, read_ply
