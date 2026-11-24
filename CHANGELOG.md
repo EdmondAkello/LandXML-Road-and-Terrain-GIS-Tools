@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed (3D scene dialog, #84)
+- **Generate a feasibility road** switches road generation on and off. While it is off the road inputs are greyed
+  out but keep their values and the export is a terrain scene only, said so in the log; ticking it with no road
+  alignment stops with a message. Scripts, models, saved settings and history without the switch still build the
+  roads they name.
+- Clearer labels with the parameter IDs kept: *Limit scene area along alignment* (scene coverage only; it never
+  generates a road), *Surrounding terrain width each side*, *Road alignment(s) to generate*, *Ground surface for
+  road tie-ins*, *Road: total carriageway width*, *Road: maximum batter search distance*, and *Road* or *Road
+  structures* / *Road DEM correction* for the other road inputs.
+- Surrounding terrain width: 0 = Auto (the new default): 60 either side of a scene-area alignment, or the road's
+  half section plus batter search plus 20 when the alignment is also a generated road, and the same for the strip
+  along generated roads. Explicit positive widths in saved projects, models and batch runs keep their meaning and
+  also set the strip width.
+- A warning when a chosen extent, polygon or alignment area leaves a generated road less room than half its section
+  plus the batter search, with the stations; the area is never widened.
+- The log names the feasibility roads generated.
+- User guide: the scene area, the three widths, the road switch, context roads, pier and deck schedules, CAD
+  layers and poles, and ground styling.
+
 ### Fixed
 - Structure schedules refuse a pipe or box size over 15 m (an unlabelled `Diameter = 600` meant in mm) instead of
   drawing it, and ask for the unit in the heading, e.g. `Diameter (mm)`. Bridge spans are not limited.

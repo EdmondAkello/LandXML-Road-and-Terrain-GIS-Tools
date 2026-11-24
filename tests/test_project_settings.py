@@ -60,6 +60,37 @@ class ProjectSettingsTests(unittest.TestCase):
     def saved(self, name="prepare_landxml"):
         return json.loads(self.project.readEntry("LandXML", "processing/" + name, "{}")[0])
 
+    def test_scene_road_switch_greys_road_inputs_and_keeps_old_selections(self):
+        def enabled(dialog, name):
+            wrapper = dialog.mainWidget().wrappers[name]
+            widget = wrapper.wrappedWidget() if hasattr(wrapper, "wrappedWidget") else None
+            return (widget or wrapper.widget).isEnabled()
+
+        dialog = self.dialog("landxml_3d_scene", {"SYN_CARRIAGEWAY": 9.5, "SYN_GENERATE": False})
+        self.assertFalse(self.value(dialog, "SYN_GENERATE"))
+        for name in ("SYNTHETIC", "SYN_CARRIAGEWAY", "SYN_MAX_WIDTH", "SYN_STRUCTURES", "SYN_MATCH_PROFILE"):
+            self.assertFalse(enabled(dialog, name), name)
+        self.assertTrue(enabled(dialog, "CORRIDOR"))                       # scene area stays available
+        dialog.setParameters({"SYN_CARRIAGEWAY": 9.5, "SYN_GENERATE": True})
+        self.assertTrue(enabled(dialog, "SYN_CARRIAGEWAY"))
+        self.assertEqual(self.value(dialog, "SYN_CARRIAGEWAY"), 9.5)       # toggling keeps the value
+        dialog.setParameters({"SYN_GENERATE": False, "SYN_CARRIAGEWAY": 9.5})
+        self.assertEqual(self.value(dialog, "SYN_CARRIAGEWAY"), 9.5)
+        # history or saved settings from before the switch: a chosen road still means "generate"
+        old = self.dialog("landxml_3d_scene", {"SYNTHETIC": "Main"})
+        self.assertTrue(self.value(old, "SYN_GENERATE"))
+        self.assertTrue(enabled(old, "SYNTHETIC"))
+        algorithm = next(a for a in self.provider.algorithms() if a.name() == "landxml_3d_scene")
+        labels = {d.name(): d.description() for d in algorithm.parameterDefinitions()}
+        self.assertTrue(labels["CORRIDOR"].startswith("Limit scene area along alignment"))
+        self.assertIn("does not generate a road", labels["CORRIDOR"])
+        self.assertTrue(labels["CORRIDOR_WIDTH"].startswith("Surrounding terrain width each side (0 = Auto)"))
+        self.assertTrue(labels["SYN_CARRIAGEWAY"].startswith("Road: total carriageway width"))
+        self.assertTrue(labels["SYN_MAX_WIDTH"].startswith("Road: maximum batter search distance"))
+        self.assertEqual(algorithm.parameterDefinition("CORRIDOR_WIDTH").defaultValue(), 0.0)
+        spin = dialog.mainWidget().wrappers["CORRIDOR_WIDTH"].wrappedWidget()
+        self.assertEqual(spin.specialValueText(), "Auto")
+
     def test_dimensional_labels_refresh_without_converting_values(self):
         from qgis.PyQt.QtWidgets import QLabel
 
