@@ -220,3 +220,42 @@ def suggest_terrain_pair(catalog):
         kind = " (datum/bottom preferred for earthworks)" if _has_hint(compare, DATUM_HINTS) else ""
         reason.append(f"'{compare}' is {source}{kind}")
     return base, compare, "; ".join(reason)
+
+
+_UNITS_BLOCK = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?Units\b[^>]*?(/?)>")
+_UNIT_ITEM = re.compile(rb"<(?:[A-Za-z_][\w.-]*:)?(?:Imperial|Metric)\b([^>]*)>")
+_UNITS_END = re.compile(rb"</(?:[A-Za-z_][\w.-]*:)?Units\s*>")
+UNITS_HEAD = 4 * 1024 * 1024
+_UNITS_CACHE = {}
+
+
+def read_units(path, head=UNITS_HEAD):
+    """(horizontal, vertical) linear units from the LandXML ``<Units>`` header, without parsing the file.
+
+    For dialog labels only: the declaration sits near the start, so only the first ``head`` bytes are
+    scanned and a multi-GB export answers at once. Same rules as the parser: ``verticalLinearUnit`` wins
+    over ``elevationUnit``; conflicting declarations, or none found, give ``(None, None)``. Nothing is
+    inferred, and Processing still reads the units through the hardened parser.
+    """
+    stat = os.stat(path)
+    key = (os.path.abspath(path), stat.st_size, stat.st_mtime)
+    if key in _UNITS_CACHE:
+        return _UNITS_CACHE[key]
+    with open(path, "rb") as stream:
+        data = stream.read(head)
+    result = (None, None)
+    match = _UNITS_BLOCK.search(data)
+    if match and not match.group(1):
+        end = _UNITS_END.search(data, match.end())
+        block = data[match.end():end.start() if end else len(data)]
+        found = set()
+        for item in _UNIT_ITEM.finditer(block):
+            attrib = _attributes(item.group(1))
+            found.add((attrib.get("linearUnit") or None,
+                       attrib.get("verticalLinearUnit") or attrib.get("elevationUnit") or None))
+        if len(found) == 1:
+            result = found.pop()
+    if len(_UNITS_CACHE) > 32:
+        _UNITS_CACHE.clear()
+    _UNITS_CACHE[key] = result
+    return result
