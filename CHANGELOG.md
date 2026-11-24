@@ -4,6 +4,7 @@
 
 ### Fixed
 - Complete customary-unit handling for structure schedules, synthetic roads, mixed-unit scene rendering and DEM elevations, edge face areas, drive-through speeds/cameras, section area labels and surface pick readouts. Explicit structure CSV unit headings (including inches and legacy millimetre headings) are converted; generic dimensions stay in their stated model units, without magnitude guessing.
+- Complete Road Design places schematic profile lines and controls beside the exported project in the output CRS, scaled to the project size and stacked below the plan and terrain bounds with clear gaps. Large source stations no longer place the drawings far away. Source station/elevation attributes and units are preserved. Synthetic tests cover metric and US survey feet, multiple profiles, terrain, coordinate shifts, reprojection and profile-only exports. Issue #77.
 
 ### Added
 - Dimensional inputs across the Processing tools state their unit basis. Desktop dialogs show actual m, ft or ftUS, selected volume and criteria speed units beside fields and refresh from files, CRS and explicit unit choices without converting entered values. Unknown units stay unknown. The viewer docks also identify dimensional input units.

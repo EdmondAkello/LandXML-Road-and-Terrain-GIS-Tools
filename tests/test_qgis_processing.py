@@ -1508,10 +1508,91 @@ class QgisProcessingTests(unittest.TestCase):
             )
             graph = package.GetLayerByName("profiles")
             self.assertEqual(graph.GetFeatureCount(), 1)
-            self.assertIsNone(graph.GetSpatialRef())
+            self.assertEqual(graph.GetSpatialRef().GetAuthorityCode(None), "26915")
             controls = package.GetLayerByName("profile_controls")
             self.assertEqual(controls.GetFeatureCount(), 3)
             package = None
+
+    def test_complete_export_profiles_are_near_and_clear_of_plan(self):
+        for mode in ("stored", "offset", "reproject", "feet", "profiles_only", "no_plan"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                source = ROOT / "tests/fixtures/generic/profile_layout.xml"
+                if mode in ("feet", "no_plan"):
+                    text = source.read_text()
+                    if mode == "feet":
+                        text = text.replace('<Metric linearUnit="meter"/>', '<Imperial linearUnit="USSurveyFoot"/>')
+                    else:
+                        text = "\n".join(line for line in text.splitlines() if "<CoordGeom>" not in line)
+                    source = Path(directory) / (mode + ".xml")
+                    source.write_text(text)
+                params = self._params(str(source), "EPSG:2277" if mode == "feet" else "EPSG:26915")
+                params.update(OUTPUT_DIR=str(Path(directory) / "out"), RESOLUTION=30,
+                              INCLUDE_DEM=mode == "stored", INCLUDE_CONTOURS=False)
+                if mode == "offset":
+                    params.update(METHOD=3, DX=100000, DY=-200000)
+                elif mode == "reproject":
+                    params.update(METHOD=5, SOURCE_CRS=QgsCoordinateReferenceSystem("EPSG:26915"),
+                                  OUTPUT_CRS=QgsCoordinateReferenceSystem("EPSG:4326"))
+                elif mode in ("profiles_only", "no_plan"):
+                    for definition in self.algorithms["landxml_complete_road_design"].parameterDefinitions():
+                        if definition.name().startswith("INCLUDE_"):
+                            params[definition.name()] = definition.name() == "INCLUDE_PROFILES"
+                self.algorithms["landxml_complete_road_design"].processAlgorithm(params, self.context, self.feedback)
+                with ogr.Open(str(Path(params["OUTPUT_DIR"]) / (source.stem + "_GIS.gpkg"))) as package:
+                    graph = package.GetLayerByName("profiles")
+                    controls = package.GetLayerByName("profile_controls")
+                    if mode == "no_plan":
+                        self.assertIsNone(graph.GetSpatialRef())
+                        self.assertIsNone(controls.GetSpatialRef())
+                        feature = next(iter(graph))
+                        self.assertEqual(feature.GetGeometryRef().GetPoint_2D(0), (900000, 0))
+                        continue
+                    self.assertIsNotNone(graph.GetSpatialRef(), "Profile drawings need the output map CRS")
+                    self.assertEqual(graph.GetSpatialRef().GetAuthorityCode(None),
+                                     params["OUTPUT_CRS"].authid().split(":")[1])
+                    self.assertTrue(controls.GetSpatialRef().IsSame(graph.GetSpatialRef()))
+                    plan_bounds = [layer.GetExtent() for layer in package
+                                   if layer.GetGeomType() != ogr.wkbNone and
+                                   layer.GetName() not in ("profiles", "profile_controls") and layer.GetFeatureCount()]
+                    if mode == "stored":
+                        dem = gdal.Open(str(next(Path(params["OUTPUT_DIR"]).glob("*_DEM.tif"))))
+                        x, dx, _, y, _, dy = dem.GetGeoTransform()
+                        plan_bounds.append((x, x + dx * dem.RasterXSize, y + dy * dem.RasterYSize, y))
+                        dem = None
+                    if mode == "profiles_only":
+                        plan_bounds = [(500000, 500200, 4500000, 4500100)]
+                    xmin = min(b[0] for b in plan_bounds)
+                    ymin = min(b[2] for b in plan_bounds)
+                    span = max(max(b[1] for b in plan_bounds) - xmin, max(b[3] for b in plan_bounds) - ymin)
+                    rows = []
+                    for feature in graph:
+                        line = feature.GetGeometryRef()
+                        envelope = line.GetEnvelope()
+                        matching = [point for point in controls
+                                    if point["alignment_name"] == feature["alignment_name"] and
+                                    point["profile_name"] == feature["profile_name"]]
+                        self.assertGreater(len(matching), 0)
+                        top = max([envelope[3]] + [point.GetGeometryRef().GetY() for point in matching])
+                        bottom = min([envelope[2]] + [point.GetGeometryRef().GetY() for point in matching])
+                        self.assertLess(top, ymin)
+                        self.assertAlmostEqual(envelope[0], xmin)
+                        self.assertLessEqual(envelope[1] - xmin, span * 1.01)
+                        rows.append((bottom, top))
+                        start, end = feature["station_start"], feature["station_end"]
+                        self.assertIn(start, (900000, 300000))
+                        self.assertIn(end, (900200, 300100))
+                        scale = (line.GetX(line.GetPointCount() - 1) - line.GetX(0)) / (end - start)
+                        first_elevation = 0 if feature["profile_name"] == "Design" and start == 900000 else (90 if start == 900000 else -10)
+                        for point in matching:
+                            geometry = point.GetGeometryRef()
+                            self.assertAlmostEqual(geometry.GetX(), xmin + (point["station"] - start) * scale)
+                            self.assertAlmostEqual(geometry.GetY(), line.GetY(0) + (point["elevation"] - first_elevation) * scale)
+                    self.assertEqual(len(rows), 3)
+                    rows.sort(reverse=True)
+                    self.assertLess(ymin - rows[0][1], span * 0.25)
+                    for previous, following in zip(rows, rows[1:]):
+                        self.assertLess(following[1], previous[0])
+                        self.assertLess(previous[0] - following[1], span * 0.25)
 
     def _loaded(self, name="memory:"):
         # A destination Processing will load, so result post-processors attach.
