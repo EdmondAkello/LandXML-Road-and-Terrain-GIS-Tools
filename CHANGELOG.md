@@ -21,6 +21,12 @@
 - User guide: the scene area, the three widths, the road switch, context roads, pier and deck schedules, CAD
   layers and poles, and ground styling.
 
+### Fixed (triangle budget)
+- Cutting the ground along a design's edge (`refine_edges`) no longer overruns the triangle budget. Refinement
+  stops before a round that would take the ground past the room left in the budget, plus a twentieth of the budget
+  so cut edges stay clean even when the unrefined scene already fills it. Rounds are whole, so the edge stays
+  evenly refined. (A scene with a long river crossing had grown to about 1.2 M triangles against a 0.9 M budget.)
+
 ### Fixed
 - Structure schedules refuse a pipe or box size over 15 m (an unlabelled `Diameter = 600` meant in mm) instead of
   drawing it, and ask for the unit in the heading, e.g. `Diameter (mm)`. Bridge spans are not limited.
@@ -34,6 +40,71 @@
 ### Added
 - Dimensional inputs across the Processing tools state their unit basis. Desktop dialogs show actual m, ft or ftUS, selected volume and criteria speed units beside fields and refresh from files, CRS and explicit unit choices without converting entered values. Unknown units stay unknown. The viewer docks also identify dimensional input units.
 - Raster elevation unit selection for DEMs without band-unit metadata. Tagged DEMs are explicitly converted to the scene elevation unit; unknown elevation units require a choice. Scene paths retain source station units through reprojection.
+
+### Documentation
+- User guide: four annotated figures for Export 3D Scene (the dialog with its setup summary, the demonstration scene,
+  vegetation close up, the drive-through panel) and a walkthrough for an existing-terrain scene against a feasibility
+  road; figures renumbered. `tools/guide/make_scene_figures.py` builds the demonstration scene and
+  `tools/guide/capture_scene.py` captures and annotates the viewer (headless Chrome with software WebGL).
+
+### Fixed (QGIS 4.4 dialogs, partial)
+- The Processing dialog panel's `wrappers` became a method returning a list in QGIS 4.4; the plugin now reads it either
+  way (`compat.panel_wrappers`). Other QGIS 4.4 dialog changes remain to be handled.
+
+### Added (3D scene dialog and large scenes)
+- **Setup summary** at the top of the Export 3D Scene dialog, updated as inputs change: the road and its alignments, lane
+  and shoulder widths, side slopes, the scene width (Auto or the chosen value), what extras are on, and warnings such as an
+  alignment that is not in the file or has no design profile (unless *at grade* is ticked).
+- **Show/hide buttons** for the Road, Plants and water, and Models inputs. Hidden inputs keep their values.
+- **Structures table…** opens a table (road, station, type, details) for the typed culverts, bridges and piers instead of
+  typing the text; rows are checked with the scene's own reader before they are accepted.
+- **Phone copy of the viewer:** a scene over 1.5 M triangles also writes `viewer_phone.html`, with the ground thinned to about
+  600 000 triangles (designs, structures and water are kept whole), so it opens on a phone or tablet.
+
+### Changed (3D scene, bridges)
+- A generated bridge is written as separate **Bridge deck**, **Pile caps** and **Piers and abutments** layers, each with its
+  own toggle and shade, instead of one merged structures mesh. Culverts stay in **Structures (concept)**.
+
+### Added (3D scene, waterways)
+- **Waterways** (optional line layers) in Export 3D Scene are drawn as a flat-across water ribbon of a chosen
+  **Water width** that follows the ground along the line. The ribbon runs downhill (a line drawn uphill is turned round and the log says so), so the level
+  never rises along it; stretches outside the ground surface are left out and a message reports the length drawn.
+  A ribbon is a concept for scale and context, not a hydraulic water surface; use **Water levels** for a level.
+
+### Added (3D scene, vegetation)
+- **Vegetation** (optional polygon or point layers) in Export 3D Scene: polygons are planted on a jittered grid
+  (**Spacing**, one plant per cell, so the cover is even but not regular) and points become single plants. **Style** is
+  *Grass and shrubs* (about 15 % shrubs), *Grass* or *Shrubs*. Grass clumps are three crossed quads whose blades are cut
+  out in the viewer, over a soft patch of grass colour (8 triangles each); shrubs are low, irregular faceted domes (30 triangles). Plants stand on the ground
+  surface, keep a **Clear distance** away from roads and designs, vary in size (Auto: grass about 0.8 m, shrubs 1.8 m,
+  in the output unit) and are the same every run. They are written as `vegetation.csv` and drawn as instances with a
+  **Vegetation** switch in the layers panel. The count is held to a quarter of the triangle budget (a message says when
+  it was thinned), and a polygon far larger than the scene only gets plants where the scene is.
+
+### Added (3D scene, other roads and drive paths)
+- **Other roads:** more LandXML files (*Other roads: more LandXML files*, read in the main file's coordinate system and
+  axis order) and line layers (*Other roads: line layers*) are built as roads with the scene's road section, side
+  slopes run out to the ground and cut into the terrain, like a feasibility road. A LandXML alignment with a design
+  profile follows it; anything without one follows the ground smoothed over 40 m (a context road). Structures can be
+  scheduled on them by road name (`A9 @ 0+238.1 = box 1 x 2.0 x 1.5`). A road that lies outside the scene is
+  reported and left out.
+- **Every generated road can be driven**, including roads on the smoothed ground, which previously had no drive path.
+  LandXML alignments without a profile that are not generated get a drive path on the smoothed ground, named
+  "(on the ground)".
+
+### Changed (viewer file size)
+- The viewer's meshes are packed losslessly (values stored by component with their bytes grouped, indices as deltas,
+  then gzip): a 12.2 MB corridor scene became 3.3 MB and a 4.9 MB one 1.9 MB, with every array unchanged. The
+  browser unpacks them with its built-in `DecompressionStream` (current Chrome, Edge, Firefox and Safari); older
+  files with plain arrays still open.
+
+### Added (viewer, drive-through cameras)
+- **Camera** in the Drive through panel: *Driver* (as before), *Chase* (a vehicle drives the road and the camera
+  follows behind and above it), *Aerial follow* and *Flythrough* (a high camera that sweeps from one side of the
+  road to the other while it follows). **Vehicle** chooses a car (eye 1.3 m) or a truck (eye 2.4 m); the models are
+  a few hundred triangles (a car with a tapered body, raked glass, bumpers, lights and round wheels; a truck with a
+  cab, cargo box and dual rear axles) and keep their true size under vertical exaggeration and in feet. Recording captures the
+  chosen camera. Links accept `#drive=0.4&cam=chase&vehicle=truck`. A 120 km/h (75 mph) speed was added.
 
 ### Added (viewer)
 - Ground styling: existing ground, context surfaces and DEMs get an elevation tint with hillshading

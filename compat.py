@@ -7,6 +7,15 @@ FIELD_DOUBLE = QMetaType.Type.Double
 FIELD_INT = QMetaType.Type.Int
 
 
+def panel_wrappers(panel):
+    """The parameter widget wrappers of a Processing dialog panel by name: an attribute (dict) up to QGIS 4.2, a method returning a list in 4.4."""
+    wrappers = panel.wrappers
+    wrappers = wrappers() if callable(wrappers) else wrappers
+    if isinstance(wrappers, dict):
+        return wrappers
+    return {wrapper.parameterDefinition().name(): wrapper for wrapper in wrappers}      # QGIS 4.4: a list
+
+
 def mark_advanced_definition(definition):
     from qgis.core import Qgis
 

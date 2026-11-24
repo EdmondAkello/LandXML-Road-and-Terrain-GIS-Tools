@@ -25,6 +25,15 @@ if "landxml_plugin" not in sys.modules:
     spec.loader.exec_module(module)
 
 
+
+def panel_wrappers(panel):
+    """Dialog wrappers by name: an attribute up to QGIS 4.2, a method in 4.4 (as compat.panel_wrappers)."""
+    wrappers = panel.wrappers
+    wrappers = wrappers() if callable(wrappers) else wrappers
+    if isinstance(wrappers, dict):
+        return wrappers
+    return {wrapper.parameterDefinition().name(): wrapper for wrapper in wrappers}      # QGIS 4.4: a list
+
 class ProjectSettingsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -55,14 +64,14 @@ class ProjectSettingsTests(unittest.TestCase):
         return dialog
 
     def value(self, dialog, name):
-        return dialog.mainWidget().wrappers[name].parameterValue()
+        return panel_wrappers(dialog.mainWidget())[name].parameterValue()
 
     def saved(self, name="prepare_landxml"):
         return json.loads(self.project.readEntry("LandXML", "processing/" + name, "{}")[0])
 
     def test_scene_road_switch_greys_road_inputs_and_keeps_old_selections(self):
         def enabled(dialog, name):
-            wrapper = dialog.mainWidget().wrappers[name]
+            wrapper = panel_wrappers(dialog.mainWidget())[name]
             widget = wrapper.wrappedWidget() if hasattr(wrapper, "wrappedWidget") else None
             return (widget or wrapper.widget).isEnabled()
 
@@ -88,7 +97,7 @@ class ProjectSettingsTests(unittest.TestCase):
         self.assertTrue(labels["SYN_CARRIAGEWAY"].startswith("Road: total carriageway width"))
         self.assertTrue(labels["SYN_MAX_WIDTH"].startswith("Road: maximum batter search distance"))
         self.assertEqual(algorithm.parameterDefinition("CORRIDOR_WIDTH").defaultValue(), 0.0)
-        spin = dialog.mainWidget().wrappers["CORRIDOR_WIDTH"].wrappedWidget()
+        spin = panel_wrappers(dialog.mainWidget())["CORRIDOR_WIDTH"].wrappedWidget()
         self.assertEqual(spin.specialValueText(), "Auto")
 
     def test_dimensional_labels_refresh_without_converting_values(self):

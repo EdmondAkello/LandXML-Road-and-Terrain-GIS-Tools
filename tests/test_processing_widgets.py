@@ -8,6 +8,15 @@ import unittest
 from . import test_qgis_processing as runtime
 
 
+
+def panel_wrappers(panel):
+    """Dialog wrappers by name: an attribute up to QGIS 4.2, a method in 4.4 (as compat.panel_wrappers)."""
+    wrappers = panel.wrappers
+    wrappers = wrappers() if callable(wrappers) else wrappers
+    if isinstance(wrappers, dict):
+        return wrappers
+    return {wrapper.parameterDefinition().name(): wrapper for wrapper in wrappers}      # QGIS 4.4: a list
+
 class WidgetRefreshTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -28,7 +37,7 @@ class WidgetRefreshTests(unittest.TestCase):
         dialog = AlgorithmDialog(algorithm)
         try:
             dialog.setParameters({"INPUT": runtime.CORRIDOR, "ALIGNMENT": "Synthetic Road"})
-            wrapper = dialog.mainWidget().wrappers["ALIGNMENT"]
+            wrapper = panel_wrappers(dialog.mainWidget())["ALIGNMENT"]
             wrapper.refresh()
             dialog.mainWidget().layerRegistryChanged([])
             self.assertEqual(wrapper.value(), "Synthetic Road")
@@ -53,7 +62,7 @@ class WidgetRefreshTests(unittest.TestCase):
         try:
             dialog.setParameters({"INPUT": runtime.CORRIDOR, "SYNTHETIC": "A; B", "SURFACES": "EG = plain #cfd8c4; FG = depth over EG",
                                   "RASTER_STYLE": "slope: 1, 5, 30", "CORRIDOR": "Synthetic Road"})
-            wrappers = dialog.mainWidget().wrappers
+            wrappers = panel_wrappers(dialog.mainWidget())
             self.assertEqual(wrappers["SYNTHETIC"].value(), "A; B")
             self.assertEqual(wrappers["SURFACES"].value(), "EG = plain #cfd8c4; FG = depth over EG")
             self.assertEqual(wrappers["RASTER_STYLE"].value(), "slope: 1, 5, 30")

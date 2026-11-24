@@ -4,6 +4,8 @@ import json
 
 from qgis.core import QgsProcessingAlgorithm, QgsProject, QgsVariantUtils
 
+from .compat import panel_wrappers
+
 
 # Rarely changed coordinate adjustments sit in the dialog's Advanced section in every tool.
 ADVANCED_EVERYWHERE = {"DX", "DY", "ROTATION", "SCALE"}
@@ -116,7 +118,7 @@ class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
                 context = self.mainWidget().processing_context
                 saved = {}
                 for name, parameter in self._inputs.items():
-                    wrapper = self.mainWidget().wrappers[name]
+                    wrapper = panel_wrappers(self.mainWidget())[name]
                     value = parameter.valueAsJsonObject(wrapper.parameterValue(), context)
                     if QgsVariantUtils.isNull(value):
                         value = None

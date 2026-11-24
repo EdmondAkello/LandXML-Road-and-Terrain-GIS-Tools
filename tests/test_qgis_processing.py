@@ -932,6 +932,110 @@ class QgisProcessingTests(unittest.TestCase):
             pole = read_ply(str(Path(folder) / solids["mesh"]))[0] + origin
             self.assertAlmostEqual(float(np.ptp(pole[:, 2])), 6.0, places=4)          # a post becomes a 6 m pole
 
+    def test_triangle_budget_limits_the_refinement_along_a_design_edge(self):
+        from landxml_plugin.landxml.scene import load_scene, read_ply
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, _tif = self._road_scene_files(directory)
+
+            def ground_triangles(budget):
+                params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG = plain #cfd8c4; Road FG = depth over EG",
+                              MAX_TRIANGLES=budget, OUTPUT_FOLDER=str(Path(directory) / f"scene{budget}"))
+                scene, folder = load_scene(algorithm.processAlgorithm(params, self.context, self.feedback)["SCENE"])
+                ground = next(item for item in scene["surfaces"] if item["id"] == "s1")
+                return len(read_ply(str(Path(folder) / ground["mesh"]))[1])
+
+            open_budget = ground_triangles(2_000_000)
+            tight_budget = ground_triangles(60)
+            self.assertGreater(open_budget, 300)                       # the design's edge is refined when there is room
+            self.assertLess(tight_budget, open_budget)                 # and held back, not left to overrun, when there is not
+            self.assertLessEqual(tight_budget, 200 + 60 // 20 + 3)     # the unrefined ground (200 triangles) plus the small allowance
+
+    def test_vegetation_layers_become_plants_that_keep_clear_of_the_design(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsVectorLayer
+        from landxml_plugin.landxml.scene import load_scene
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, _tif = self._road_scene_files(directory)
+            wood = QgsVectorLayer("Polygon?crs=EPSG:26915", "Wood", "memory")
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(0, -90), QgsPointXY(100, -90), QgsPointXY(100, 90), QgsPointXY(0, 90)]]))
+            wood.dataProvider().addFeatures([feature])
+            params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG = plain #cfd8c4; Road FG = depth over EG",
+                          VEGETATION=[wood], VEG_SPACING=10.0, VEG_HEIGHT=0.0, VEG_CLEAR=5.0,
+                          OUTPUT_FOLDER=str(Path(directory) / "scene"))
+            scene, folder = load_scene(algorithm.processAlgorithm(params, self.context, self.feedback)["SCENE"])
+            veg = scene["vegetation"]
+            self.assertEqual(veg["columns"], ["x", "y", "z", "height", "crown", "kind"])
+            lines = (Path(folder) / veg["file"]).read_text().strip().splitlines()
+            rows = [line.split(",") for line in lines]
+            rows = [r for r in rows if len(r) == 6 and r[0].lstrip("-").replace(".", "", 1).isdigit()]
+            self.assertEqual(len(rows), veg["count"])
+            self.assertGreater(veg["count"], 20)                       # about one tree per 10 m cell over the wood
+            self.assertLess(veg["count"], 200)                         # but the cleared corridor takes some away
+            heights = [float(r[3]) for r in rows]
+            kinds = [int(r[5]) for r in rows]
+            self.assertTrue(all(0.5 <= h <= 1.1 for h, k in zip(heights, kinds) if k == 0))   # grass round 0.8 m
+            self.assertTrue(all(1.2 <= h <= 2.4 for h, k in zip(heights, kinds) if k == 1))   # shrubs round 1.8 m
+
+            params["OUTPUT_FOLDER"] = str(Path(directory) / "scene_none")
+            params.pop("VEGETATION")
+            plain, _folder = load_scene(algorithm.processAlgorithm(params, self.context, self.feedback)["SCENE"])
+            self.assertNotIn("vegetation", plain)                      # no layer, no trees, nothing extra in the scene
+
+    def test_other_roads_from_line_layers_and_landxml_files_are_built_and_can_be_driven(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsVectorLayer
+        from landxml_plugin.landxml.scene import load_scene
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, _tif = self._road_scene_files(directory)
+            roads = QgsVectorLayer("LineString?crs=EPSG:26915", "Old road", "memory")
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(10, -60), QgsPointXY(90, 60)]))
+            roads.dataProvider().addFeatures([feature])
+            params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG = plain #cfd8c4",
+                          DRIVE_LINES=[roads], EXTRA_LANDXML=[path], OUTPUT_FOLDER=str(Path(directory) / "scene"))
+            scene, _folder = load_scene(algorithm.processAlgorithm(params, self.context, self.feedback)["SCENE"])
+            surfaces = {item["name"]: item for item in scene["surfaces"]}
+            self.assertIn("Old road (synthetic corridor)", surfaces)                  # a real road with side slopes
+            self.assertEqual(surfaces["Old road (synthetic corridor)"]["style"]["attribute"], "road")
+            corridors = [n for n in surfaces if n.endswith("(synthetic corridor)") and not n.startswith("Old road")]
+            self.assertTrue(corridors)                                                # the other file's road, on its profile
+            paths = {item["name"]: item for item in scene.get("paths", [])}
+            self.assertIn("Old road", paths)
+            old = paths["Old road"]
+            self.assertGreater(old["stations"][-1], 100.0)
+            levels = [point[2] for point in old["points"]]
+            steps = [abs(b - a) for a, b in zip(levels, levels[1:])]
+            self.assertLess(max(steps), 0.5)                                          # smoothed: no jumps between 2 m steps
+
+    def test_a_waterway_line_becomes_a_ribbon_that_follows_the_ground(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsVectorLayer
+        from landxml_plugin.landxml.scene import load_scene, read_ply
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, _tif = self._road_scene_files(directory)
+            river = QgsVectorLayer("LineString?crs=EPSG:26915", "River", "memory")
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(10, -80), QgsPointXY(50, 0), QgsPointXY(90, 80)]))
+            river.dataProvider().addFeatures([feature])
+            params = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG = plain #cfd8c4; Road FG = depth over EG",
+                          WATERWAYS=[river], WATER_WIDTH=8.0, OUTPUT_FOLDER=str(Path(directory) / "scene"))
+            scene, folder = load_scene(algorithm.processAlgorithm(params, self.context, self.feedback)["SCENE"])
+            water = [item for item in scene["surfaces"] if item["role"] == "water"]
+            self.assertEqual([item["name"] for item in water], ["Waterway"])
+            xyz, faces = read_ply(str(Path(folder) / water[0]["mesh"]))[:2]
+            self.assertGreater(len(faces), 10)
+            origin = scene["origin"]
+            x = xyz[:, 0] + origin[0]                                   # meshes are relative to the scene origin
+            self.assertGreater(float(x.max() - x.min()), 40.0)         # follows the line over the ground
+            self.assertGreaterEqual(float(x.min()), 10.0 - 8.0)        # and stays within the line and half a width
+            self.assertLessEqual(float(x.max()), 90.0 + 8.0)
+
     def test_road_scene_with_surfaces_rasters_contours_and_linework(self):
         from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer
         from landxml_plugin.landxml.scene import load_scene, read_ply

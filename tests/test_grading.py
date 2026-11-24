@@ -888,7 +888,65 @@ class BridgeLayoutTests(unittest.TestCase):
         self.assertIn("longest 40 m", text)
 
 
+class BridgeGroupTests(unittest.TestCase):
+    def _bridge(self, builder, unit="meter"):
+        from landxml_plugin.landxml.structures import bridge, read_schedule_text
+
+        items = read_schedule_text("1+000-1+100 = bridge, spans 1; 1+040 = pier 4 x 3, cap 8 x 8 x 2; 1+070 = pier 4 x 3")
+        xs = np.arange(1000, 1101, 2.0)
+        centre = np.column_stack([xs, 0 * xs, np.full_like(xs, 130.0)])
+        normal = np.tile([0.0, -1.0], (len(xs), 1))
+        flat = lambda points: np.full(len(points), 100.0)
+        pier_specs = [i for i in items if i["kind"] == "pier"]
+        return bridge(builder, centre, xs, normal, np.arange(len(xs)), 11.0, 25.0, flat, spans=1,
+                      piers=[1040.0, 1070.0], pier_specs=pier_specs, horizontal_unit=unit, vertical_unit=unit, station_unit=unit)
+
+    def test_a_bridge_is_built_in_deck_pier_and_pile_cap_groups(self):
+        from landxml_plugin.landxml.structures import MeshBuilder
+
+        builder = MeshBuilder()
+        self._bridge(builder)
+        groups = builder.result_by_tag()
+        self.assertEqual(list(groups), ["Bridge deck", "Pile caps", "Piers and abutments"])
+        self.assertEqual(sum(len(f) for _x, f in groups.values()), len(builder.result()[1]))     # nothing lost or doubled
+        for xyz, faces in groups.values():
+            self.assertTrue(faces.min() >= 0 and faces.max() < len(xyz))                       # each group indexes only its own vertices
+        self.assertEqual(builder.tag, MeshBuilder.DEFAULT_TAG)                                 # the builder is left as it was found
+
+    def test_the_groups_survive_the_unit_conversion_path(self):
+        from landxml_plugin.landxml.structures import MeshBuilder
+
+        builder = MeshBuilder()
+        self._bridge(builder, unit="foot")
+        self.assertEqual(set(builder.result_by_tag()), {"Bridge deck", "Pile caps", "Piers and abutments"})
+
+
 class StructureScheduleTests(unittest.TestCase):
+    def test_the_table_and_the_typed_text_round_trip(self):
+        from landxml_plugin.landxml.structures import read_schedule_text, rows_to_text, text_to_rows
+
+        text = ("Main road @ 1+360.9-2+242.2 = viaduct, depth 2.6, width 12; 1+403-2+203 = piers every 40, 5.0 x 3.2, cap 10.5 x 2.5; "
+                "A9 @ 0+238.1 = box 1 x 2.0 x 1.5; 1+840 = pipe 2 x 0.9")
+        rows = text_to_rows(text)
+        self.assertEqual(rows[0], ("Main road", "1+360.9-2+242.2", "viaduct", "depth 2.6, width 12"))
+        self.assertEqual(rows[3], ("", "1+840", "pipe", "2 x 0.9"))
+        again = rows_to_text(rows)
+        self.assertEqual(text_to_rows(again), rows)
+        self.assertEqual(len(read_schedule_text(again)), len(read_schedule_text(text)))   # reads the same schedule
+
+    def test_table_rows_are_checked_and_blank_rows_skipped(self):
+        from landxml_plugin.landxml.structures import rows_to_text, text_to_rows
+
+        self.assertEqual(rows_to_text([("", "", "", ""), ("", "1+250", "Box", "3 x 2 x 2")]), "1+250 = box 3 x 2 x 2")
+        self.assertEqual(rows_to_text([("", "1+000-2+000", "bridge", ", span 25")]), "1+000-2+000 = bridge, span 25")
+        with self.assertRaises(ValueError):
+            rows_to_text([("", "1+250", "tunnel", "")])
+        with self.assertRaises(ValueError):
+            rows_to_text([("", "", "box", "1 x 1 x 1")])
+        with self.assertRaises(ValueError):
+            text_to_rows("nonsense")
+        self.assertEqual(text_to_rows(""), [])
+
     def test_roads_piers_and_deck_options_in_the_typed_schedule(self):
         from landxml_plugin.landxml.structures import for_road, read_schedule_text
 
@@ -994,6 +1052,32 @@ class RenderEdgeTests(unittest.TestCase):
                         [[500.0, 500], [510, 500], [500, 510]]])    # far away
         longest = np.array([np.hypot(10, 10)] * 2)
         np.testing.assert_array_equal(_near_cells(tri, longest, footprint), [True, False])
+
+    def test_refine_stops_before_a_round_that_would_pass_the_triangle_cap(self):
+        from landxml_plugin.landxml.structures import refine
+
+        n, step = 21, 10.0                                     # a 200 m square of ground, two triangles per 10 m cell
+        gx, gy = np.meshgrid(np.arange(n) * step, np.arange(n) * step)
+        xyz = np.column_stack([gx.ravel(), gy.ravel(), 0.05 * gx.ravel()])
+        a = np.arange(n * n).reshape(n, n)
+        faces = np.concatenate([np.column_stack([a[:-1, :-1].ravel(), a[1:, :-1].ravel(), a[:-1, 1:].ravel()]),
+                                np.column_stack([a[:-1, 1:].ravel(), a[1:, :-1].ravel(), a[1:, 1:].ravel()])])
+        footprint = (np.array([[55.0, 55, 0], [145, 55, 0], [145, 145, 0], [55, 145, 0]]), np.array([[0, 1, 2], [0, 2, 3]]))
+        full = refine(xyz, faces, footprint, 0.5, rounds=7, boundary=True)[1]
+        self.assertGreater(len(full), 3 * len(faces))
+        for cap in (len(faces), len(faces) + 40, len(full) // 2):
+            capped = refine(xyz, faces, footprint, 0.5, rounds=7, boundary=True, max_faces=cap)[1]
+            self.assertLessEqual(len(capped), max(cap, len(faces)))
+        loose = refine(xyz, faces, footprint, 0.5, rounds=7, boundary=True, max_faces=10 * len(full))[1]
+        self.assertEqual(len(loose), len(full))                 # a cap that is not reached changes nothing
+        none = refine(xyz, faces, footprint, 0.5, rounds=7, boundary=True, max_faces=len(faces))[1]
+        self.assertEqual(len(none), len(faces))                 # no room: nothing is split
+        # the surface keeps its shape and area under a cap
+        mid = refine(xyz, faces, footprint, 0.5, rounds=7, boundary=True, max_faces=len(full) // 2)
+        tri = mid[0][mid[1]]
+        u, v = tri[:, 1, :2] - tri[:, 0, :2], tri[:, 2, :2] - tri[:, 0, :2]
+        area = np.abs(u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]).sum() / 2
+        self.assertAlmostEqual(area, (200.0) ** 2, places=3)
 
     def test_viewer_splits_normals_at_creases_and_layers_shared_edges(self):
         html = (Path(__file__).resolve().parents[1] / "landxml" / "viewer.html").read_text(encoding="utf-8")
