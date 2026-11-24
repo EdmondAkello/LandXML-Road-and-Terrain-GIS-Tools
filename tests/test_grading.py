@@ -938,6 +938,23 @@ class StructureScheduleTests(unittest.TestCase):
         cap = xyz[(np.abs(xyz[:, 0] - 30.0) <= 4.0 + 1e-9) & (xyz[:, 2] < 0.31)]
         self.assertAlmostEqual(float(cap[:, 2].min()), 0.3 - 2.0)          # pile cap 2.0 deep, top 0.3 above ground
 
+    def test_scheduled_piers_in_feet_keep_their_sections(self):
+        from landxml_plugin.landxml.structures import MeshBuilder, bridge
+
+        stations = np.arange(0.0, 301.0, 5.0)                                 # feet throughout
+        centre = np.column_stack([stations, np.zeros_like(stations), np.full_like(stations, 150.0)])
+        normal = np.tile([0.0, 1.0], (len(stations), 1))
+        builder = MeshBuilder()
+        text, count = bridge(builder, centre, stations, normal, np.arange(len(stations)), 30.0, 80.0,
+                             lambda pts: np.zeros(len(pts)), depth=6.0,
+                             pier_specs=[{"station": 150.0, "pier_width": 20.0, "pier_length": 6.0, "cap": (26.0, 26.0, 8.0)}],
+                             horizontal_unit="foot", vertical_unit="foot", station_unit="foot")
+        self.assertEqual(count, 1)
+        xyz, _faces = builder.result()
+        cap = xyz[(np.abs(xyz[:, 0] - 150.0) <= 13.0 + 1e-6) & (xyz[:, 2] < 0.3 / 0.3048 + 1e-6)]
+        self.assertAlmostEqual(float(cap[:, 2].min()), 0.3 / 0.3048 - 8.0, places=6)   # 8 ft cap, top 0.3 m up
+        self.assertAlmostEqual(float(np.ptp(cap[:, 0])), 26.0, places=6)
+
 
 class RenderEdgeTests(unittest.TestCase):
     def test_banded_point_in_polygon_matches_the_plain_even_odd_rule(self):
