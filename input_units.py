@@ -1,10 +1,9 @@
 """Unit bases for Processing inputs; labels change, parameter values never do."""
 
-import os
 
 from qgis.core import QgsCoordinateReferenceSystem, QgsUnitTypes
 
-from .landxml.parser import load_document
+from .landxml.catalog import read_units
 from .landxml.quantity_units import LINEAR_UNITS
 
 
@@ -168,7 +167,6 @@ def connect_unit_labels(dialog, algorithm):
         if label is not None:
             text = label.text().replace(f" [{BASE_LABELS[basis]}]", "")
             labels[name] = (label, text)
-    cache = {}
 
     def refresh(*_args):
         values = {
@@ -188,13 +186,7 @@ def connect_unit_labels(dialog, algorithm):
         path = values.get("INPUT")
         h = v = None
         try:
-            stat = os.stat(path)
-            key = (str(path), stat.st_mtime_ns, stat.st_size)
-            if key not in cache:
-                doc = load_document(path)
-                cache.clear()
-                cache[key] = (doc.horizontal_unit, doc.vertical_unit)
-            h, v = cache[key]
+            h, v = read_units(path)  # header only: no full parse in the GUI thread
         except (OSError, ValueError, TypeError, SyntaxError):
             pass  # A missing/partly typed input must leave units visibly unknown.
         for name, unit in input_labels(algorithm, values, h, v).items():

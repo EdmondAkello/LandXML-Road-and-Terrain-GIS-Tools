@@ -44,11 +44,18 @@ def parse_station(text, horizontal_unit="meter"):
     return source_station(str(text), horizontal_unit)
 
 
+CULVERT_LIMIT = 15.0  # metres: a larger pipe or box size in a schedule is a unit slip, not a culvert
+
+
 def _heading(heading):
     if _key(heading) in FIELDS["invert_in"]:
         return heading, None
-    match = re.search(r"(?:[_ (]?)(mm|cm|ftus|ft|in|yd|m)\)?$", heading.strip(), re.I)
-    return (heading[:match.start()], match[1].lower()) if match else (heading, None)
+    # The unit needs a separator or brackets ("Dia (mm)", "Rise_m", "Span [ft]"), or capitals after a lower-case
+    # word ("DiameterMM"): "Diam" is not "Dia" in metres.
+    text = heading.strip()
+    match = (re.search(r"(?:[_ ]+[(\[]?|[(\[])(mm|cm|ftus|ft|in|yd|m)[)\]]?$", text, re.I)
+             or re.search(r"(?<=[a-z])(MM|CM|FTUS|FT|IN|YD|M)$", text))
+    return (text[:match.start()], match[1].lower()) if match else (heading, None)
 
 
 def _dimension(value, heading, target):
@@ -127,6 +134,15 @@ def read_schedule_csv(path_or_text, horizontal_unit="meter", vertical_unit=None,
         diameter = dimension("diameter", horizontal_unit)
         rise = dimension("rise", vertical_unit)
         kind = _kind(get("type"), diameter is not None, rise is not None)
+        span = dimension("span", horizontal_unit)
+        if kind != "bridge":
+            sizes = [(n, v, u) for n, v, u in (("diameter", diameter, horizontal_unit), ("span", span, horizontal_unit),
+                                              ("rise", rise, vertical_unit)) if v is not None]
+            big = next(((n, v, u) for n, v, u in sizes if v * LINEAR_UNITS[u.lower()][0] > CULVERT_LIMIT), None)
+            if big:          # an unlabelled 600 (mm) would otherwise draw a 600 m pipe: refuse, never guess the unit
+                notes.append(f"Row {line} skipped: {big[0]} {big[1]:g} {big[2]} is larger than a culvert can be "
+                             f"({CULVERT_LIMIT:g} m). Put the unit in the heading, e.g. 'Diameter (mm)'.")
+                continue
         end = None
         if get("end"):
             try:
@@ -135,7 +151,7 @@ def read_schedule_csv(path_or_text, horizontal_unit="meter", vertical_unit=None,
                 end = None
         structures.append({
             "id": (get("id") or "").strip() or f"{kind} {station:.0f}", "kind": kind, "station": station, "end": end,
-            "cells": max(int(_number(get("cells")) or 1), 1), "span": dimension("span", horizontal_unit) or diameter,
+            "cells": max(int(_number(get("cells")) or 1), 1), "span": span or diameter,
             "rise": rise or (diameter * LINEAR_UNITS[horizontal_unit.lower()][0] / LINEAR_UNITS[vertical_unit.lower()][0] if diameter else None), "skew": _number(get("skew")) or 0.0,
             "invert_in": dimension("invert_in", vertical_unit), "invert_out": dimension("invert_out", vertical_unit),
             "spans": _number(get("spans")),

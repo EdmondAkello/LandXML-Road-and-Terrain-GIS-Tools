@@ -977,6 +977,49 @@ class CustomaryUnitRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(rows[0]["span"], 2.952755905511811)
         self.assertEqual((rows[0]["invert_in"], rows[0]["invert_out"]), (95, 94))
 
+    def test_unlabelled_millimetre_sizes_are_refused_not_drawn(self):
+        from landxml_plugin.landxml.structures import read_schedule_csv
+
+        items, notes = read_schedule_csv("Chainage,Diameter\n1+200,600\n1+300,0.9\n")
+        self.assertEqual([round(i["span"], 3) for i in items], [0.9])
+        self.assertTrue(any("Row 2 skipped" in n and "Diameter (mm)" in n for n in notes), notes)
+        items, _notes = read_schedule_csv("Chainage,Diameter (mm)\n1+200,600\n")
+        self.assertAlmostEqual(items[0]["span"], 0.6)
+        items, notes = read_schedule_csv("Chainage,Type,Span\n1+200,box,60\n", horizontal_unit="foot")
+        self.assertEqual(items, [])                                  # 60 ft is over 15 m
+        items, _notes = read_schedule_csv("Chainage,To,Type,Span\n1+200,1+300,bridge,40\n")
+        self.assertEqual(items[0]["span"], 40.0)                     # bridge spans are not culvert sizes
+
+    def test_heading_units_need_a_separator_or_brackets(self):
+        from landxml_plugin.landxml.structures import _heading
+
+        self.assertEqual(_heading("Diam"), ("Diam", None))
+        self.assertEqual(_heading("Dia (mm)")[1], "mm")
+        self.assertEqual(_heading("Dia(mm)")[1], "mm")
+        self.assertEqual(_heading("Rise_m")[1], "m")
+        self.assertEqual(_heading("Span [ft]")[1], "ft")
+        self.assertEqual(_heading("Span ftUS")[1], "ftus")
+        self.assertEqual(_heading("DiameterMM"), ("Diameter", "mm"))
+
+    def test_header_units_without_parsing_the_file(self):
+        import tempfile
+
+        from landxml_plugin.landxml.catalog import read_units
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "a.xml"
+            path.write_text('<?xml version="1.0"?><LandXML><Units><Imperial linearUnit="USSurveyFoot" '
+                            'elevationUnit="USSurveyFoot"/></Units><Surfaces/></LandXML>', encoding="utf-8")
+            self.assertEqual(read_units(str(path)), ("USSurveyFoot", "USSurveyFoot"))
+            path.write_text('<LandXML><Units><Metric linearUnit="meter" verticalLinearUnit="meter" elevationUnit="foot"/>'
+                            '</Units></LandXML>', encoding="utf-8")
+            self.assertEqual(read_units(str(path)), ("meter", "meter"))
+            path.write_text('<LandXML><Units><Metric linearUnit="meter"/><Imperial linearUnit="foot"/></Units></LandXML>',
+                            encoding="utf-8")
+            self.assertEqual(read_units(str(path)), (None, None))    # conflicting: unknown, never guessed
+            path.write_text('<LandXML><Surfaces/></LandXML>', encoding="utf-8")
+            self.assertEqual(read_units(str(path)), (None, None))
+
     def test_schedule_conversions_reject_nonfinite_results(self):
         from landxml_plugin.landxml.structures import read_schedule_csv
         for station in ("nan", "inf", "1e308"):

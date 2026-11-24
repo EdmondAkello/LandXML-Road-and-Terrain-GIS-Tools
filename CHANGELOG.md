@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Structure schedules refuse a pipe or box size over 15 m (an unlabelled `Diameter = 600` meant in mm) instead of
+  drawing it, and ask for the unit in the heading, e.g. `Diameter (mm)`. Bridge spans are not limited.
+- Unit labels in the dialogs read the LandXML `<Units>` header only, so choosing a large file no longer freezes the
+  dialog while it is parsed.
+- A unit in a schedule heading needs a separator, brackets or capitals (`Dia (mm)`, `Rise_m`, `DiameterMM`):
+  `Diam` is no longer read as `Dia` in metres.
 - Complete customary-unit handling for structure schedules, synthetic roads, mixed-unit scene rendering and DEM elevations, edge face areas, drive-through speeds/cameras, section area labels and surface pick readouts. Explicit structure CSV unit headings (including inches and legacy millimetre headings) are converted; generic dimensions stay in their stated model units, without magnitude guessing.
 - Complete Road Design places schematic profile lines and controls beside the exported project in the output CRS, scaled to the project size and stacked below the plan and terrain bounds with clear gaps. Large source stations no longer place the drawings far away. Source station/elevation attributes and units are preserved. Synthetic tests cover metric and US survey feet, multiple profiles, terrain, coordinate shifts, reprojection and profile-only exports. Issue #77.
 
