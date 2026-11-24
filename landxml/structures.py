@@ -208,6 +208,44 @@ _TYPED = re.compile(r"^\s*(?:(?P<road>[^@=;]+?)\s*@\s*)?(?P<a>[\d+.]+)\s*(?:[-â€
                     r"(?P<kind>box|pipe|bridge|viaduct|piers|pier)\b(?P<rest>.*)$", re.I)
 
 
+TABLE_COLUMNS = ("Road", "Station (or from-to)", "Type", "Details")
+TABLE_TYPES = ("box", "pipe", "bridge", "viaduct", "pier", "piers")
+
+
+def text_to_rows(text):
+    """The typed structures text as table rows (road, station, type, details). Raises ValueError on a part it cannot read."""
+    rows = []
+    for part in re.split(r"[;\n]", text or ""):
+        if not part.strip():
+            continue
+        match = _TYPED.match(part)
+        if not match:
+            raise ValueError(f"Cannot read structure '{part.strip()}'.")
+        station = match["a"] + (f"-{match['b']}" if match["b"] else "")
+        details = match["rest"].strip().lstrip(",").strip()
+        rows.append(((match["road"] or "").strip(), station, match["kind"].lower(), details))
+    return rows
+
+
+def rows_to_text(rows):
+    """Table rows back to the typed text ('road @ 1+250 = box 3 x 2 x 2; ...'); blank rows are skipped."""
+    parts = []
+    for road, station, kind, details in rows:
+        station, kind, details, road = (str(v or "").strip() for v in (station, kind, details, road))
+        if not (station or kind or details):
+            continue
+        if not station or kind.lower() not in TABLE_TYPES:
+            raise ValueError(f"A structure needs a station and a type ({', '.join(TABLE_TYPES)}): "
+                             f"'{road} {station} {kind} {details}'.".replace("  ", " "))
+        head = f"{road} @ " if road else ""
+        if details and kind.lower() in ("bridge", "viaduct"):
+            tail = ", " + details.lstrip(", ")
+        else:
+            tail = f" {details}" if details else ""
+        parts.append(f"{head}{station} = {kind.lower()}{tail}")
+    return "; ".join(parts)
+
+
 def read_schedule_text(text, horizontal_unit="meter", vertical_unit=None, station_unit=None):
     """'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9; 2+410 = box 1 x 1.5 x 1.5, skew 15'; bridges:
     '1+364-2+293 = bridge, span 25', '... = bridge, spans 7' or '... = bridge, piers 1+500 1+640 1+780', with
@@ -273,12 +311,18 @@ def read_schedule_text(text, horizontal_unit="meter", vertical_unit=None, statio
 class MeshBuilder:
     """Collects flat-shaded pieces (each face has its own vertices)."""
 
+    DEFAULT_TAG = "Structures (concept)"
+
     def __init__(self):
         self.xyz, self.faces, self.count = [], [], 0
+        self.tag = self.DEFAULT_TAG                 # what is added next belongs to this group (deck, piers, pile caps...)
+        self.tags, self.starts = [], []             # the group of each added chunk, and where its vertices start
 
     def add(self, xyz, faces):
         self.xyz.append(np.asarray(xyz))
         self.faces.append(np.asarray(faces) + self.count)
+        self.tags.append(self.tag)
+        self.starts.append(self.count)
         self.count += len(xyz)
 
     def quads(self, corners):
@@ -287,6 +331,8 @@ class MeshBuilder:
         base = self.count + 4 * np.arange(len(corners))[:, None]
         self.xyz.append(corners.reshape(-1, 3))
         self.faces.append(np.concatenate([base + [0, 1, 2], base + [0, 2, 3]]))
+        self.tags.append(self.tag)
+        self.starts.append(self.count)
         self.count += 4 * len(corners)
 
     def prism(self, bottom, top):
@@ -332,6 +378,21 @@ class MeshBuilder:
         if not self.xyz:
             return np.zeros((0, 3)), np.zeros((0, 3), int)
         return np.vstack(self.xyz), np.vstack(self.faces)
+
+    def result_by_tag(self):
+        """{group: (xyz, faces)} with each group's vertices renumbered from zero, in the order the groups first appeared."""
+        groups = {}
+        for xyz, faces, tag, start in zip(self.xyz, self.faces, self.tags, self.starts):
+            groups.setdefault(tag, []).append((xyz, faces - start))
+        found = {}
+        for tag, chunks in groups.items():
+            offset, points, tris = 0, [], []
+            for xyz, faces in chunks:
+                points.append(xyz)
+                tris.append(faces + offset)
+                offset += len(xyz)
+            found[tag] = (np.vstack(points), np.vstack(tris))
+        return found
 
 
 def culvert(builder, item, centre, normal, left_length, right_length, ground_at, cover=0.6, record=None, horizontal_unit="meter", vertical_unit="meter"):
@@ -452,8 +513,10 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
                                          pier_length=(k.get("pier_length") or 0) * h or None,
                                          cap=(k["cap"][0] * h, k["cap"][1] * h, k["cap"][2] * v) if k.get("cap") else None)
                                     for k in pier_specs] if pier_specs else None)
-        xyz, faces = parts.result()
-        builder.add(xyz / scale, faces)
+        for tag, (xyz, faces) in parts.result_by_tag().items():
+            kept, builder.tag = builder.tag, tag
+            builder.add(xyz / scale, faces)
+            builder.tag = kept
         return result
     rows = np.asarray(rows)
     start, end = stations[rows[0]], stations[rows[-1]]
@@ -470,6 +533,7 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
     longest = float(np.max(np.diff([start, *pier_stations, end])))
     depth = depth if depth is not None else float(np.clip(longest / 15.0, 0.8, 2.0))
     half = deck_width / 2
+    kept_tag, builder.tag = builder.tag, "Bridge deck"
     for i in rows[:-1]:
         j = i + 1
         a, b = centre[i], centre[j]
@@ -486,6 +550,7 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
                       [[*la, a[2] - 0.15], [*ra, a[2] - 0.15], [*rb, b[2] - 0.15], [*lb, b[2] - 0.15]])
     placed = []
     for s in pier_stations:
+        builder.tag = "Bridge deck"
         i = int(np.clip(np.searchsorted(stations, s), 1, len(stations) - 1))
         t = (s - stations[i - 1]) / max(stations[i] - stations[i - 1], 1e-9)
         p = centre[i - 1] + (centre[i] - centre[i - 1]) * t
@@ -500,20 +565,25 @@ def bridge(builder, centre, stations, normal, rows, deck_width, span, ground_at,
             base = g - 1.0
             if spec.get("cap"):
                 cap_length, cap_width, cap_depth = spec["cap"]
+                builder.tag = "Pile caps"
                 builder.box(p, along, n, cap_length, cap_width, g + 0.3 - cap_depth, g + 0.3)   # pile cap, top at ground
                 base = g + 0.3
+            builder.tag = "Piers and abutments"
             builder.box(p, along, n, thick, across, base, p[2] - depth - 1.2)
             builder.box(p, along, n, thick + 1.0, max(across + 2.0, deck_width - 1.0), p[2] - depth - 1.2, p[2] - depth)
         else:
+            builder.tag = "Piers and abutments"
             builder.box(p, along, n, 1.5, deck_width - 2.0, g - 1.0, p[2] - depth)
             builder.box(p, along, n, 2.0, deck_width, p[2] - depth - 1.0, p[2] - depth)          # pier head
         placed.append(s)
+    builder.tag = "Piers and abutments"
     for i in (rows[0], rows[-1]):
         p, n = centre[i], normal[i]
         g = ground_at(np.array([p[:2]]))[0]
         g = p[2] - depth - 2.0 if not np.isfinite(g) else min(g, p[2] - depth - 0.5)
         along = np.array([n[1], -n[0]])
         builder.box(p, along, n, 2.0, deck_width + 2.0, g - 1.0, p[2] - depth)
+    builder.tag = kept_tag
     shaped = sum(1 for s in placed if round(s, 3) in specs)
     return (f"bridge {start:.0f}â€“{end:.0f}: {length:.0f} m, {spans} span{'s' if spans > 1 else ''} (longest "
             f"{longest:.0f} m), {len(placed)} pier{'s' if len(placed) != 1 else ''}"
@@ -586,10 +656,11 @@ def _near_cells(tri, longest, footprint):
     return (marked[position] == keys).any(axis=1) | (longest > cell)
 
 
-def refine(xyz, faces, footprint, target, rounds=5, boundary=False):
+def refine(xyz, faces, footprint, target, rounds=5, boundary=False, max_faces=None):
     """Split triangles touching ``footprint`` (a TIN) into four at their edge midpoints until their edges are at most
     ``target`` long; the midpoints lie on the original planes, so the surface keeps its shape. With ``boundary``,
-    only triangles that cross the footprint's edge are split."""
+    only triangles that cross the footprint's edge are split. With ``max_faces``, a round that would take the mesh past
+    that many triangles is not made (rounds are whole, so the refinement stays even along the edge)."""
     from .tin_overlay import TinIndex, sample_tin
 
     low, high = footprint[0][:, :2].min(axis=0), footprint[0][:, :2].max(axis=0)
@@ -609,6 +680,8 @@ def refine(xyz, faces, footprint, target, rounds=5, boundary=False):
             touch[near] = (hits.any(axis=1) & ~hits.all(axis=1)) if boundary else hits.any(axis=1)
         chosen = touch
         if not chosen.any():
+            break
+        if max_faces is not None and len(faces) + 3 * int(chosen.sum()) > max_faces:
             break
         picked = faces[chosen]
         edges = np.sort(np.concatenate([picked[:, [0, 1]], picked[:, [1, 2]], picked[:, [2, 0]]]), axis=1)

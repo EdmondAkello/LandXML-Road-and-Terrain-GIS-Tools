@@ -521,7 +521,31 @@ a { color: var(--accent); }
 <li><b>Linework</b>: alignments (3D at the profile level where a profile covers them, otherwise draped), station labels every chosen distance, LandXML feature lines (including Civil 3D PlanFeatures) and breaklines, and any QGIS line or polygon layers, using their Z values or draped on the surfaces. Roads stay lines over the terrain; nothing is cut into it.</li>
 </ul>
 <p>The output folder holds <code>scene.json</code>, a PLY mesh per surface and <b><code>viewer.html</code></b>, which the site-grading scene export writes as well. The viewer is built into the plugin (plain WebGL, no libraries, no internet connection) and opens in any current Chrome, Edge or Firefox; send the single file to anyone. Drag to rotate, right-drag or Shift-drag to pan, use the wheel to zoom. The side panel switches surfaces and line types on and off and sets surface opacity, changes the vertical exaggeration, jumps to the saved views (and a plan view), shows the current view as text to paste back into the tool's <b>Views</b>, and saves a PNG at screen size or 2 or 3 times larger with the legend and a compass beside the model. Click a surface to read its coordinates, level and, for a surface drawn over another, its cut or fill. The compass turns with the camera. Labels are callouts in columns beside the model, joined to their points by leaders; station labels sit at their points and are skipped where they would overlap.</p>
-<p><b>Finished road and drive-through.</b> Style the finished-level surface as <code>road: carriageway width, shoulder width, lanes</code>, for example <code>TOP = road: 7, 1.5, 2</code>. The viewer paints it from each point's station and offset from the alignment (the corridor alignment, or the first alignment with a profile): asphalt with edge lines and dashed centre and lane lines, shoulders, verges, and side slopes where they are steeper than 30 %. Every alignment with a profile becomes a drive path: in the viewer's <b>Drive through</b> panel, pick the path, drag the station slider or press <b>Play</b> (30, 50 or 80 km/h) to move along the road at eye height; tick <b>Record video</b> to save the drive as a WebM video. Dragging the view or choosing a view leaves the drive. A link ending in <code>#drive=0.4</code> opens the drive 40 % along the path.</p>
+<p><b>Walkthrough: existing terrain or a feasibility road.</b> <i>Existing terrain only:</i> choose the LandXML surfaces (or DEM rasters), leave <b>Generate a feasibility road</b> unticked, pick an area (or leave it empty for the whole surface) and run; the setup summary at the top of the dialog reads "Terrain scene only". <i>Feasibility road:</i> tick <b>Generate a feasibility road</b>, choose the alignment(s) under <b>Road alignment(s) to generate</b> (each needs a design profile, or tick <b>at grade</b> to follow the ground), check the lane, shoulder and slope values in the summary, and leave <b>Scene width</b> at Auto unless you want a fixed strip. Culverts, bridges and piers go in the table under <b>Structures table…</b> (or a CSV). The <b>Road</b>, <b>Plants and water</b> and <b>Models</b> buttons show or hide those inputs; hidden inputs keep their values. A scene over 1.5 million triangles also writes <code>viewer_phone.html</code>, a lighter copy with the ground thinned for phones and tablets.</p>
+<figure>
+  <img src="figures/fig_scene_dialog.png" alt="Export 3D Scene dialog">
+  <figcaption><b>Figure 15.</b> Export 3D Scene for the demonstration road: (1) the setup summary, updated as inputs change; (2) buttons that show or hide the Road, Plants and water, and Models inputs (hidden inputs keep their values); (3) the structures table.</figcaption>
+</figure>
+
+<p><b>Waterways.</b> Add line layers (a river or channel; a line drawn uphill is turned round so the water runs downhill) under <b>Waterways</b> to draw a water ribbon of the chosen <b>Water width</b> on the ground. The level never rises downstream and is flat across the strip, so on steep ground it can sit above one bank; it is a concept for scale and context, not a hydraulic water surface. For a level in a basin or valley use <b>Water levels</b> instead.</p>
+<p><b>Vegetation.</b> Add polygon layers (grassland, scrub) or point layers (single plants) under <b>Vegetation</b>. <b>Style</b> chooses <i>Grass and shrubs</i> (mostly grass clumps with about 15 % shrubs), <i>Grass</i> or <i>Shrubs</i>. <b>Spacing</b> sets the density (one plant per cell, jittered so it does not look planted); grass clumps are about as wide as the spacing. <b>Height</b> 0 is Auto (grass about 0.8 m, shrubs 1.8 m); a value sets the shrub height. <b>Clear distance</b> keeps plants away from roads and designs. The count is limited to a quarter of the triangle budget; raise the budget or the spacing if a message says the plants were thinned. Vegetation gives scale and a more natural scene; it is not a vegetation survey. In the viewer, <b>Vegetation</b> in the layers panel switches it off.</p>
+<figure>
+  <img src="figures/fig_scene_vegetation.png" alt="Grass clumps and shrubs">
+  <figcaption><b>Figure 16.</b> Vegetation close up: grass clumps (blades over a patch of grass colour) and a low shrub on the textured ground, beside the batter of the generated road.</figcaption>
+</figure>
+
+<p><b>Other roads.</b> Roads held in other LandXML files (<b>Other roads: more LandXML files</b>, in the same coordinate system and axis order as the main file) or in GIS or DXF line layers (<b>Other roads: line layers</b>) are built like a feasibility road: the road section from the Road settings, side slopes to the ground, cut into the terrain. An alignment with a design profile follows it; anything else follows the ground smoothed over 40 m, as a context road. Schedule culverts or bridges on them by name, for example <code>A9 @ 0+238.1 = box 1 x 2.0 x 1.5</code>. Every generated road can be driven in the viewer. The viewer file packs its meshes (losslessly) so it stays small; it needs a current browser.</p>
+<figure>
+  <img src="figures/fig_scene_overview.png" alt="3D scene of the demonstration road">
+  <figcaption><b>Figure 17.</b> The demonstration scene in the viewer: (1) the demonstration road built as a feasibility road, with a 2 × 2.0 × 2.0 m box culvert at 0+700; (2) a farm road from a line layer, built on the smoothed ground; (3) a stream from a line layer as a water ribbon; (4) grass and shrubs planted over a polygon; (5) the layer switches.</figcaption>
+</figure>
+
+<p><b>Finished road and drive-through.</b> Style the finished-level surface as <code>road: carriageway width, shoulder width, lanes</code>, for example <code>TOP = road: 7, 1.5, 2</code>. The viewer paints it from each point's station and offset from the alignment (the corridor alignment, or the first alignment with a profile): asphalt with edge lines and dashed centre and lane lines, shoulders, verges, and side slopes where they are steeper than 30 %. Every generated road and every alignment with a profile becomes a drive path: in the viewer's <b>Drive through</b> panel, pick the path, drag the station slider or press <b>Play</b> (30, 50, 80 or 120 km/h) to move along the road at eye height; tick <b>Record video</b> to save the drive as a WebM video. <b>Camera</b> changes the point of view: <i>Driver</i> (eye height of the chosen vehicle), <i>Chase</i> (a car or truck, chosen under <b>Vehicle</b>, drives the road and the camera follows behind and above it), <i>Aerial follow</i>, or <i>Flythrough</i> (a high camera sweeping from side to side along the road). The vehicle is a simple low-poly model for scale and movement, not a photo-realistic render; use a dedicated visualisation tool for that. Dragging the view or choosing a view leaves the drive. A link ending in <code>#drive=0.4</code> opens the drive 40 % along the path; add <code>&amp;cam=chase</code> (or <code>aerial</code>, <code>fly</code>) and <code>&amp;vehicle=truck</code> to choose the camera and vehicle.</p>
+<figure>
+  <img src="figures/fig_scene_drive.png" alt="Drive-through with the chase camera">
+  <figcaption><b>Figure 18.</b> Drive-through: (1) the road to drive (every generated road can be driven); (2) the camera, here Chase; (3) the vehicle; (4) the station along the road.</figcaption>
+</figure>
+
 <p><b>Three widths, three meanings.</b> The <i>surrounding terrain width</i> is how much ground the scene shows either side; the <i>total carriageway width</i> (plus the <i>shoulder width each side</i>) is the road itself; the <i>maximum batter search distance</i> is how far the side slopes may run out looking for the ground. If you choose an extent, polygon or alignment area that leaves a generated road less room than half its section plus the batter search, the log warns with the stations affected; the area is not widened, because you chose it.</p>
 <p><b>Feasibility road.</b> Already have a proposed terrain? Add it under <b>LandXML surfaces</b>; nothing needs generating. Where an alignment has a vertical profile but no corridor yet, tick <b>Generate a feasibility road</b> and choose it in <b>Road alignment(s) to generate</b>. While the box is off, the road inputs are greyed out but keep their values, and the export is a terrain scene only; the log says so. Ticking it with no alignment chosen stops with a message, so an incomplete setup is not mistaken for a terrain scene. Scripts, models and history from earlier versions, which have no such box, still build the roads they name. The tool builds a concept road on the profile: a carriageway with the given crossfall, shoulders, and side slopes in cut or fill (horizontal per 1 vertical) that run out to the ground, the first LandXML surface or raster in the scene, so an OGL or a DEM can serve. The concept road is painted as a finished road, cuts the ground under it, and can be driven. The log gives approximate cut and fill volumes and lists stretches where the slopes do not reach the ground within the longest slope, which usually means a structure, and the volumes with those stretches left out. With a DEM as the ground, the tool compares it with the alignment's surveyed ground profile, if the file has one, and reports the median difference; a steady difference of several metres is usually a vertical datum difference (satellite DEMs are often in ellipsoidal or EGM heights). Tick <b>Synthetic: shift DEMs to match the alignment's surveyed ground profile</b> to remove it. Several alignments can be given, separated by semicolons; the log names the roads generated. <b>Ground surface for road tie-ins</b> names the surface or DEM the side slopes run out to; list more than one, separated by commas, and the later ones fill in where the first does not reach (graded platforms first, then the existing ground, for instance). The lane count only places the lane markings inside the carriageway width; it does not change the width. It is a study aid, not a design: no superelevation, widening or drainage.</p>
 <p><b>Alignments without a profile.</b> An existing road you want for context (a highway the new road joins, a service road) usually has only a plan alignment. Tick <b>alignments without a profile follow the ground</b> (Advanced) and include it in the roads to generate: it is drawn on the ground, smoothed over 40 m, gets no automatic bridges, and the log says it is a context road, not a design. Without the option such an alignment stops the export with a message saying which box to tick, because levels are never made up silently.</p>
@@ -537,30 +561,30 @@ a { color: var(--accent); }
 <p>Plots corridor sections as multi-page PDF sheets (A4, A3 or A1; 1–12 sections per sheet) with a title block and legend, an HTML report with a section table and drawings, and one PNG per section. A station range and interval select what to plot, for example every 50 m between 10000 and 12000.</p>
 <figure>
   <img src="figures/fig_sheet.png" alt="Section sheet">
-  <figcaption><b>Figure 15.</b> An A3 sheet with 12 sections across a fill-to-cut transition: ground and design, shaded cut and fill, pavement layers, Datum, slope ratios (red when steeper than the stabilisation limit), daylight offsets, FRL/EG levels and areas.</figcaption>
+  <figcaption><b>Figure 19.</b> An A3 sheet with 12 sections across a fill-to-cut transition: ground and design, shaded cut and fill, pavement layers, Datum, slope ratios (red when steeper than the stabilisation limit), daylight offsets, FRL/EG levels and areas.</figcaption>
 </figure>
 
 <h2 id="report"><span class="sec">17</span>Road Design Report</h2>
 <p><b>Road Design Report</b> writes one HTML page per file with a section per alignment. Print it to PDF from a browser for a paginated report; each alignment starts on a new page.</p>
 <figure>
   <img src="figures/fig_report_top.png" alt="Report summary">
-  <figcaption><b>Figure 16.</b> The report opens with a table of its alignments (chainage, length, design speeds and review findings), followed for each alignment by summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed and maximum superelevation.</figcaption>
+  <figcaption><b>Figure 20.</b> The report opens with a table of its alignments (chainage, length, design speeds and review findings), followed for each alignment by summary cards: length, chainage, curves and spirals, minimum radius, maximum grade, minimum crest and sag K, design speed and maximum superelevation.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_plan.png" alt="Plan">
-  <figcaption><b>Figure 17.</b> Schematic plan: lines, curves and spirals in different colours with chainage ticks, north arrow and scale bar. Choose whether the file stores northing first.</figcaption>
+  <figcaption><b>Figure 21.</b> Schematic plan: lines, curves and spirals in different colours with chainage ticks, north arrow and scale bar. Choose whether the file stores northing first.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_curvature.png" alt="Curvature">
-  <figcaption><b>Figure 18.</b> Curvature diagram (1000/R, right positive) with radius labels and spiral transitions.</figcaption>
+  <figcaption><b>Figure 22.</b> Curvature diagram (1000/R, right positive) with radius labels and spiral transitions.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_gradient.png" alt="Gradient">
-  <figcaption><b>Figure 19.</b> Gradient diagram with grade labels and crest/sag curve bands.</figcaption>
+  <figcaption><b>Figure 23.</b> Gradient diagram with grade labels and crest/sag curve bands.</figcaption>
 </figure>
 <figure>
   <img src="figures/fig_report_superelevation.png" alt="Superelevation">
-  <figcaption><b>Figure 20.</b> Superelevation diagram of both lanes from the transition stations and rates in the file. The normal crown is an input because LandXML does not store it.</figcaption>
+  <figcaption><b>Figure 24.</b> Superelevation diagram of both lanes from the transition stations and rates in the file. The normal crown is an input because LandXML does not store it.</figcaption>
 </figure>
 <p>The report also tabulates horizontal elements, vertical controls and superelevation transitions. Long alignments are split into strips (default 5,000 m per row). Select a <b>Design standard</b> to add the geometric design review (Part D) to each alignment.</p>
 
@@ -576,7 +600,7 @@ a { color: var(--accent); }
 <h2 id="review-run"><span class="sec">19</span>Running a review</h2>
 <figure class="half">
   <img src="figures/fig_dialog_review.png" alt="Review dialog">
-  <figcaption><b>Figure 21.</b> The Geometric Design Review dialog with the help panel.</figcaption>
+  <figcaption><b>Figure 25.</b> The Geometric Design Review dialog with the help panel.</figcaption>
 </figure>
 <table>
   <thead><tr><th style="width:32%">Parameter</th><th>Meaning</th></tr></thead>
@@ -596,7 +620,7 @@ a { color: var(--accent); }
 </table>
 <figure>
   <img src="figures/fig_review_summary.png" alt="Review summary">
-  <figcaption><b>Figure 22.</b> Review summary: findings by severity and category, and the number of profile changes applied to the recommended profile.</figcaption>
+  <figcaption><b>Figure 26.</b> Review summary: findings by severity and category, and the number of profile changes applied to the recommended profile.</figcaption>
 </figure>
 <table>
   <thead><tr><th style="width:16%">Severity</th><th>Meaning</th></tr></thead>
@@ -616,7 +640,7 @@ a { color: var(--accent); }
 </ul>
 <figure>
   <img src="figures/fig_review_speed.png" alt="Speed sections">
-  <figcaption><b>Figure 23.</b> Design speed sections of the demo road: 80 km/h then 60 km/h from CH 1+900.</figcaption>
+  <figcaption><b>Figure 27.</b> Design speed sections of the demo road: 80 km/h then 60 km/h from CH 1+900.</figcaption>
 </figure>
 <p>The speed plan itself is checked (Kenya RDM 1.3 §3.10.3, §5.5, §5.14):</p>
 <table>
@@ -656,7 +680,7 @@ a { color: var(--accent); }
 </table>
 <figure>
   <img src="figures/fig_review_findings.png" alt="Findings table">
-  <figcaption><b>Figure 24.</b> Findings table (first rows), grouped by category: severity and code, chainage range, issue and detail, recommendation and the criteria reference.</figcaption>
+  <figcaption><b>Figure 28.</b> Findings table (first rows), grouped by category: severity and code, chainage range, issue and detail, recommendation and the criteria reference.</figcaption>
 </figure>
 
 <h2 id="phasing"><span class="sec">22</span>Alignment phasing and recommended PVIs</h2>
@@ -675,7 +699,7 @@ a { color: var(--accent); }
 </table>
 <figure>
   <img src="figures/fig_review_phasing.png" alt="Phasing diagram">
-  <figcaption><b>Figure 25.</b> Phasing diagram: horizontal curves (left purple, right teal, light ends = spirals) above vertical curves (crest orange, sag green) on a common chainage; dashed boxes mark phasing findings.</figcaption>
+  <figcaption><b>Figure 29.</b> Phasing diagram: horizontal curves (left purple, right teal, light ends = spirals) above vertical curves (crest orange, sag green) on a common chainage; dashed boxes mark phasing findings.</figcaption>
 </figure>
 <h3>How fixes are computed</h3>
 <p>For each phasing, K or curve-length finding the tool tries these profile changes and keeps the feasible one that changes levels least:</p>
@@ -687,25 +711,25 @@ a { color: var(--accent); }
 <p>Each candidate must meet minimum K, avoid overlapping neighbouring curves and stay within grade limits. Fixes that change any level by more than the cap are reported with the change they need (redesign that section) and are not applied.</p>
 <figure>
   <img src="figures/fig_review_pvis.png" alt="Recommended PVIs">
-  <figcaption><b>Figure 26.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
+  <figcaption><b>Figure 30.</b> Recommended PVIs with changed rows marked ●: station, elevation, curve length and grades.</figcaption>
 </figure>
 
 <h3>Long section and plan &amp; profile sheets</h3>
 <p>The report draws a banded long section for each window of <b>Sheet and long-section window length</b> (default 1,000 m): the design profile, the recommended profile dashed where fixes apply, the existing ground, changed PVIs, and every finding as a numbered marker over its shaded chainage range. Below the profile, the bands show the design speed, the horizontal curves (left above the line, right below), the vertical curves (crest above, sag below) and the tangent grades. Horizontal and vertical curves sit in adjacent bands on one chainage, so their phasing reads directly; phasing findings (P1–P7) are outlined across both bands. Finding numbers are the same in the findings table, the <code>finding_no</code> field of the findings layer, the report and the sheets.</p>
 <figure>
   <img src="figures/fig_review_longsection.png" alt="Long section">
-  <figcaption><b>Figure 27.</b> Banded long section in the review report: profiles and numbered findings, then design speed, horizontal and vertical curves (phasing findings dashed) and grades.</figcaption>
+  <figcaption><b>Figure 31.</b> Banded long section in the review report: profiles and numbered findings, then design speed, horizontal and vertical curves (phasing findings dashed) and grades.</figcaption>
 </figure>
 <p><b>Plan and profile sheets (A3 PDF)</b> puts one window on each A3 landscape sheet: a plan strip of the alignment with chainage ticks and the numbered findings beside it, the same banded long section with a findings lane that stacks overlapping ranges, and a table of the findings in that window (highest severity first; any beyond the table are counted and listed in the report). The plan is schematic and rotated so each window runs left to right; the north arrow shows grid north of the source coordinates. With an output CRS the chosen coordinate interpretation decides the X/Y order; without one, northing-first files are detected for the drawing only. Each sheet has a single border, a floating legend, notes, and a title box at the bottom right with the alignment, chainage range and sheet number.</p>
 <figure>
   <img src="figures/fig_review_sheet.png" alt="Plan and profile sheet">
-  <figcaption><b>Figure 28.</b> A plan and profile sheet of the demonstration road (first 1,000 m).</figcaption>
+  <figcaption><b>Figure 32.</b> A plan and profile sheet of the demonstration road (first 1,000 m).</figcaption>
 </figure>
 <h2 id="barriers"><span class="sec">23</span>Safety barriers and sight on curves</h2>
 <p><b>Barriers (R1).</b> From each corridor section the tool measures, on each side, the embankment height from the shoulder edge (the hinge, where the design line first falls more steeply than 1:10) down to the existing ground at the toe, where the design line meets the ground, and the side-slope ratio from hinge to toe. A toe drain, bench or wall beyond the toe does not change either value. Under RDM 1.3 a barrier is warranted where the fill is at least 6 m high and steeper than 1:3 (the example stated with Figure 12.4); fills of 3–6 m steeper than 1:3, and fills of 6 m or more with slopes between 1:3 and 1:4, are reported for assessment against the chart. Adjacent sections are grouped into runs, and the recommendation gives the barrier extent per side with the run-out length of Table 12.6 added at each end.</p>
 <figure>
   <img src="figures/fig_review_barriers.png" alt="Barrier schedule">
-  <figcaption><b>Figure 29.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
+  <figcaption><b>Figure 33.</b> Safety barrier schedule by side, with the extent including run-out.</figcaption>
 </figure>
 <p><b>Sight on curves (S2).</b> On horizontal curves the review computes the sight-line offset needed for stopping sight distance and checks whether existing ground beyond the cut daylight line rises above the sight line (at the height set by the standard) on the inside of the curve. Only ground beyond daylight counts, so excavated material does not create false obstructions.</p>
 <div class="note"><b>Figure 12.4</b>The barrier warrant chart in RDM 1.3 is an image; only its stated example is encoded. Treat findings near the thresholds as prompts for engineering judgement.</div>

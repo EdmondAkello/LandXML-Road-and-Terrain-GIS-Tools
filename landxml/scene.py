@@ -22,6 +22,9 @@ Top-level keys:
   ``road`` lines are design centrelines at profile level; ``properties.width`` (if given) is the
   carriageway width for a conceptual ribbon. Roads are not part of the terrain.
 * ``labels``: [{``text``, ``position`` [x, y, z], ``lift``, ``kind``}].
+* ``vegetation`` (optional): {``file`` (``vegetation.csv``: ``x, y, z, height, crown`` per tree, positions relative to
+  ``origin`` like every other coordinate), ``count``, ``columns``, ``size_unit``}. Heights and crown diameters are in the
+  horizontal units; ``z`` is the ground at the foot of the tree.
 * ``views``: [{``name``, ``direction`` [dx, dy, dz] (from the target towards the camera),
   ``distance``, ``target`` [x, y, z], ``view_angle`` (degrees)}].
 """
@@ -238,6 +241,24 @@ def extrude(ring, base, height):
     return xyz, np.asarray(faces, np.int64)
 
 
+def ground_drive_path(points, window=40.0):
+    """(points, stations) of a drive path along a draped line: the levels are smoothed with a moving average over
+    ``window`` of length so the camera does not shake over every bump of the ground. ``points`` is (n, 3)."""
+    pts = np.asarray(points, float)
+    if len(pts) < 2:
+        return pts, np.zeros(len(pts))
+    stations = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pts[:, :2], axis=0).T))])
+    if window > 0 and stations[-1] > 0:
+        step = max(min(window / 8.0, stations[-1] / 4.0), 1e-6)
+        grid = np.arange(0.0, stations[-1] + step, step)
+        z = np.interp(grid, stations, pts[:, 2])
+        half = max(int(round(window / step / 2)), 1)
+        padded = np.concatenate([np.full(half, z[0]), z, np.full(half, z[-1])])
+        smooth = np.convolve(padded, np.ones(2 * half + 1) / (2 * half + 1), mode="valid")
+        pts = np.column_stack([pts[:, :2], np.interp(stations, grid, smooth)])
+    return pts, stations
+
+
 def water_mesh(xyz, faces, level):
     """(xyz, faces) of a flat water surface at ``level`` over the parts of a TIN below it (exact shoreline)."""
     from .surface_style import band_pieces
@@ -298,6 +319,18 @@ class SceneWriter:
             item["pair"] = pair            # {"before": [...ids], "after": [...ids]} for the before/after switch
         self.scene["surfaces"].append(item)
 
+    def vegetation(self, xyz, heights, crowns, kinds=None):
+        """Plants for the viewer to draw as instances: base positions (absolute), heights and widths in the scene's
+        horizontal units, and a kind each (0 grass clump, 1 shrub). Written to ``vegetation.csv`` beside ``scene.json``."""
+        xyz = np.asarray(xyz, float)
+        if not len(xyz):
+            return
+        kinds = np.zeros(len(xyz), np.uint8) if kinds is None else np.asarray(kinds, np.uint8)
+        self._trees = (self._relative(xyz), np.asarray(heights, float), np.asarray(crowns, float), kinds)
+        self.scene["vegetation"] = {"file": "vegetation.csv", "count": int(len(xyz)),
+                                    "columns": ["x", "y", "z", "height", "crown", "kind"], "kinds": ["grass", "shrub"],
+                                    "size_unit": "horizontal"}
+
     def path(self, name, points, stations, station_unit=None):
         """A 3D path with stations (alignment at profile level), for drive-throughs and station read-outs."""
         relative = self._relative(points)
@@ -343,6 +376,10 @@ class SceneWriter:
         if np.isfinite(self._low).all():
             self.scene["extent"] = {"min": [round(float(v), 4) for v in self._low],
                                     "max": [round(float(v), 4) for v in self._high]}
+        if getattr(self, "_trees", None) is not None:
+            rel, heights, crowns, kinds = self._trees
+            np.savetxt(os.path.join(self.folder, "vegetation.csv"), np.column_stack([rel, heights, crowns, kinds]), delimiter=",",
+                       header="x,y,z,height,crown,kind", comments="", fmt=["%.3f", "%.3f", "%.3f", "%.2f", "%.2f", "%d"])
         path = os.path.join(self.folder, "scene.json")
         with open(path, "w", encoding="utf-8") as stream:
             json.dump(self.scene, stream, indent=1, ensure_ascii=False)

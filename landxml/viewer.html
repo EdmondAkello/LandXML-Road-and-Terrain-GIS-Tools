@@ -107,10 +107,15 @@
     <div class="meta">Click the map or give a station to look at that part of the road from its side.</div></div>
   <div id="drive" style="display:none"><h2>Drive through</h2>
     <div class="row"><select id="drivepath" style="flex:1"></select></div>
+    <div class="row"><span style="flex:1">Camera</span><select id="drivecam" title="Camera">
+      <option value="driver">Driver</option><option value="chase">Chase (behind the vehicle)</option>
+      <option value="aerial">Aerial follow</option><option value="fly">Flythrough</option></select></div>
+    <div class="row"><span style="flex:1">Vehicle</span><select id="drivevehicle" title="Vehicle and eye height">
+      <option value="car">Car (eye 1.3 m)</option><option value="truck">Truck (eye 2.4 m)</option></select></div>
     <div class="row"><span style="flex:1">Station</span><span id="drivesta"></span></div>
     <input type="range" id="driveslider" min="0" max="1" step="any" value="0">
     <div class="row"><button id="driveplay">Play</button><button id="driveexit">Exit</button>
-      <select id="drivespeed" title="Speed"><option value="8">30 km/h</option><option value="14" selected>50 km/h</option><option value="22">80 km/h</option></select></div>
+      <select id="drivespeed" title="Speed"><option value="8">30 km/h</option><option value="14" selected>50 km/h</option><option value="22">80 km/h</option><option value="33.3">120 km/h</option></select></div>
     <div class="row"><label><input type="checkbox" id="driverec"> Record video while playing (WebM)</label></div>
   </div>
   <h2>Views</h2>
@@ -133,8 +138,53 @@
 <script id="scene-data" type="application/json">__SCENE__</script>
 <script>
 "use strict";
+// Unpack the scene's arrays (gzip in the browser, then the byte and component order undone) and start the viewer.
+function unpackArray(raw, packed) {
+  const Type = { f4: Float32Array, u4: Uint32Array, u1: Uint8Array }[packed.t], size = Type.BYTES_PER_ELEMENT;
+  const n = raw.length / size, bytes = new Uint8Array(raw.length);
+  for (let b = 0; b < size; b++) { const plane = b * n; for (let i = 0; i < n; i++) bytes[i * size + b] = raw[plane + i]; }
+  let flat = new Type(bytes.buffer);
+  if (packed.d) {                                   // zig-zag deltas back to indices
+    const out = new Uint32Array(n); let v = 0;
+    for (let i = 0; i < n; i++) { const z = flat[i]; v += (z >>> 1) ^ -(z & 1); out[i] = v >>> 0; }
+    flat = out;
+  }
+  const c = packed.c || 1;
+  if (c === 1) return flat;
+  const rows = n / c, out = new Type(n);           // components were stored one after another: interleave them again
+  for (let k = 0; k < c; k++) { const from = k * rows; for (let i = 0; i < rows; i++) out[i * c + k] = flat[from + i]; }
+  return out;
+}
+async function inflate(text) {
+  const bin = atob(text), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+(async () => {
+  const scene = JSON.parse(document.getElementById("scene-data").textContent);
+  const jobs = [];
+  for (const holder of [...Object.values(scene.meshes || {}), scene.vegetation || {}])
+    for (const [key, value] of Object.entries(holder))
+      if (value && typeof value === "object" && "z" in value) {
+        if (typeof DecompressionStream === "undefined") throw new Error("old browser");
+        jobs.push(inflate(value.z).then(raw => { holder[key] = unpackArray(raw, value); }));
+      }
+  await Promise.all(jobs);
+  window.SCENE = scene;
+  const main = document.createElement("script");
+  main.textContent = document.getElementById("viewer-main").textContent;
+  document.body.appendChild(main);
+})().catch(() => {
+  const e = document.getElementById("error");
+  e.textContent = "This browser cannot open the packed scene. Open the file in a current Chrome, Edge, Firefox or Safari.";
+  e.style.display = "flex";
+});
+</script>
+<script type="text/plain" id="viewer-main">
+"use strict";
 // LandXML Road & Terrain GIS Tools: self-contained 3D scene viewer (WebGL2, no libraries).
-const S = JSON.parse(document.getElementById("scene-data").textContent);
+const S = window.SCENE;
 const unitInfo = { meter: [1, "m"], metre: [1, "m"], foot: [0.3048, "ft"], internationalfoot: [0.3048, "ft"],
   ussurveyfoot: [1200 / 3937, "ftUS"], millimeter: [0.001, "mm"], centimeter: [0.01, "cm"], kilometer: [1000, "km"] };
 const horizontalMetres = (unitInfo[(S.units.horizontal || "").toLowerCase()] || [1])[0];
@@ -161,6 +211,7 @@ if (!gl) fail("This browser cannot show WebGL 2 graphics. Open the file in a cur
 
 // ---------------------------------------------------------------- data
 function decode(text, Type) {
+  if (typeof text !== "string") return text;              // already unpacked by the loader
   const bin = atob(text); const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new Type(bytes.buffer);
@@ -210,6 +261,15 @@ const meshProgram = program(`#version 300 es
   uniform float metresToHorizontal; uniform int road; uniform vec3 roadW; uniform vec3 cAsphalt; uniform vec3 cShoulder; uniform vec3 cVerge; uniform vec3 cBatter; uniform vec3 cLine; uniform int fogOn; uniform float fogNear; uniform float fogFar;
   out vec4 o;
   float hash(vec2 q) { return fract(sin(dot(q, vec2(12.9898, 78.233))) * 43758.5453); }
+  float vnoise(vec2 q) { vec2 i = floor(q), f = fract(q); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }
+  vec3 groundTexture(vec3 col, vec2 metres, float steep) {   // mottled grass and soil, bare earth on steep faces: no geometry
+    float n = 0.5 * vnoise(metres * 0.045) + 0.3 * vnoise(metres * 0.21) + 0.2 * vnoise(metres * 1.1);
+    float dry = vnoise(metres * 0.012 + 17.0);
+    col *= 0.86 + 0.28 * n;
+    col = mix(col, col * vec3(1.08, 1.0, 0.78), smoothstep(0.45, 0.8, dry) * 0.6);      // drier patches
+    float bare = smoothstep(0.55, 1.1, steep + 0.25 * (n - 0.5));
+    return mix(col, vec3(0.55, 0.47, 0.38) * (0.85 + 0.3 * n), bare * 0.65); }
   float band(float x, float c, float w) { float a = fwidth(x); return 1.0 - smoothstep(w * 0.5 - a, w * 0.5 + a, abs(x - c)); }
   vec3 tint(float t) {                     // hypsometric ramp: valley green, upland tan, high brown, summit grey
     t = clamp(t, 0.0, 1.0);
@@ -243,11 +303,16 @@ const meshProgram = program(`#version 300 es
       } else if (a <= half_ + sh) {
         col = cShoulder + grain;
       } else {
-        col = (steep > 0.3 ? cBatter : cVerge) + grain * 0.6;
+        vec2 m_ = vw / max(metresToHorizontal, 1e-6);
+        float n_ = 0.55 * vnoise(m_ * 0.35) + 0.45 * vnoise(m_ * 1.7);
+        col = (steep > 0.3 ? cBatter * (0.82 + 0.34 * n_) : cVerge * (0.85 + 0.3 * n_)) + grain * 0.6;   // soil and grass texture
       }
     }
     float zabs = vz + zo;
-    if (terrain == 1) col = tint((zabs - zr.x) / max(zr.y - zr.x, 1e-3));
+    if (terrain == 1) {
+      float steepness = sqrt(max(1.0 - vt.z * vt.z, 0.0)) / max(vt.z, 1e-3);
+      col = groundTexture(tint((zabs - zr.x) / max(zr.y - zr.x, 1e-3)), vw / max(metresToHorizontal, 1e-6), steepness);
+    }
     else if (terrain == 2) col = vec3(0.74, 0.75, 0.77);
     vec3 nn = normalize(gl_FrontFacing ? vn : -vn);
     float l = 0.42 + 0.48 * max(dot(nn, normalize(vec3(-0.45, 0.35, 0.82))), 0.0) + 0.18 * max(dot(nn, normalize(vec3(0.6, -0.5, 0.4))), 0.0);
@@ -406,6 +471,8 @@ function niceStep(range, bands) {
 }
 const ground = { mode: S.ground_mode || "terrain", contours: S.contours !== false, interval: groundZ ? niceStep(groundZ[1] - groundZ[0], 25) : 1, onDesign: false };
 const cam = { target: [0, 0, 0], azimuth: 0, elevation: 0.6, distance: 300, fov: 30 };
+let treesVisible = true;
+let vehicle = null;       // { p, dir, type } while a chase, aerial or flythrough camera follows a vehicle
 function setView(v) {
   // views are framed for a landscape window; on a portrait screen step back so the same width fits
   const aspect = canvas.clientWidth / Math.max(canvas.clientHeight, 1);
@@ -471,6 +538,8 @@ function render(width, height) {
     gl.disable(gl.POLYGON_OFFSET_FILL);
     if (translucent) { gl.disable(gl.BLEND); gl.depthMask(true); }
   }
+  drawVehicle();
+  drawTrees(mvp);
   gl.useProgram(lineProgram);
   gl.uniformMatrix4fv(gl.getUniformLocation(lineProgram, "mvp"), false, mvp);
   gl.uniform1f(gl.getUniformLocation(lineProgram, "ve"), ve);
@@ -699,6 +768,12 @@ for (const [kind, k] of Object.entries(kinds)) {
   const row = document.createElement("div"); row.className = "row";
   row.innerHTML = `<span class="ln" style="background:${k.css}"></span><label><input type="checkbox" checked> ${LINE_NAMES[kind] || kind}</label>`;
   row.querySelector("input").onchange = e => { k.visible = e.target.checked; draw(); };
+  layersDiv.appendChild(row);
+}
+if (S.vegetation && S.vegetation.count) {
+  const row = document.createElement("div"); row.className = "row";
+  row.innerHTML = `<span class="sw" style="background:#5f7a3a"></span><label><input type="checkbox" checked> Vegetation (${S.vegetation.count.toLocaleString()})</label>`;
+  row.querySelector("input").onchange = e => { treesVisible = e.target.checked; draw(); };
   layersDiv.appendChild(row);
 }
 const legendDiv = document.getElementById("legend");
@@ -953,7 +1028,7 @@ if (pairs.length) {
 // ---------------------------------------------------------------- drive through
 const paths = (S.paths || []).filter(p => p.points.length > 1);
 if (["foot", "internationalfoot", "ussurveyfoot"].includes((stationUnit || "").toLowerCase())) {
-  const speeds = [[20, 8.9408], [30, 13.4112], [50, 22.352]];
+  const speeds = [[20, 8.9408], [30, 13.4112], [50, 22.352], [75, 33.528]];
   [...document.getElementById("drivespeed").options].forEach((option, i) => {
     option.textContent = `${speeds[i][0]} mph`; option.value = speeds[i][1];
   });
@@ -965,11 +1040,279 @@ function pathAt(path, station) {
   const q = Math.max(0, Math.min(1, (station - st[i - 1]) / Math.max(st[i] - st[i - 1], 1e-9)));
   return [0, 1, 2].map(k => P[i - 1][k] + q * (P[i][k] - P[i - 1][k]));
 }
+// Camera positions for the drive-through modes. Everything is in metres relative to the point on the road;
+// `m` converts metres to horizontal units and `at(d)` gives the road point d metres along (negative = back).
+function cameraRig(mode, o) {
+  const m = o.m, ve = o.ve, p = o.p, at = o.at;
+  const a = at(4), b = at(-4);
+  let dx = a[0] - b[0], dy = a[1] - b[1], len = Math.hypot(dx, dy);
+  if (len < 1e-9) { dx = 0; dy = 1; len = 1; }
+  const dir = [dx / len, dy / len], side = [-dir[1] / 1, dir[0] / 1];
+  // at the ends of the road the clamped point lies on the spot: carry on straight instead
+  const ahead = d => { const q = at(d); return Math.hypot(q[0] - p[0], q[1] - p[1]) < 0.5 * d * m ? [p[0] + dir[0] * d * m, p[1] + dir[1] * d * m, p[2]] : q; };
+  const behind = d => { const q = at(-d); return Math.hypot(q[0] - p[0], q[1] - p[1]) < 0.5 * d * m ? [p[0] - dir[0] * d * m, p[1] - dir[1] * d * m, p[2]] : q; };
+  const lift = (q, h) => [q[0], q[1], q[2] * ve + h * m];
+  let eye, target;
+  if (mode === "chase") { eye = lift(behind(10 + o.length), 3.2 + o.eyeHeight); target = lift(ahead(8), 1.2); }
+  else if (mode === "aerial") { eye = lift(behind(45), 38); target = lift(ahead(25), 0); }
+  else if (mode === "fly") {
+    const swing = 50 * Math.sin((o.progress || 0) * Math.PI * 4), q = behind(60);          // sweeps from one side of the road to the other
+    eye = [q[0] + side[0] * swing * m, q[1] + side[1] * swing * m, q[2] * ve + 55 * m]; target = lift(ahead(30), 0);
+  } else { eye = lift(p, o.eyeHeight); target = lift(ahead(30), o.eyeHeight * 0.8); }
+  return { eye, target, dir, vehicle: mode !== "driver" && ["chase", "aerial", "fly"].includes(mode) };
+}
+const VEHICLES = {     // parts in metres, x lateral, y forward, z up. ["f", cx, cy, z0, z1, bottom w, l, top w, l, top shift forward, rgb] is a tapered block; ["w", x, y, radius, width, rgb] a wheel
+  car: { length: 4.5, eye: 1.3, parts: [
+    ["f", 0, 0, 0.32, 0.88, 1.80, 4.40, 1.76, 4.30, 0, [176, 36, 36]],            // body
+    ["f", 0, -0.15, 0.88, 1.45, 1.62, 2.55, 1.46, 1.65, -0.35, [48, 62, 78]],     // glass greenhouse, raked front and rear
+    ["f", 0, -0.50, 1.45, 1.50, 1.46, 1.65, 1.40, 1.55, 0, [176, 36, 36]],        // roof
+    ["f", 0, 2.19, 0.22, 0.52, 1.78, 0.12, 1.74, 0.12, 0, [40, 40, 44]],          // bumpers
+    ["f", 0, -2.19, 0.22, 0.52, 1.78, 0.12, 1.74, 0.12, 0, [40, 40, 44]],
+    ["f", -0.62, 2.22, 0.58, 0.72, 0.36, 0.05, 0.34, 0.05, 0, [250, 245, 215]],   // head lights
+    ["f", 0.62, 2.22, 0.58, 0.72, 0.36, 0.05, 0.34, 0.05, 0, [250, 245, 215]],
+    ["f", -0.64, -2.22, 0.60, 0.72, 0.34, 0.05, 0.32, 0.05, 0, [200, 20, 20]],    // tail lights
+    ["f", 0.64, -2.22, 0.60, 0.72, 0.34, 0.05, 0.32, 0.05, 0, [200, 20, 20]],
+    ["w", -0.80, 1.40, 0.32, 0.22, [28, 28, 30]], ["w", 0.80, 1.40, 0.32, 0.22, [28, 28, 30]],
+    ["w", -0.80, -1.40, 0.32, 0.22, [28, 28, 30]], ["w", 0.80, -1.40, 0.32, 0.22, [28, 28, 30]]] },
+  truck: { length: 9.5, eye: 2.4, parts: [
+    ["f", 0, 3.6, 0.95, 1.80, 2.50, 2.20, 2.46, 2.10, 0, [35, 90, 160]],          // cab, lower
+    ["f", 0, 3.45, 1.80, 3.00, 2.46, 1.90, 2.36, 1.20, -0.35, [48, 62, 78]],      // cab glass, raked windscreen
+    ["f", 0, 3.10, 3.00, 3.08, 2.36, 1.20, 2.30, 1.10, 0, [35, 90, 160]],         // cab roof
+    ["f", 0, -1.50, 1.10, 3.40, 2.50, 6.40, 2.50, 6.40, 0, [226, 226, 226]],      // cargo box
+    ["f", 0, 0.1, 0.62, 1.10, 1.30, 9.00, 1.30, 9.00, 0, [50, 50, 55]],           // chassis
+    ["f", 0, 4.66, 0.55, 0.95, 2.46, 0.14, 2.42, 0.14, 0, [40, 40, 44]],          // bumper
+    ["f", -0.85, 4.70, 1.10, 1.25, 0.40, 0.06, 0.38, 0.06, 0, [250, 245, 215]],   // head lights
+    ["f", 0.85, 4.70, 1.10, 1.25, 0.40, 0.06, 0.38, 0.06, 0, [250, 245, 215]],
+    ["f", -0.95, -4.72, 1.20, 1.40, 0.36, 0.06, 0.34, 0.06, 0, [200, 20, 20]],    // tail lights
+    ["f", 0.95, -4.72, 1.20, 1.40, 0.36, 0.06, 0.34, 0.06, 0, [200, 20, 20]],
+    ["w", -1.05, 3.50, 0.50, 0.30, [28, 28, 30]], ["w", 1.05, 3.50, 0.50, 0.30, [28, 28, 30]],
+    ["w", -1.05, -2.50, 0.50, 0.30, [28, 28, 30]], ["w", 1.05, -2.50, 0.50, 0.30, [28, 28, 30]],
+    ["w", -1.05, -3.80, 0.50, 0.30, [28, 28, 30]], ["w", 1.05, -3.80, 0.50, 0.30, [28, 28, 30]]] },
+};
+const VEHICLE_MAX_VERTS = 1000, VEHICLE_MAX_INDICES = 4000;
+// Geometry of a vehicle standing at p and heading along dir: positions, normals, colours and triangle indices.
+// Heights are divided by the vertical exaggeration because the shader multiplies every z by it, so the vehicle keeps its true shape.
+function vehicleGeometry(type, p, dir, ve, m) {
+  const parts = (VEHICLES[type] || VEHICLES.car).parts, right = [dir[1], -dir[0]];
+  const pos = [], nrm = [], col = [], idx = [];
+  const put = (q, n, rgb) => {
+    pos.push(p[0] + (q[0] * right[0] + q[1] * dir[0]) * m, p[1] + (q[0] * right[1] + q[1] * dir[1]) * m, p[2] + q[2] * m / ve);
+    nrm.push(n[0] * right[0] + n[1] * dir[0], n[0] * right[1] + n[1] * dir[1], n[2]);
+    col.push(rgb[0], rgb[1], rgb[2]);
+    return pos.length / 3 - 1;
+  };
+  // a flat face from its corners in order, its normal turned to point away from the solid's centre
+  const facing = (qs, centre, rgb) => {
+    const a = qs[0], b = qs[1], c = qs[2];
+    let n = [(b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]), (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]),
+             (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])];
+    const len = Math.hypot(n[0], n[1], n[2]) || 1; n = [n[0] / len, n[1] / len, n[2] / len];
+    const mid = [0, 1, 2].map(k => qs.reduce((t, q) => t + q[k], 0) / qs.length);
+    if (n[0] * (mid[0] - centre[0]) + n[1] * (mid[1] - centre[1]) + n[2] * (mid[2] - centre[2]) < 0) n = [-n[0], -n[1], -n[2]];
+    const base = qs.map(q => put(q, n, rgb));
+    for (let k = 1; k + 1 < qs.length; k++) idx.push(base[0], base[k], base[k + 1]);
+  };
+  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  for (const part of parts) {
+    if (part[0] === "f") {
+      const [, cx, cy, z0, z1, w0, l0, w1, l1, dy, rgb] = part;
+      const bottom = corners.map(([u, v]) => [cx + u * w0 / 2, cy + v * l0 / 2, z0]);
+      const top = corners.map(([u, v]) => [cx + u * w1 / 2, cy + dy + v * l1 / 2, z1]);
+      const centre = [cx, cy + dy / 2, (z0 + z1) / 2];
+      facing(bottom, centre, rgb); facing(top, centre, rgb);
+      for (let k = 0; k < 4; k++) { const j = (k + 1) % 4; facing([bottom[k], bottom[j], top[j], top[k]], centre, rgb); }
+    } else {
+      const [, x, y, r, wd, rgb] = part, seg = 10, centre = [x, y, r];
+      const ring = (k, side) => { const a = (k + 0.5) * 2 * Math.PI / seg; return [x + side * wd / 2, y + r * Math.cos(a), r + r * Math.sin(a)]; };
+      for (const side of [-1, 1]) facing(Array.from({ length: seg }, (_, k) => ring(k, side)), centre, rgb);
+      for (let k = 0; k < seg; k++) facing([ring(k, -1), ring(k, 1), ring(k + 1, 1), ring(k + 1, -1)], centre, rgb);
+    }
+  }
+  return { pos: Float32Array.from(pos), nrm: Float32Array.from(nrm), col: Uint8Array.from(col), idx: Uint32Array.from(idx), count: idx.length };
+}
+let vehicleGL = null;
+function drawVehicle() {
+  if (!vehicle) return;
+  if (!vehicleGL) {
+    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    const bufs = {};
+    for (const [name, size, type, normalized] of [["p", 3, gl.FLOAT, false], ["n", 3, gl.FLOAT, false], ["c", 3, gl.UNSIGNED_BYTE, true], ["r", 2, gl.FLOAT, false]]) {
+      const loc = gl.getAttribLocation(meshProgram, name), buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, VEHICLE_MAX_VERTS * size * (type === gl.FLOAT ? 4 : 1), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, type, normalized, 0, 0); bufs[name] = buf;
+    }
+    const ebo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, VEHICLE_MAX_INDICES * 4, gl.DYNAMIC_DRAW);
+    gl.bindVertexArray(null);
+    vehicleGL = { vao, bufs, ebo };
+  }
+  const g = vehicleGeometry(vehicle.type, vehicle.p, vehicle.dir, ve, 1 / horizontalMetres);
+  if (g.pos.length / 3 > VEHICLE_MAX_VERTS || g.count > VEHICLE_MAX_INDICES) return;
+  gl.bindVertexArray(vehicleGL.vao);
+  for (const [name, data] of [["p", g.pos], ["n", g.nrm], ["c", g.col]]) { gl.bindBuffer(gl.ARRAY_BUFFER, vehicleGL.bufs[name]); gl.bufferSubData(gl.ARRAY_BUFFER, 0, data); }
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, vehicleGL.ebo); gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, g.idx);
+  const set = (n, v) => gl.uniform1i(gl.getUniformLocation(meshProgram, n), v);
+  set("road", 0); set("terrain", 0); set("contours", 0);
+  gl.uniform1f(gl.getUniformLocation(meshProgram, "alpha"), 1); gl.uniform1f(gl.getUniformLocation(meshProgram, "lift"), 0);
+  gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, 0);
+  gl.bindVertexArray(null);
+}
+// ---------------------------------------------------------------- vegetation
+// Grass clumps (three crossed quads, the blades cut out in the fragment shader) and shrubs (a low irregular faceted dome),
+// each drawn once per plant. Template x and y are half widths (-1..1), z a fraction of the height.
+function grassTemplate() {
+  const pos = [], uv = [];
+  for (let k = 0; k < 3; k++) {
+    const a = k * Math.PI / 3, cx = Math.cos(a), cy = Math.sin(a);
+    const q = [[-1, 0], [1, 0], [1, 1], [-1, 0], [1, 1], [-1, 1]];          // u along the quad, v up
+    for (const [u, v] of q) { pos.push(u * cx, u * cy, v); uv.push((u + 1) / 2, v); }
+  }
+  // a patch of grass colour on the ground under the clump (v below 0 marks it): cover when seen from above
+  for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]]) { pos.push(x * 0.9, y * 0.9, 0.02); uv.push((x + 1) / 2, -1 + 0.98 * (y + 1) / 2); }
+  return { pos: Float32Array.from(pos), uv: Float32Array.from(uv), vertices: pos.length / 3 };
+}
+function shrubTemplate() {
+  const ASPECT = 1.4, pos = [], nrm = [], col = [], seg = 6;
+  const dark = [46, 84, 44], mid = [70, 112, 58], light = [104, 140, 76];
+  const jitter = (k, r) => 0.85 + 0.3 * (0.5 + 0.5 * Math.sin(k * 12.9898 + r * 78.233));    // a lumpy, not a round, outline
+  const ring = (z, r, k, level, colour) => {
+    const t = (k + level * 0.5) * 2 * Math.PI / seg, rr = r * jitter(k % seg, level);
+    return [rr * Math.cos(t), rr * Math.sin(t), z, colour];
+  };
+  const centre = [0, 0, 0.45];
+  const face = (a, b, c) => {
+    const A = [a[0], a[1], a[2] * ASPECT], B = [b[0], b[1], b[2] * ASPECT], C = [c[0], c[1], c[2] * ASPECT];
+    const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    const len = Math.hypot(n[0], n[1], n[2]) || 1; n = [n[0] / len, n[1] / len, n[2] / len];
+    const away = [(A[0] + B[0] + C[0]) / 3 - centre[0], (A[1] + B[1] + C[1]) / 3 - centre[1], (A[2] + B[2] + C[2]) / 3 - centre[2] * ASPECT];
+    if (n[0] * away[0] + n[1] * away[1] + n[2] * away[2] < 0) n = [-n[0], -n[1], -n[2]];
+    for (const q of [a, b, c]) { pos.push(q[0], q[1], q[2]); nrm.push(n[0], n[1], n[2]); col.push(q[3][0], q[3][1], q[3][2]); }
+  };
+  for (let k = 0; k < seg; k++) {
+    const r0 = [ring(0.0, 0.72, k, 0, dark), ring(0.0, 0.72, k + 1, 0, dark)];
+    const r1 = [ring(0.42, 1.0, k, 1, mid), ring(0.42, 1.0, k + 1, 1, mid)];
+    const r2 = [ring(0.80, 0.70, k, 2, light), ring(0.80, 0.70, k + 1, 2, light)];
+    face(r0[0], r0[1], r1[1]); face(r0[0], r1[1], r1[0]);
+    face(r1[0], r1[1], r2[1]); face(r1[0], r2[1], r2[0]);
+    face(r2[0], r2[1], [0, 0, 1.0, light]);
+  }
+  return { pos: Float32Array.from(pos), nrm: Float32Array.from(nrm), col: Uint8Array.from(col), vertices: pos.length / 3 };
+}
+const PLANT_VS = `#version 300 es
+  in vec3 p; in vec3 base; in vec2 size; uniform mat4 mvp; uniform float ve;
+  out float seed; out vec3 world;
+  vec3 place() {
+    seed = fract(sin(dot(base.xy, vec2(12.9898, 78.233))) * 43758.5453);    // a stable random number per plant
+    float a = seed * 6.2831853, ca = cos(a), sa = sin(a);
+    vec2 xy = vec2(p.x * ca - p.y * sa, p.x * sa + p.y * ca) * size.y * 0.5;
+    return vec3(base.xy + xy, base.z * ve + p.z * size.x);
+  }`;
+const PLANT_FOG = `uniform int fogOn; uniform float fogNear; uniform float fogFar;
+  vec3 fogged(vec3 c) {
+    float fog = fogOn == 1 ? clamp((gl_FragCoord.z / gl_FragCoord.w - fogNear) / fogFar, 0.0, 0.55) : 0.0;
+    return mix(c, vec3(0.86, 0.9, 0.95), fog);
+  }`;
+let plantGL = null;
+function plantBuffers(program_, template, attributes, positions, sizes) {
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const attach = (name, data, size, type, normalized, divisor) => {
+    const loc = gl.getAttribLocation(program_, name); if (loc < 0) return;
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, type, normalized, 0, 0); if (divisor) gl.vertexAttribDivisor(loc, divisor);
+  };
+  for (const [name, data, size, type, normalized] of attributes) attach(name, data, size, type, normalized, 0);
+  attach("base", positions, 3, gl.FLOAT, false, 1); attach("size", sizes, 2, gl.FLOAT, false, 1);
+  gl.bindVertexArray(null);
+  return { program: program_, vao, vertices: template.vertices, count: positions.length / 3 };
+}
+function setupPlants() {
+  const V = S.vegetation;
+  const positions = decode(V.positions, Float32Array), sizes = decode(V.sizes, Float32Array);
+  const kinds = V.kinds ? decode(V.kinds, Uint8Array) : new Uint8Array(V.count);
+  for (let i = 2; i < positions.length; i += 3) positions[i] *= zFactor;                     // levels in the same unit as the ground
+  const pick = kind => {
+    const n = kinds.reduce((t, k) => t + (k === kind ? 1 : 0), 0), pp = new Float32Array(3 * n), ss = new Float32Array(2 * n);
+    for (let i = 0, j = 0; i < kinds.length; i++) if (kinds[i] === kind) { pp.set(positions.subarray(3 * i, 3 * i + 3), 3 * j); ss.set(sizes.subarray(2 * i, 2 * i + 2), 2 * j); j++; }
+    return [pp, ss];
+  };
+  const result = {};
+  const [gp, gs] = pick(0);
+  if (gp.length) {
+    const t = grassTemplate();
+    const prog = program(PLANT_VS + `
+      in vec2 uv; out vec2 vuv;
+      void main() { vec3 w = place(); vuv = uv; world = w; gl_Position = mvp * vec4(w, 1.0); }`,
+      `#version 300 es
+      precision highp float; in vec2 vuv; in float seed; in vec3 world; out vec4 o;
+      ` + PLANT_FOG + `
+      void main() {
+        if (vuv.y < 0.0) {                                                     // the ground patch: a soft, ragged disc
+          vec2 q = vec2(vuv.x, (vuv.y + 1.0) / 0.98) * 2.0 - 1.0;
+          float a = atan(q.y, q.x), r = length(q) + 0.18 * sin(a * 5.0 + seed * 40.0) + 0.1 * sin(a * 11.0 + seed * 9.0);
+          if (r > 0.85) discard;
+          vec3 g = mix(vec3(0.25, 0.38, 0.17), vec3(0.45, 0.47, 0.26), fract(seed * 5.3)) * (0.9 + 0.2 * fract(seed * 13.7));
+          o = vec4(fogged(g), 1.0); return;
+        }
+        float blades = 11.0, x = vuv.x * blades, i = floor(x), f = fract(x) - 0.5;
+        float h = fract(sin((i + seed * 17.0) * 91.7) * 43758.5);
+        float edge = abs(vuv.x - 0.5) * 2.0;
+        float top = (0.5 + 0.5 * h) * (1.0 - 0.55 * edge * edge);            // shorter blades at the sides: a rounded clump
+        if (vuv.y > top) discard;
+        float t = vuv.y / top, lean = (h - 0.5) * 0.9 * t * t;
+        if (abs(f - lean) > 0.45 * (1.0 - t) + 0.04) discard;
+        vec3 green = vec3(0.30, 0.45, 0.20), straw = vec3(0.62, 0.58, 0.34);
+        vec3 tip = mix(green * 1.25, straw, 0.25 + 0.5 * fract(seed * 5.3));
+        vec3 c = mix(green * 0.55, tip, t) * (0.85 + 0.3 * fract(h * 3.7));
+        o = vec4(fogged(c), 1.0); }`);
+    result.grass = plantBuffers(prog, t, [["p", t.pos, 3, gl.FLOAT, false], ["uv", t.uv, 2, gl.FLOAT, false]], gp, gs);
+  }
+  const [sp, sz] = pick(1);
+  if (sp.length) {
+    const t = shrubTemplate();
+    const prog = program(PLANT_VS + `
+      in vec3 n; in vec3 c; out vec3 vc; out vec3 vn;
+      void main() {
+        vec3 w = place(); float a = seed * 6.2831853, ca = cos(a), sa = sin(a);
+        vn = vec3(n.x * ca - n.y * sa, n.x * sa + n.y * ca, n.z); vc = c * (0.8 + 0.4 * fract(seed * 7.31));
+        world = w; gl_Position = mvp * vec4(w, 1.0); }`,
+      `#version 300 es
+      precision highp float; in vec3 vc; in vec3 vn; in float seed; in vec3 world; out vec4 o;
+      ` + PLANT_FOG + `
+      void main() {
+        vec3 nn = normalize(vn);
+        float l = 0.45 + 0.45 * max(dot(nn, normalize(vec3(-0.45, 0.35, 0.82))), 0.0) + 0.15 * max(dot(nn, normalize(vec3(0.6, -0.5, 0.4))), 0.0);
+        o = vec4(fogged(vc * min(l, 1.1)), 1.0); }`);
+    result.shrubs = plantBuffers(prog, t, [["p", t.pos, 3, gl.FLOAT, false], ["n", t.nrm, 3, gl.FLOAT, false],
+                                           ["c", t.col, 3, gl.UNSIGNED_BYTE, true]], sp, sz);
+  }
+  return result;
+}
+function drawTrees(mvp) {
+  const V = S.vegetation;
+  if (!treesVisible || !V || !V.count) return;
+  if (!plantGL) plantGL = setupPlants();
+  for (const set of [plantGL.grass, plantGL.shrubs]) {
+    if (!set) continue;
+    gl.useProgram(set.program);
+    gl.uniformMatrix4fv(gl.getUniformLocation(set.program, "mvp"), false, mvp);
+    gl.uniform1f(gl.getUniformLocation(set.program, "ve"), ve);
+    gl.uniform1i(gl.getUniformLocation(set.program, "fogOn"), cam.free ? 1 : 0);
+    gl.uniform1f(gl.getUniformLocation(set.program, "fogNear"), 60.0);
+    gl.uniform1f(gl.getUniformLocation(set.program, "fogFar"), 900.0);
+    gl.bindVertexArray(set.vao); gl.drawArraysInstanced(gl.TRIANGLES, 0, set.vertices, set.count); gl.bindVertexArray(null);
+  }
+}
 function placeDriver(path, station) {
-  const eyeHeight = 1.3 / horizontalMetres, look = 30 / (unitInfo[(path.station_unit ?? stationUnit ?? "").toLowerCase()] || [1])[0];
-  const p = pathAt(path, station), ahead = pathAt(path, Math.min(station + look, path.stations[path.stations.length - 1]));
-  if (Math.hypot(ahead[0] - p[0], ahead[1] - p[1]) < 1) { const back = pathAt(path, station - look); ahead[0] = 2 * p[0] - back[0]; ahead[1] = 2 * p[1] - back[1]; ahead[2] = p[2]; }
-  cam.free = { eye: [p[0], p[1], p[2] * ve + eyeHeight], target: [ahead[0], ahead[1], ahead[2] * ve + eyeHeight * 0.8] };
+  const mode = document.getElementById("drivecam").value, type = document.getElementById("drivevehicle").value, kind = VEHICLES[type] || VEHICLES.car;
+  const st = path.stations, first = st[0], last = st[st.length - 1];
+  const unit = (unitInfo[(path.station_unit ?? stationUnit ?? "").toLowerCase()] || [1])[0];
+  const at = d => pathAt(path, Math.max(first, Math.min(last, station + d / unit)));
+  const p = pathAt(path, station);
+  const rig = cameraRig(mode, { p, at, ve, m: 1 / horizontalMetres, eyeHeight: kind.eye, length: kind.length, progress: (station - first) / Math.max(last - first, 1e-9) });
+  cam.free = { eye: rig.eye, target: rig.target };
+  vehicle = rig.vehicle ? { p, dir: rig.dir, type } : null;
   document.getElementById("drivesta").textContent = stationText(station, path.station_unit);
   markMinimap(p);
   draw();
@@ -990,7 +1333,7 @@ function stopDrive(exit) {
   if (drive && drive.recorder && drive.recorder.state !== "inactive") drive.recorder.stop();
   if (drive) drive.timer = null;
   document.getElementById("driveplay").textContent = "Play";
-  if (exit) { cam.free = null; drive = null; document.getElementById("pick").style.display = "none"; draw(); }
+  if (exit) { cam.free = null; vehicle = null; drive = null; document.getElementById("pick").style.display = "none"; draw(); }
 }
 if (paths.length) {
   document.getElementById("drive").style.display = "block";
@@ -1000,6 +1343,7 @@ if (paths.length) {
   const stationOf = () => { const p = current(), a = p.stations[0], b = p.stations[p.stations.length - 1]; return a + (+slider.value) * (b - a); };
   slider.oninput = () => { drive = drive || {}; placeDriver(current(), stationOf()); };
   select.onchange = () => { slider.value = 0; drive = drive || {}; placeDriver(current(), stationOf()); };
+  for (const id of ["drivecam", "drivevehicle"]) document.getElementById(id).onchange = () => { drive = drive || {}; placeDriver(current(), stationOf()); };
   document.getElementById("driveexit").onclick = () => stopDrive(true);
   document.getElementById("driveplay").disabled = !unitInfo[(current().station_unit ?? stationUnit ?? "").toLowerCase()];
   document.getElementById("driveplay").onclick = () => {
@@ -1104,7 +1448,11 @@ if (startStation && paths.length) { document.getElementById("gotosta").value = s
 // viewer.html#drive=0.4 opens the drive-through 40 % along the first path (useful for shared links)
 const startDrive = /drive=([\d.]+)/.exec(location.hash);
 if (startDrive && paths.length) {
-  const sl = document.getElementById("driveslider"); sl.value = startDrive[1]; sl.oninput();
+  const sl = document.getElementById("driveslider"); sl.value = startDrive[1];
+  const startCam = /cam=(driver|chase|aerial|fly)/.exec(location.hash), startVehicle = /vehicle=(car|truck)/.exec(location.hash);
+  if (startCam) document.getElementById("drivecam").value = startCam[1];       // viewer.html#drive=0.4&cam=chase&vehicle=truck
+  if (startVehicle) document.getElementById("drivevehicle").value = startVehicle[1];
+  sl.oninput();
   if (/play/.test(location.hash)) document.getElementById("driveplay").click();   // #drive=0.2&play starts driving
 }
 </script>

@@ -37,9 +37,12 @@ from .landxml.grading import _inside_many
 from .landxml.plan_features import level_lines
 from .landxml.quantity_units import LINEAR_UNITS, quantity_units
 from .landxml.reports import station_label
-from .landxml.scene import SceneWriter, extrude, parse_views, station_offset, water_mesh
-from .landxml.scene_viewer import write_viewer
+from .landxml.scene import SceneWriter, extrude, ground_drive_path, parse_views, station_offset, water_mesh
+from .landxml.scene_viewer import PHONE_TARGET, PHONE_TRIANGLES, write_viewer
 from .landxml.tin_overlay import TinIndex, sample_tin
+from .landxml import vegetation as veg
+from .landxml.setup_summary import setup_summary
+from .landxml import water as wtr
 from .params import number_param
 from .processing_widgets import name_param, names_param, style_param, surfaces_param
 from .processing_common import coordinate_choices
@@ -148,9 +151,20 @@ def refine_near(xyz, faces, footprint, target, rounds=5):
     return refine(np.asarray(xyz, float), np.asarray(faces, np.int64), footprint, target, rounds)
 
 
-def refine_edges(xyz, faces, footprint, target=None):
+def edge_refinement_cap(budget, meshes, index, current):
+    """Most triangles the ground mesh ``index`` may reach through edge refinement while the scene stays within the
+    triangle ``budget``. A twentieth of the budget is always allowed, so cut edges stay clean even when the
+    unrefined scene already fills the budget. ``None`` (no cap) without a budget."""
+    if not budget:
+        return None
+    others = sum(len(m[4]) for k, m in enumerate(meshes) if k != index)
+    return max(budget - others, current) + budget // 20
+
+
+def refine_edges(xyz, faces, footprint, target=None, max_faces=None):
     """Split ground triangles that cross the edge of ``footprint`` (a design TIN) down to ``target``
-    (default: half a metre or a 64th of the ground's typical triangle, whichever is larger)."""
+    (default: half a metre or a 64th of the ground's typical triangle, whichever is larger), stopping short of
+    ``max_faces`` triangles."""
     from .landxml.structures import refine
 
     xyz, faces = np.asarray(xyz, float), np.asarray(faces, np.int64)
@@ -160,7 +174,7 @@ def refine_edges(xyz, faces, footprint, target=None):
         tri = xyz[faces[: min(len(faces), 20000)]]
         typical = float(np.median(np.linalg.norm(tri[:, 1, :2] - tri[:, 0, :2], axis=1)))
         target = max(0.5, typical / 64.0)
-    return refine(xyz, faces, footprint, target, rounds=7, boundary=True)
+    return refine(xyz, faces, footprint, target, rounds=7, boundary=True, max_faces=max_faces)
 
 
 def _runs_inside(points, area):
@@ -330,6 +344,20 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(number_param("STATION_LABELS", "Station labels every (0 = none)", 100.0, 0.0, 1e6, decimals=1))
         self.addParameter(QgsProcessingParameterMultipleLayers("VECTORS", "Other layers: lines draped, points as poles, polygons (DXF: one toggle per CAD layer)",
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
+        self.addParameter(QgsProcessingParameterMultipleLayers("VEGETATION", "Vegetation: polygons are planted with grass or shrubs, points are single plants",
+                                                               QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
+        self.addParameter(QgsProcessingParameterEnum("VEG_STYLE", "Vegetation: style", options=list(veg.STYLES), defaultValue=0))
+        self.addParameter(number_param("VEG_SPACING", "Vegetation: spacing between plants", 4.0, 0.5, 500.0, decimals=1))
+        self.addParameter(number_param("VEG_HEIGHT", "Vegetation: shrub height (0 = Auto: grass 0.8 m, shrubs 1.8 m)", 0.0, 0.0, 100.0, decimals=1))
+        self.addParameter(number_param("VEG_CLEAR", "Vegetation: keep clear of roads and designs by", 6.0, 0.0, 500.0, decimals=1))
+        self.addParameter(QgsProcessingParameterMultipleLayers(
+            "EXTRA_LANDXML", "Other roads: more LandXML files (same coordinate system and axis order as the main file; "
+            "alignments with a design profile follow it, others the smoothed ground)", QgsProcessing.SourceType.TypeFile, optional=True))
+        self.addParameter(QgsProcessingParameterMultipleLayers("DRIVE_LINES", "Other roads: line layers built as roads on the smoothed ground",
+                                                               QgsProcessing.SourceType.TypeVectorLine, optional=True))
+        self.addParameter(QgsProcessingParameterMultipleLayers("WATERWAYS", "Water: line layers drawn as a river or channel ribbon (flowing downhill)",
+                                                               QgsProcessing.SourceType.TypeVectorLine, optional=True))
+        self.addParameter(number_param("WATER_WIDTH", "Water: ribbon width", 6.0, 0.1, 5000.0, decimals=1))
         self.addParameter(number_param("STRETCH", "Long corridors: a view every (stations; 0 = none)", 1000.0, 0.0, 1e6, decimals=0))
         self.addParameter(QgsProcessingParameterBoolean(
             "SYN_GENERATE", "Generate a feasibility road (already have a proposed terrain? Add it under surfaces instead)",
@@ -389,7 +417,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
     # ------------------------------------------------------------------ helpers
         mark_advanced(self, ("RASTER_CONTOURS", "STRETCH", "SYN_LANES", "SYN_CAMBER", "SYN_SHOULDER_FALL", "SYN_CUT_SLOPE",
                              "SYN_FILL_SLOPE", "SYN_MAX_WIDTH", "SYN_BRIDGES", "SYN_AT_GRADE", "SYN_BRIDGE_SPAN", "SYN_FIT_WIDTH",
-                             "SYN_CHANNELS", "SYN_MATCH_PROFILE", "WATER", "EXTRUDE_FIELD", "EXTRUDE_HEIGHT",
+                             "SYN_CHANNELS", "SYN_MATCH_PROFILE", "WATER", "EXTRUDE_FIELD", "EXTRUDE_HEIGHT", "VEG_HEIGHT", "VEG_CLEAR", "WATER_WIDTH",
                              "MAX_TRIANGLES", "EXAGGERATION", "VIEWS", "TITLE"))
 
     def _crs_and_method(self, p, c, fb, path):
@@ -414,7 +442,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
 
     def connect_dialog(self, dialog):
         """Grey out the road inputs while road generation is off; their values are kept."""
-        wrappers = dialog.mainWidget().wrappers
+        from .compat import panel_wrappers
+        wrappers = panel_wrappers(dialog.mainWidget())
         switch = wrappers.get("SYN_GENERATE")
         if switch is None:
             return
@@ -448,6 +477,85 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         switch.widgetValueHasChanged.connect(refresh)
         refresh()
         dialog._road_refresh = refresh          # kept alive with the dialog; tests call it after setParameters
+        self._add_groups_and_summary(dialog, wrappers, parts)
+
+    GROUPS = (("Road", ROAD_INPUTS + ("EXTRA_LANDXML", "DRIVE_LINES"), True),
+              ("Plants and water", ("VEGETATION", "VEG_STYLE", "VEG_SPACING", "VEG_HEIGHT", "VEG_CLEAR", "WATERWAYS", "WATER_WIDTH", "WATER"), False),
+              ("Models", ("VECTORS", "EXTRUDE_FIELD", "EXTRUDE_HEIGHT"), False))
+
+    def _add_groups_and_summary(self, dialog, wrappers, parts):
+        """Show/hide buttons for the long optional groups (hidden inputs keep their values) and a live setup summary.
+
+        Both sit on a bar at the top of the parameters when the dialog's layout allows it; otherwise nothing is added."""
+        from qgis.PyQt.QtWidgets import QLabel, QToolButton, QVBoxLayout, QWidget
+
+        panel = dialog.mainWidget()
+        layout = panel.layout() if hasattr(panel, "layout") else None
+        if layout is None or not hasattr(layout, "insertWidget"):
+            return
+        bar = QWidget()
+        column = QVBoxLayout(bar)
+        column.setContentsMargins(0, 0, 0, 4)
+        summary = QLabel()
+        summary.setWordWrap(True)
+        summary.setStyleSheet("padding:4px; border:1px solid palette(mid); border-radius:3px;")
+        column.addWidget(summary)
+        row = QWidget()
+        from qgis.PyQt.QtWidgets import QHBoxLayout
+        buttons = QHBoxLayout(row)
+        buttons.setContentsMargins(0, 0, 0, 0)
+
+        def show(names, visible):
+            for name in names:
+                if name in wrappers:
+                    for item in parts(wrappers[name]):
+                        item.setVisible(visible)
+
+        for title, names, opened in self.GROUPS:
+            button = QToolButton()
+            button.setText(title)
+            button.setCheckable(True)
+            button.setChecked(opened)
+            button.setToolTip(f"Show or hide the {title.lower()} inputs. Their values are kept either way.")
+            button.toggled.connect(lambda checked, n=names: show(n, checked))
+            buttons.addWidget(button)
+            show(names, opened)
+        if "SYN_STRUCTURES" in wrappers:
+            edit = QToolButton()
+            edit.setText("Structures table…")
+            edit.setToolTip("Edit the typed road structures (culverts, bridges, piers) in a table.")
+
+            def open_table():
+                from .structures_dialog import edit_structures
+                wrapper = wrappers["SYN_STRUCTURES"]
+                new = edit_structures(dialog, str(wrapper.parameterValue() or ""))
+                if new is not None:
+                    wrapper.setParameterValue(new, panel.processing_context)
+
+            edit.clicked.connect(lambda _checked=False: open_table())
+            buttons.addStretch(1)
+            buttons.addWidget(edit)                     # at the right, apart from the show/hide buttons
+        else:
+            buttons.addStretch(1)
+        column.addWidget(row)
+
+        def refresh_summary(*_args):
+            values = {}
+            for name, wrapper in wrappers.items():
+                try:
+                    values[name] = wrapper.parameterValue()
+                except Exception:               # a widget part-way through an update has no value yet
+                    continue
+            values["SYN_GENERATE"] = bool(values.get("SYN_GENERATE"))
+            text = "\n".join(setup_summary(values, unit=getattr(dialog, "_length_unit", "m")))
+            summary.setText(text or "Choose surfaces to render.")
+
+        for wrapper in wrappers.values():
+            if hasattr(wrapper, "widgetValueHasChanged"):
+                wrapper.widgetValueHasChanged.connect(refresh_summary)
+        layout.insertWidget(0, bar)
+        refresh_summary()
+        dialog._setup_summary = refresh_summary          # kept alive with the dialog; tests call it after setParameters
 
     def _road_half(self, p, c):
         """Half the road section plus the batter search: the ground a generated road can reach on each side."""
@@ -681,15 +789,19 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             fb.pushInfo(message)
         return median
 
-    def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor, wanted, first=True, horizontal_unit="meter", vertical_unit="meter", station_unit="meter"):
-        """Add a synthetic finished road along an alignment's profile, cut into the ground meshes."""
+    def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor, wanted, first=True, horizontal_unit="meter", vertical_unit="meter", station_unit="meter",
+                   source=None):
+        """Add a synthetic finished road along an alignment's profile, cut into the ground meshes.
+
+        ``source`` (name, centre, stations, at_grade) gives a centreline already in the output CRS instead of an alignment
+        of the LandXML file: a road from another LandXML file or a line layer. ``at_grade`` builds it on the smoothed ground."""
         from .landxml.grading import volume_summary
         from .landxml.structures import (MeshBuilder, bridge, carve_channels, culvert, for_road, low_points,
                                          read_schedule_csv, read_schedule_text)
         from .landxml.synthetic_corridor import _normals as corridor_normals, synthetic_corridor
         from .landxml.tin_overlay import depth_tin
 
-        if not path:
+        if not path and source is None:
             raise QgsProcessingException("A synthetic corridor needs the LandXML file with the alignment and profile.")
         h = LINEAR_UNITS[horizontal_unit.lower()][0]
         v = LINEAR_UNITS[vertical_unit.lower()][0]
@@ -698,10 +810,16 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         station_metres = LINEAR_UNITS[station_unit.lower()][0]
         length_label = LINEAR_UNITS[horizontal_unit.lower()][1]
         depth_label = LINEAR_UNITS[vertical_unit.lower()][1]
-        name = match_name(read_catalog(path).alignments, wanted, "alignment")
-        lines = centerlines_3d(path, 2.0, name, fb.pushInfo, fb.isCanceled, max_step=2.0)
-        at_grade = False
-        if lines:
+        if source is not None:
+            name, centre, stations, at_grade = source
+            lines = None
+        else:
+            name = match_name(read_catalog(path).alignments, wanted, "alignment")
+            lines = centerlines_3d(path, 2.0, name, fb.pushInfo, fb.isCanceled, max_step=2.0)
+            at_grade = False
+        if source is not None:
+            pass
+        elif lines:
             _n, start_station, _e, stored = lines[0]
         else:
             if not self.parameterAsBool(p, "SYN_AT_GRADE", c):
@@ -718,8 +836,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             stored = np.column_stack([plan, np.zeros(len(plan))])
             start_station = float(found[0].get("sta_start") or 0.0)
             at_grade = True
-        centre = transform_vertices(stored, method=method, **params)
-        stations = start_station + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
+        if source is None:
+            centre = transform_vertices(stored, method=method, **params)
+            stations = start_station + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
         if area is not None:
             inside = area.keep_points(centre)
             if inside.sum() < 2:
@@ -757,7 +876,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         if first:
             fb.pushInfo("Synthetic corridors run their side slopes out to "
                         + " then ".join(f"'{m[1]}'" for m in (picked or grounds[:1])) + ".")
-        if grounds[0][2] == "raster" and first and not at_grade:
+        if grounds[0][2] == "raster" and first and not at_grade and source is None:
             shift = self._dem_offset(path, name, centre, stations, ground, fb)
             if shift is not None and self.parameterAsBool(p, "SYN_MATCH_PROFILE", c):
                 for index, mesh in enumerate(meshes):
@@ -821,7 +940,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                     weight = 1.0 - np.abs(stations[near] - edge_station) / blend
                     centre[near, 2] = centre[near, 2] * (1.0 - weight) + edge_z * weight
             fb.pushInfo(f"{item['id']}: deck from {z_a:g} to {z_b:g} between {a:.1f} and {b:.1f}.")
-        if self.parameterAsBool(p, "SYN_FIT_PROFILE", c) and not at_grade:
+        if self.parameterAsBool(p, "SYN_FIT_PROFILE", c) and not at_grade and source is None:
             profile = self._ground_profile(path, name)
             if profile is None:
                 fb.pushWarning(f"Alignment '{name}' has no surveyed ground profile; the ground is not fitted to it.")
@@ -859,6 +978,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         shoulder = self.parameterAsDouble(p, "SYN_SHOULDER", c)
         lanes = int(self.parameterAsDouble(p, "SYN_LANES", c))
         ground_index = TinIndex(*ground)
+        self._synthetic_paths.append((name, centre.copy(), np.asarray(stations, float).copy(), station_unit))
         xyz, faces, station, offset, daylight = synthetic_corridor(
             centre, stations, ground_index, width, shoulder,
             self.parameterAsDouble(p, "SYN_CAMBER", c) / 100.0, self.parameterAsDouble(p, "SYN_SHOULDER_FALL", c) / 100.0,
@@ -980,6 +1100,14 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 oxyz, ofaces = self._synthetic_structures
                 sxyz, sfaces = np.vstack([oxyz, sxyz]), np.vstack([ofaces, sfaces + len(oxyz)])
             self._synthetic_structures = (sxyz, sfaces)
+            groups = getattr(self, "_synthetic_groups", None)
+            if groups is None:
+                groups = self._synthetic_groups = {}
+            for tag, (gxyz, gfaces) in builder.result_by_tag().items():
+                if tag in groups:
+                    oxyz, ofaces = groups[tag]
+                    gxyz, gfaces = np.vstack([oxyz, gxyz]), np.vstack([ofaces, gfaces + len(oxyz)])
+                groups[tag] = (gxyz, gfaces)
         if channels and self.parameterAsBool(p, "SYN_CHANNELS", c):
             for index, mesh in enumerate(meshes):
                 if mesh[2] in ("surface", "raster"):
@@ -1053,9 +1181,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 continue
             gxyz, gfaces = mesh[3], mesh[4]
             original = (np.asarray(gxyz, float), np.asarray(gfaces, np.int64))
+            cap = edge_refinement_cap(budget, meshes, index, len(gfaces))
             for xyz, faces, target in cuts:
                 gxyz, gfaces = refine_near(gxyz, gfaces, (xyz, faces), target)
-                gxyz, gfaces = refine_edges(gxyz, gfaces, (xyz, faces))
+                gxyz, gfaces = refine_edges(gxyz, gfaces, (xyz, faces), max_faces=cap)
             under = footprint_index.sample(gxyz)
             inside = np.isfinite(under)
             removed = inside[gfaces].all(axis=1)
@@ -1076,6 +1205,200 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 if len(keep):
                     kxyz, keep, _used = _compact(snapped, keep)
                     meshes[index] = (*mesh[:3], kxyz, keep, *mesh[5:])
+
+    def _vegetation(self, p, c, fb, crs, area, meshes, extra_footprint=None):
+        """Plants from the vegetation layers: polygons are planted on a jittered grid, points are single plants. They stay clear
+        of the designs, stand on the ground and are thinned to a quarter of the triangle budget. Returns (xyz, heights,
+        crowns) in output units, or None."""
+        layers = self.parameterAsLayerList(p, "VEGETATION", c)
+        if not layers:
+            return None
+        spacing = self.parameterAsDouble(p, "VEG_SPACING", c)
+        height = self.parameterAsDouble(p, "VEG_HEIGHT", c)
+        clear = self.parameterAsDouble(p, "VEG_CLEAR", c)
+        style = self.parameterAsEnum(p, "VEG_STYLE", c) if "VEG_STYLE" in p else 0
+        limit = veg.limit_for(int(self.parameterAsDouble(p, "MAX_TRIANGLES", c)), style)
+        grounds = [TinIndex(m[3], m[4]) for m in meshes if m[2] in ("surface", "raster")]
+        if not grounds:
+            fb.pushWarning("Vegetation needs a ground surface to stand on; no plants drawn.")
+            return None
+        chunks, planted_by, seed = [], {}, 0
+        for layer in layers:
+            kind = QgsWkbTypes.geometryType(layer.wkbType())
+            if kind not in (QgsWkbTypes.GeometryType.PolygonGeometry, QgsWkbTypes.GeometryType.PointGeometry):
+                fb.pushWarning(f"Vegetation layer '{layer.name()}' is a line layer: use polygons (planted) or points (single plants).")
+                continue
+            transform = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance())
+            rect = QgsCoordinateTransform(crs, layer.crs(), QgsProject.instance()).transformBoundingBox(QgsRectangle(*area.box[:2], *area.box[2:]))
+            count = 0
+            for feature in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+                geometry = QgsGeometry(feature.geometry())
+                if geometry.isEmpty():
+                    continue
+                geometry.transform(transform)
+                for part in geometry.constParts():
+                    if kind == QgsWkbTypes.GeometryType.PointGeometry:
+                        found = np.array([[part.x(), part.y()]], float)
+                    else:
+                        rings = [np.array([[v.x(), v.y()] for v in part.exteriorRing()], float)]
+                        rings += [np.array([[v.x(), v.y()] for v in part.interiorRing(i)], float) for i in range(part.numInteriorRings())]
+                        seed += 1
+                        found = veg.scatter(rings, spacing, seed, area.box[:4])
+                    if len(found):
+                        chunks.append(found)
+                        count += len(found)
+            planted_by[layer.name()] = count
+        points = np.vstack(chunks) if chunks else np.empty((0, 2))
+        points = points[area.keep_points(points)] if len(points) else points
+        planted = len(points)
+        designs = [m for m in meshes if m[2] == "design"]
+        if extra_footprint is not None:
+            designs = designs + [(None, None, "design", extra_footprint[0], extra_footprint[1])]
+        if designs and len(points):
+            offsets = np.cumsum([0] + [len(m[3]) for m in designs[:-1]])
+            footprint = TinIndex(np.vstack([m[3] for m in designs]), np.vstack([m[4] + o for m, o in zip(designs, offsets)]))
+            points = points[veg.clear_of(points, footprint, clear)]
+        near_designs = planted - len(points)
+        z = np.full(len(points), np.nan)
+        for ground in grounds:
+            missing = np.isnan(z)
+            if not missing.any():
+                break
+            z[missing] = sample_tin(ground, points[missing])
+        standing = np.isfinite(z)
+        points, z = points[standing], z[standing]
+        off_ground = planted - near_designs - len(points)
+        total = len(points)
+        keep = veg.thin(total, limit, 1)
+        points, z = points[keep], z[keep]
+        kinds = veg.plant_kinds(len(points), style, 11)
+        metres = LINEAR_UNITS[HORIZONTAL_UNITS.get(crs.mapUnits(), "meter").lower()][0]
+        heights, crowns = veg.plant_sizes(kinds, spacing, height, 1.0 / metres if metres else 1.0, 7)
+        detail = ", ".join(f"{name}: {n:,}" for name, n in planted_by.items())
+        shrubs = int((kinds == veg.SHRUB).sum())
+        fb.pushInfo(f"Vegetation ({veg.STYLES[style].lower()}): {len(points) - shrubs:,} grass clumps and {shrubs:,} shrubs ({detail}), kept {clear:g} clear of roads and designs"
+                    + (f"; {near_designs:,} removed near them" if near_designs else "")
+                    + (f"; {off_ground:,} outside the ground surface left out" if off_ground else "") + ".")
+        if total > limit:
+            fb.pushWarning(f"Vegetation thinned from {total:,} to {limit:,} plants (a quarter of the triangle budget; a grass clump is "
+                           f"{veg.PLANT_TRIANGLES[veg.GRASS]} triangles, a shrub {veg.PLANT_TRIANGLES[veg.SHRUB]}). Raise the budget or the spacing to choose.")
+        if not len(points):
+            return None
+        return np.column_stack([points, z]), heights, crowns, kinds
+
+    def _other_roads(self, p, c, fb, crs, method, params, unit):
+        """Centrelines (name, xyz in the output CRS, stations, at grade) of the roads from the other LandXML files and line
+        layers. A LandXML alignment with a design profile keeps it; anything else is built on the smoothed ground."""
+        from .landxml.geometry import read_alignments
+
+        found = []
+        for extra in [f for f in (self.parameterAsFileList(p, "EXTRA_LANDXML", c) or []) if f]:
+            if not os.path.isfile(extra):
+                raise QgsProcessingException(f"Other road file not found: {extra}")
+            profiled = {}
+            for name, start, _e, stored in centerlines_3d(extra, 2.0, None, fb.pushInfo, fb.isCanceled, max_step=2.0):
+                profiled[name] = (start, stored)
+            alignments, _unsupported = read_alignments(extra, 2.0)
+            for item in alignments:
+                name = item["name"]
+                if name in profiled:
+                    start, stored = profiled[name]
+                    at_grade = False
+                else:
+                    plan = np.asarray(item["points"], float)[:, :2]
+                    plan = _densify(plan[np.r_[True, np.hypot(*np.diff(plan, axis=0).T) > 1e-6]], 2.0)
+                    stored = np.column_stack([plan, np.zeros(len(plan))])
+                    start, at_grade = float(item.get("sta_start") or 0.0), True
+                centre = transform_vertices(stored, method=method, **params)
+                stations = start + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
+                found.append((name, centre, stations, at_grade))
+            fb.pushInfo(f"{os.path.basename(extra)}: {len(alignments)} alignment(s), {len(profiled)} with a design profile.")
+        for layer in self.parameterAsLayerList(p, "DRIVE_LINES", c):
+            if QgsWkbTypes.geometryType(layer.wkbType()) != QgsWkbTypes.GeometryType.LineGeometry:
+                fb.pushWarning(f"Road layer '{layer.name()}' is not a line layer; skipped.")
+                continue
+            transform = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance())
+            parts = []
+            for feature in layer.getFeatures():
+                geometry = QgsGeometry(feature.geometry())
+                if geometry.isEmpty():
+                    continue
+                geometry.transform(transform)
+                parts += [np.array([[v.x(), v.y()] for v in part], float) for part in geometry.constParts()]
+            for k, plan in enumerate(parts):
+                plan = plan[np.r_[True, np.hypot(*np.diff(plan, axis=0).T) > 1e-6]] if len(plan) > 1 else plan
+                if len(plan) < 2:
+                    continue
+                plan = _densify(plan, 2.0)
+                stations = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(plan, axis=0).T))])
+                found.append((layer.name() if len(parts) == 1 else f"{layer.name()} {k + 1}",
+                              np.column_stack([plan, np.zeros(len(plan))]), stations, True))
+        return found
+
+    def _waterways(self, p, c, fb, crs, area, meshes, writer, unit_label):
+        """Ribbons along the waterway lines: each line is draped on the ground, the level never rises downstream (the
+        line is digitised in the flow direction) and the strip is flat across."""
+        layers = self.parameterAsLayerList(p, "WATERWAYS", c)
+        if not layers:
+            return
+        width = self.parameterAsDouble(p, "WATER_WIDTH", c)
+        grounds = [TinIndex(m[3], m[4]) for m in meshes if m[2] in ("surface", "raster")]
+        if not grounds:
+            fb.pushWarning("Waterways need a ground surface to follow; no water drawn.")
+            return
+        pieces, length, flipped = [], 0.0, 0
+        for layer in layers:
+            if QgsWkbTypes.geometryType(layer.wkbType()) != QgsWkbTypes.GeometryType.LineGeometry:
+                fb.pushWarning(f"Waterway layer '{layer.name()}' is not a line layer; skipped.")
+                continue
+            transform = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance())
+            rect = QgsCoordinateTransform(crs, layer.crs(), QgsProject.instance()).transformBoundingBox(QgsRectangle(*area.box[:2], *area.box[2:]))
+            for feature in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
+                geometry = QgsGeometry(feature.geometry())
+                if geometry.isEmpty():
+                    continue
+                geometry.transform(transform)
+                for part in geometry.constParts():
+                    line = wtr.densify(np.array([[v.x(), v.y()] for v in part], float), max(width, 1.0))
+                    if len(line) < 2:
+                        continue
+                    z = np.full(len(line), np.nan)
+                    for ground in grounds:
+                        missing = np.isnan(z)
+                        if not missing.any():
+                            break
+                        z[missing] = sample_tin(ground, line[missing])
+                    line, z, turned = wtr.orient_downhill(line, z)          # water runs downhill, whichever way the line was drawn
+                    flipped += int(turned)
+                    # only the stretches over the ground surface are drawn; a gap splits the river into pieces
+                    on = np.isfinite(z)
+                    start = 0
+                    while start < len(line):
+                        if not on[start]:
+                            start += 1
+                            continue
+                        stop = start
+                        while stop + 1 < len(line) and on[stop + 1]:
+                            stop += 1
+                        if stop > start:
+                            seg = line[start:stop + 1]
+                            xyz, faces = wtr.ribbon(seg, wtr.downstream_levels(z[start:stop + 1]), width)
+                            if len(faces):
+                                pieces.append((xyz, faces))
+                                length += float(np.hypot(*np.diff(seg, axis=0).T).sum())
+                        start = stop + 1
+        if not pieces:
+            fb.pushWarning("No waterway runs over the ground surface of the scene; no water drawn.")
+            return
+        offsets = np.cumsum([0] + [len(x) for x, _f in pieces[:-1]])
+        xyz = np.vstack([x for x, _f in pieces])
+        faces = np.vstack([f + o for (_x, f), o in zip(pieces, offsets)])
+        style = ss.resolve(ss.parse_style("plain #4f9fd6"), None, unit_label)
+        style["classes"][0]["label"] = "Waterway"
+        writer.surface(f"water{len(writer.scene['surfaces'])}", "Waterway", "water", xyz, faces,
+                       np.tile(np.array([0x4f, 0x9f, 0xd6], np.uint8), (len(xyz), 1)), style, opacity=0.78, lift=0.05)
+        fb.pushInfo(f"Waterways: {length:,.0f} of line drawn as a {width:g} wide ribbon; the level never rises downstream"
+                    + (f" ({flipped} line{'s' if flipped != 1 else ''} turned round to run downhill)." if flipped else "."))
 
     # ------------------------------------------------------------------ run
     def processAlgorithm(self, p, c, fb):
@@ -1109,6 +1432,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self._corridor_name = None
         self._synthetic_extra = {}
         self._synthetic_structures = None
+        self._synthetic_groups = {}
         self._synthetic_views = []
         self._synthetic_cuts = []
         self._synthetic_labels = []
@@ -1177,8 +1501,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             if mesh[1] not in cutouts:
                 continue
             base, faces = mesh[3], mesh[4]
+            cap = edge_refinement_cap(budget, meshes, index, len(faces))
             for dxyz, dfaces in cutouts[mesh[1]]:          # ground triangles across a design's edge are split finely,
-                base, faces = refine_edges(base, faces, (dxyz, dfaces))   # so the cut edge is not jagged
+                base, faces = refine_edges(base, faces, (dxyz, dfaces), max_faces=cap)   # so the cut edge is not jagged, within the budget
             mesh = (*mesh[:3], base, faces, *mesh[5:])
             xyz = base.copy()
             removed = np.zeros(len(faces), bool)
@@ -1209,6 +1534,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         wanted_roads = self._road_names(p, c, fb)
         built, outside = 0, []
         self._built_roads = []
+        self._synthetic_paths = []
         for synthetic_name in wanted_roads:
             try:
                 self._synthetic(p, c, fb, path, method, params, area, meshes, unders, vertical_factor, synthetic_name,
@@ -1217,11 +1543,24 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 self._built_roads.append(synthetic_name)
             except _OutsideArea as error:          # one of several roads may lie beyond a limited area
                 outside.append(str(error))
-        if not wanted_roads and path and read_catalog(path).alignments:
+        beyond = []
+        others = self._other_roads(p, c, fb, crs, method, params, horizontal)
+        for source in others:
+            try:
+                self._synthetic(p, c, fb, path, method, params, area, meshes, unders, vertical_factor, source[0],
+                                first=not built, horizontal_unit=horizontal, vertical_unit=vertical,
+                                station_unit=horizontal, source=source)
+                built += 1
+                self._built_roads.append(source[0])
+            except _OutsideArea:                        # another road file can reach well beyond the scene
+                beyond.append(source[0])
+        if beyond:
+            fb.pushInfo("Other roads outside the scene area, left out: " + ", ".join(f"'{n}'" for n in beyond) + ".")
+        if not wanted_roads and not self._built_roads and path and read_catalog(path).alignments:
             fb.pushInfo("Terrain scene only: no feasibility road generated (tick 'Generate a feasibility road' and "
                         "choose its alignments to build one; the scene-area alignment only limits the area).")
         elif built:
-            fb.pushInfo(f"Feasibility roads generated: {built} of {len(wanted_roads)} ("
+            fb.pushInfo(f"Feasibility roads generated: {built} of {len(wanted_roads) + len(others)} ("
                         + ", ".join(f"'{n}'" for n in self._built_roads) + ").")
         if outside:
             if not built:
@@ -1327,6 +1666,13 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         size = math.hypot(area.box[2] - area.box[0], area.box[3] - area.box[1])
         step = max(size / 800.0, 0.5)
 
+        def over_surface(points):
+            """Where a drive path has ground or a design under it: elsewhere the camera would hang in the air."""
+            found = np.zeros(len(points), bool)
+            for tin in drapes:
+                found |= np.isfinite(sample_tin(tin, np.asarray(points)[:, :2]))
+            return found
+
         # ---- LandXML linework
         if path and self.parameterAsBool(p, "ALIGNMENTS", c) and read_catalog(path).alignments:
             profiled = {name: (start_, stored) for name, start_, _e, stored in centerlines_3d(path, 2.0, None, fb.pushInfo, fb.isCanceled, max_step=5.0)}
@@ -1339,7 +1685,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                     first_station, stored = profiled[name]
                     line3 = transform_vertices(stored, method=method, **params)
                     along = first_station + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
-                    inside = area.keep_points(line3)
+                    inside = area.keep_points(line3) & over_surface(line3)
                     for run in np.split(np.arange(len(line3)), np.flatnonzero(np.diff(inside.astype(int))) + 1):
                         if inside[run[0]] and len(run) > 1:      # paths for the viewer's drive-through
                             writer.path(name, line3[run], along[run], doc.horizontal_unit)
@@ -1352,6 +1698,12 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 for run in _runs_inside(line3, area):
                     writer.line("alignment", name, run, {"alignment": name, "profile": name in profiled},
                                 color="#c2185b" if name in profiled else "#7a3b5e", width=3, lift=0.15)
+                    if name not in profiled and name not in written_paths and len(run) > 1 \
+                            and name not in {item[0] for item in getattr(self, "_synthetic_paths", [])}:
+                        # a road without a profile can still be driven: on the ground, smoothed
+                        points3, stations3 = ground_drive_path(run)
+                        writer.path(f"{name} (on the ground)", points3, stations3, doc.horizontal_unit if doc else None)
+                        written_paths.add(name)
                 if every > 0 and sta0 not in (None, ""):
                     plan = transform_vertices(np.array([[x, y, 0.0] for x, y in pts]), method=method, **params)
                     start = float(sta0)
@@ -1483,12 +1835,19 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             style["classes"][0]["label"] = "Raised polygons and poles"
             writer.surface("solids", "Buildings and structures", "solid", sxyz, sfaces,
                            np.tile(np.array([0xd9, 0xd4, 0xc7], np.uint8), (len(sxyz), 1)), style)
-        if getattr(self, "_synthetic_structures", None):
-            sxyz, sfaces = self._synthetic_structures
-            style = ss.resolve(ss.parse_style("plain #bdb9b0"), None, unit_label)
-            style["classes"][0]["label"] = "Concept structures"
-            writer.surface("structures", "Structures (concept)", "solid", sxyz, sfaces,
-                           np.tile(np.array([0xbd, 0xb9, 0xb0], np.uint8), (len(sxyz), 1)), style)
+        shades = {"Bridge deck": (0xc9, 0xc5, 0xbb), "Piers and abutments": (0xa7, 0xa2, 0x98), "Pile caps": (0x8a, 0x85, 0x7c),
+                  "Structures (concept)": (0xbd, 0xb9, 0xb0)}
+        for tag, (sxyz, sfaces) in (getattr(self, "_synthetic_groups", None) or {}).items():
+            if not len(sfaces):
+                continue
+            shade = shades.get(tag, shades["Structures (concept)"])
+            style = ss.resolve(ss.parse_style("plain #%02x%02x%02x" % shade), None, unit_label)
+            style["classes"][0]["label"] = tag
+            writer.surface("structures" if tag == "Structures (concept)" else "structures_" + tag.lower().replace(" ", "_"), tag, "solid",
+                           sxyz, sfaces, np.tile(np.array(shade, np.uint8), (len(sxyz), 1)), style)
+        trees = self._vegetation(p, c, fb, crs, area, meshes)
+        if trees is not None:
+            writer.vegetation(*trees)
         # ---- water at given levels
         for part in (self.parameterAsString(p, "WATER", c) or "").split(";"):
             if not part.strip():
@@ -1508,6 +1867,15 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             writer.surface(f"water{len(writer.scene['surfaces'])}", f"Water {level:g} ({target[1]})", "water", wxyz, wfaces,
                            np.tile(np.array([0x4f, 0x9f, 0xd6], np.uint8), (len(wxyz), 1)), style, opacity=0.72, lift=0.02)
 
+        for name, centre, stations, station_unit in getattr(self, "_synthetic_paths", []):
+            if name not in written_paths and len(centre) > 1:         # roads built on the ground can be driven too
+                keep = over_surface(centre)
+                if keep.sum() > 1:
+                    first, last = np.flatnonzero(keep)[[0, -1]]
+                    writer.path(name, centre[first:last + 1], stations[first:last + 1], station_unit)
+                    written_paths.add(name)
+        self._waterways(p, c, fb, crs, area, meshes, writer, unit_label)
+
         view_text = self.parameterAsString(p, "VIEWS", c)
         focus = np.vstack([m[3] for m in meshes if m[2] == "design"] or [all_xyz])
         low, high = focus.min(axis=0), focus.max(axis=0)
@@ -1519,7 +1887,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                          f"along: {-ax:.3f}, {-ay:.3f}, 0.25")
             size = 1.3 * max(np.ptp(focus[:, 0] * ax + focus[:, 1] * ay), 1.0)
         if road_path is not None and road_path[0] not in written_paths:
-            inside = area.keep_points(road_path[1])
+            inside = area.keep_points(road_path[1]) & over_surface(road_path[1])
             if inside.sum() > 1:
                 writer.path(road_path[0], road_path[1][inside], road_path[2][inside], doc.horizontal_unit)
         views = parse_views(view_text)
@@ -1553,4 +1921,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         viewer = write_viewer(os.path.dirname(scene), writer.scene, title=title)
         fb.pushInfo(f"Scene: {len(writer.scene['surfaces'])} surfaces ({total:,} triangles), {len(writer.scene['lines']):,} lines, "
                     f"{len(writer.scene['labels'])} labels. Open {viewer} in a web browser.")
+        if total > PHONE_TRIANGLES:
+            phone = write_viewer(os.path.dirname(scene), writer.scene, path=os.path.join(os.path.dirname(scene), "viewer_phone.html"),
+                                 title=title, max_triangles=PHONE_TARGET)
+            fb.pushInfo(f"The scene is large ({total:,} triangles): {os.path.basename(phone)} has the ground thinned to about "
+                        f"{PHONE_TARGET:,} triangles for phones and tablets. Designs, structures and water are kept whole.")
         return {"OUTPUT_FOLDER": os.path.dirname(scene), "SCENE": scene, "VIEWER": viewer}

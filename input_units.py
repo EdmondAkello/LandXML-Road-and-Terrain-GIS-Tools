@@ -14,7 +14,7 @@ DEPTHS = set(
     "HIGH_FILL DEEP_CUT MAX_CHANGE FREEBOARD STAGE_STEP RIM_LEVEL TOPSOIL_DEPTH TIE_TOLERANCE MIN_STEP HEIGHT_BANDS DEPTH_BANDS CONTOURS CONTOUR_INTERVAL RASTER_CONTOURS WATER EXTRUDE_HEIGHT EXTRUDE_FIELD NODATA".split()
 )
 OUTPUT_LENGTHS = set(
-    "DX DY RESOLUTION CORRIDOR_WIDTH SYN_CARRIAGEWAY SYN_SHOULDER SYN_MAX_WIDTH SYN_BRIDGE_SPAN SYN_FIT_WIDTH CONTEXT_MARGIN CAMERA_DISTANCE ROAD_WIDTH".split()
+    "DX DY RESOLUTION CORRIDOR_WIDTH SYN_CARRIAGEWAY SYN_SHOULDER SYN_MAX_WIDTH SYN_BRIDGE_SPAN SYN_FIT_WIDTH CONTEXT_MARGIN CAMERA_DISTANCE ROAD_WIDTH VEG_SPACING VEG_HEIGHT VEG_CLEAR WATER_WIDTH".split()
 )
 VOLUMES = {"CIVIL3D_CUT", "CIVIL3D_FILL", "REQUIRED_VOLUME"}
 STYLES = {
@@ -144,11 +144,13 @@ def input_labels(algorithm, values, horizontal=None, vertical=None):
 
 def connect_unit_labels(dialog, algorithm):
     """Refresh actual units on existing QGIS labels, including advanced inputs."""
+    from .compat import panel_wrappers
+
     from qgis.PyQt.QtWidgets import QLabel
 
     panel = dialog.mainWidget()
     labels = {}
-    for name, wrapper in panel.wrappers.items():
+    for name, wrapper in panel_wrappers(panel).items():
         basis = unit_basis(algorithm.name(), name)
         if not basis:
             continue
@@ -171,7 +173,7 @@ def connect_unit_labels(dialog, algorithm):
     def refresh(*_args):
         values = {
             n: w.parameterValue()
-            for n, w in panel.wrappers.items()
+            for n, w in panel_wrappers(panel).items()
             if n
             in {
                 "INPUT",
@@ -203,6 +205,6 @@ def connect_unit_labels(dialog, algorithm):
         "STANDARD",
         "CRITERIA_FILE",
     ):
-        if name in panel.wrappers:
-            panel.wrappers[name].widgetValueHasChanged.connect(refresh)
+        if name in panel_wrappers(panel):
+            panel_wrappers(panel)[name].widgetValueHasChanged.connect(refresh)
     refresh()
