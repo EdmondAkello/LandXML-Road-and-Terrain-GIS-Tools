@@ -818,6 +818,52 @@ class QgisProcessingTests(unittest.TestCase):
         band.WriteArray(grid); ds = None
         return str(path), str(tif)
 
+    def test_road_generation_switch_auto_width_and_restricted_area(self):
+        from qgis.core import QgsProcessingFeedback, QgsRectangle
+
+        class Recorder(QgsProcessingFeedback):
+            def __init__(self):
+                super().__init__()
+                self.text, self.warnings = [], []
+
+            def pushInfo(self, info):
+                self.text.append(info)
+
+            def pushWarning(self, warning):
+                self.warnings.append(warning)
+
+        algorithm = self.algorithms["landxml_3d_scene"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, _tif = self._road_scene_files(directory)
+            base = dict(self._params(path, "EPSG:26915"), METHOD=1, SURFACES="EG", RASTERS=[], CONTOURS="", WATER="",
+                        SYNTHETIC="Main", SYN_GROUND="EG", SYN_CARRIAGEWAY=6.0, SYN_SHOULDER=1.5, SYN_MAX_WIDTH=10.0)
+
+            def run(name, **extra):
+                log = Recorder()
+                result = algorithm.processAlgorithm(dict(base, OUTPUT_FOLDER=str(Path(directory) / name), **extra),
+                                                    self.context, log)
+                return result, "\n".join(log.text), "\n".join(log.warnings)
+
+            with self.assertRaises(QgsProcessingException) as caught:      # ticked with nothing chosen: incomplete
+                run("blank", SYN_GENERATE=True, SYNTHETIC="")
+            self.assertIn("no road alignment is chosen", str(caught.exception))
+            _r, text, _w = run("off", SYN_GENERATE=False)                     # off: terrain only, said so
+            self.assertIn("'Generate a feasibility road' is off: 'Main' not generated", text)
+            self.assertNotIn("Feasibility roads generated", text)
+            _r, text, _w = run("old")                                         # no switch (old scripts): road built
+            self.assertIn("Feasibility roads generated: 1 of 1 ('Main')", text)
+            self.assertIn("strip 34 either side", text)                       # Auto: 3 + 1.5 + 10 + 20
+            _r, text, _w = run("manual", SYN_GENERATE=True, CORRIDOR_WIDTH=30.0)
+            self.assertIn("strip 30 either side of the generated road (manual width", text)
+            _r, text, _w = run("corridor", SYN_GENERATE=True, CORRIDOR="Main")
+            self.assertIn("34.5 either side of 'Main' (Auto, the generated road's section", text)
+            _r, text, _w = run("corridor60", SYN_GENERATE=True, CORRIDOR="Main", CORRIDOR_WIDTH=60.0)
+            self.assertNotIn("(Auto", text)                                   # an explicit width keeps its meaning
+            narrow = QgsRectangle(0.0, -8.0, 100.0, 8.0)                      # the road (along x) needs 14.5 each side
+            _r, text, warnings = run("narrow", SYN_GENERATE=True, AREA=narrow)
+            self.assertIn("'Main': the chosen area leaves less than 14.5 either side", warnings)
+            self.assertIn("The area is not widened", warnings)
+
     def test_feasibility_schedule_context_roads_cad_layers_and_road_strip(self):
         from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsProcessingFeedback, QgsVectorLayer
         from landxml_plugin.landxml.scene import load_scene, read_ply

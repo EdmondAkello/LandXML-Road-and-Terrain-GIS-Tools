@@ -47,6 +47,8 @@ from .project_settings import ProjectSettingsAlgorithm
 from .road_features import _alignment_parts, _param_coordinates, centerlines_3d, merge_parts
 
 GROUP = "8. Reports and sheets"
+AUTO_MARGIN = 20.0       # surrounding terrain beyond a generated road's batter search (output units)
+AUTO_CORRIDOR = 60.0     # Auto width either side of a scene-area alignment that is not a generated road
 DEFAULT_VIEWS = "sw: -0.6, -0.8, 0.55; se: 0.8, -0.5, 0.6"
 GROUP_ID = "reports"
 SURFACE_COLOURS = ["#cfd8c4", "#b8c7d9", "#d9c7b8", "#c4d8d3", "#d8d0c4"]
@@ -286,8 +288,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             "Builds a 3D scene of an area from LandXML surfaces, DEM rasters and linework, and writes it as an "
             "interactive viewer (viewer.html: opens offline in any current browser, nothing to install) with "
             "scene.json and PLY meshes for other renderers.\n\n"
-            "Area: a map extent, a polygon layer, or a corridor (an alignment and a width). Without one, the "
-            "chosen surfaces' extent is used.\n"
+            "Scene area: a map extent, a polygon layer, or an alignment and a terrain width each side (0 = Auto). "
+            "This only limits what is shown; it never generates a road. Without one, the chosen surfaces' extent is "
+            "used, or a strip along the generated roads.\n"
             "Surfaces: 'name = style; name = style', for example 'EG = plain #cfd8c4; FG = slope' or "
             "'FG = depth over EG' (cut and fill against another surface). Styles: elevation, slope, depth, aspect, "
             "'attribute: breaks | colours', 'elevation: equal 9 | terrain' or 'plain #rrggbb'.\n"
@@ -296,7 +299,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             "Linework: alignments (3D where a profile covers them, otherwise draped), station labels, LandXML "
             "feature lines and breaklines, and any QGIS line or polygon layers (their own Z, or draped on the first "
             "surface). A road style ('TOP = road: 7, 1.5, 2') is painted as a finished road and cuts the ground under it.\n"
-            "Synthetic road (feasibility): choose alignments with a profile but no corridor; a concept road is built "
+            "Feasibility road: already have a proposed terrain? Add it under surfaces. Otherwise tick 'Generate a "
+            "feasibility road' and choose alignments with a profile; a concept road is built "
             "on the profile (widths, crossfalls and slopes under Advanced) with side slopes run out to the chosen ground "
             "(surfaces or DEMs; the first wins). Structures come from a CSV schedule or typed entries such as "
             "'1+250 = box 3 x 2.0 x 2.0; 1+840 = pipe 2 x 0.9, skew 15; 1+364-2+293 = bridge, spans 7'. DEMs can be "
@@ -315,11 +319,11 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(QgsProcessingParameterExtent("AREA", "Area (map extent)", optional=True))
         self.addParameter(QgsProcessingParameterFeatureSource("AREA_LAYER", "Area (polygons)",
                                                               [QgsProcessing.SourceType.TypeVectorPolygon], optional=True))
-        self.addParameter(name_param("CORRIDOR", "Corridor: alignment name", "alignments"))
-        self.addParameter(number_param("CORRIDOR_WIDTH", "Corridor width either side (output units)", 60.0, 1.0, 1e5, decimals=1))
-        self.addParameter(QgsProcessingParameterNumber("STATION_FROM", "Corridor from station (blank = start)",
+        self.addParameter(name_param("CORRIDOR", "Limit scene area along alignment (scene coverage only; does not generate a road)", "alignments"))
+        self.addParameter(number_param("CORRIDOR_WIDTH", "Surrounding terrain width each side (0 = Auto)", 0.0, 0.0, 1e5, decimals=1))
+        self.addParameter(QgsProcessingParameterNumber("STATION_FROM", "Scene area from station (blank = start; also limits the first generated road)",
                                                        QgsProcessingParameterNumber.Type.Double, optional=True))
-        self.addParameter(QgsProcessingParameterNumber("STATION_TO", "Corridor to station (blank = end)",
+        self.addParameter(QgsProcessingParameterNumber("STATION_TO", "Scene area to station (blank = end)",
                                                        QgsProcessingParameterNumber.Type.Double, optional=True))
         for key, label, default in (("ALIGNMENTS", "Alignments", True), ("FEATURE_LINES", "LandXML feature lines and breaklines", True)):
             self.addParameter(QgsProcessingParameterBoolean(key, label, defaultValue=default))
@@ -327,41 +331,44 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(QgsProcessingParameterMultipleLayers("VECTORS", "Other layers: lines draped, points as poles, polygons (DXF: one toggle per CAD layer)",
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
         self.addParameter(number_param("STRETCH", "Long corridors: a view every (stations; 0 = none)", 1000.0, 0.0, 1e6, decimals=0))
+        self.addParameter(QgsProcessingParameterBoolean(
+            "SYN_GENERATE", "Generate a feasibility road (already have a proposed terrain? Add it under surfaces instead)",
+            defaultValue=False))
         self.addParameter(names_param(
-            "SYNTHETIC", "Synthetic road: alignments (concept road on the profile)", "alignments", ";"))
+            "SYNTHETIC", "Road alignment(s) to generate (a concept road on each profile)", "alignments", ";"))
         for key, label, default, lo, hi in (
-                ("SYN_CARRIAGEWAY", "Synthetic road: carriageway width", 7.0, 2.0, 60.0),
-                ("SYN_SHOULDER", "Synthetic road: shoulder width each side", 1.5, 0.0, 10.0),
-                ("SYN_LANES", "Synthetic road: lanes", 2.0, 1.0, 8.0),
-                ("SYN_CAMBER", "Synthetic road: carriageway crossfall (%)", 2.5, 0.0, 10.0),
-                ("SYN_SHOULDER_FALL", "Synthetic road: shoulder crossfall (%)", 4.0, 0.0, 15.0),
-                ("SYN_CUT_SLOPE", "Synthetic road: cut slope (horizontal per 1 vertical)", 1.5, 0.1, 10.0),
-                ("SYN_FILL_SLOPE", "Synthetic road: fill slope (horizontal per 1 vertical)", 2.0, 0.1, 10.0),
-                ("SYN_MAX_WIDTH", "Synthetic road: longest side slope (output units)", 40.0, 1.0, 500.0)):
+                ("SYN_CARRIAGEWAY", "Road: total carriageway width", 7.0, 2.0, 60.0),
+                ("SYN_SHOULDER", "Road: shoulder width each side", 1.5, 0.0, 10.0),
+                ("SYN_LANES", "Road: lanes (markings inside the carriageway)", 2.0, 1.0, 8.0),
+                ("SYN_CAMBER", "Road: carriageway crossfall (%)", 2.5, 0.0, 10.0),
+                ("SYN_SHOULDER_FALL", "Road: shoulder crossfall (%)", 4.0, 0.0, 15.0),
+                ("SYN_CUT_SLOPE", "Road: cut slope (H per 1 V)", 1.5, 0.1, 10.0),
+                ("SYN_FILL_SLOPE", "Road: fill slope (H per 1 V)", 2.0, 0.1, 10.0),
+                ("SYN_MAX_WIDTH", "Road: maximum batter search distance", 40.0, 1.0, 500.0)):
             self.addParameter(number_param(key, label, default, lo, hi, decimals=2))
         self.addParameter(names_param(
-            "SYN_GROUND", "Synthetic road: ground (first wins; blank = first surface)",
+            "SYN_GROUND", "Ground surface for road tie-ins (first wins; blank = first surface)",
             "surfaces", ",", layers_param="RASTERS"))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_BRIDGES", "Synthetic road: bridges where slopes miss the ground", defaultValue=True))
+            "SYN_BRIDGES", "Road: bridges where slopes miss the ground", defaultValue=True))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_AT_GRADE", "Synthetic road: roads without a profile follow the ground (smoothed; context roads)",
+            "SYN_AT_GRADE", "Road: alignments without a profile follow the ground (smoothed; context roads)",
             defaultValue=False))
-        self.addParameter(number_param("SYN_BRIDGE_SPAN", "Synthetic road: bridge span", 25.0, 5.0, 200.0, decimals=1))
+        self.addParameter(number_param("SYN_BRIDGE_SPAN", "Road: bridge span", 25.0, 5.0, 200.0, decimals=1))
         self.addParameter(QgsProcessingParameterFile(
-            "SYN_STRUCTURES_CSV", "Synthetic road: culvert and bridge schedule (CSV)", extension="csv", optional=True))
+            "SYN_STRUCTURES_CSV", "Road structures: culvert, bridge and pier schedule (CSV)", extension="csv", optional=True))
         self.addParameter(QgsProcessingParameterString(
-            "SYN_STRUCTURES", "Synthetic road: structures typed in (1+250 = box 3 x 2 x 2)",
+            "SYN_STRUCTURES", "Road structures typed in (1+250 = box 3 x 2 x 2)",
             defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_FIT_PROFILE", "Synthetic road: fit DEMs to the surveyed ground profile",
+            "SYN_FIT_PROFILE", "Road DEM correction: fit DEMs to the surveyed ground profile",
             defaultValue=False))
-        self.addParameter(number_param("SYN_FIT_WIDTH", "Synthetic road: profile fit fades out over", 60.0, 5.0, 1000.0,
+        self.addParameter(number_param("SYN_FIT_WIDTH", "Road DEM correction: profile fit fades out over", 60.0, 5.0, 1000.0,
                                        decimals=1))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_CHANNELS", "Synthetic road: cut a channel at each culvert", defaultValue=True))
+            "SYN_CHANNELS", "Road: cut a channel at each culvert", defaultValue=True))
         self.addParameter(QgsProcessingParameterBoolean(
-            "SYN_MATCH_PROFILE", "Synthetic road: shift DEMs to the surveyed ground profile", defaultValue=False))
+            "SYN_MATCH_PROFILE", "Road DEM correction: shift DEMs to the surveyed ground profile", defaultValue=False))
         self.addParameter(QgsProcessingParameterString("WATER", "Water levels ('surface = level; ...')", defaultValue="", optional=True))
         self.addParameter(QgsProcessingParameterString("EXTRUDE_FIELD", "Raise polygons by this height field", defaultValue="", optional=True))
         self.addParameter(number_param("EXTRUDE_HEIGHT", "Or raise all polygons by (0 = outlines only)", 0.0, 0.0, 1000.0, decimals=2))
@@ -392,6 +399,122 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         if p.get("OUTPUT_CRS") in (None, ""):
             raise QgsProcessingException("Choose an output CRS.")
         return "stored", self.parameterAsCrs(p, "OUTPUT_CRS", c), {}, None
+
+    # ------------------------------------------------------------------ dialog
+    ROAD_INPUTS = ("SYNTHETIC", "SYN_GROUND", "SYN_CARRIAGEWAY", "SYN_SHOULDER", "SYN_LANES", "SYN_CAMBER",
+                   "SYN_SHOULDER_FALL", "SYN_CUT_SLOPE", "SYN_FILL_SLOPE", "SYN_MAX_WIDTH", "SYN_BRIDGES",
+                   "SYN_AT_GRADE", "SYN_BRIDGE_SPAN", "SYN_STRUCTURES_CSV", "SYN_STRUCTURES", "SYN_FIT_PROFILE",
+                   "SYN_FIT_WIDTH", "SYN_CHANNELS", "SYN_MATCH_PROFILE")
+
+    def dialog_parameters(self, values):
+        """History and saved settings from before 'Generate a feasibility road' still build their road."""
+        if "SYN_GENERATE" not in values and str(values.get("SYNTHETIC") or "").strip():
+            return dict(values, SYN_GENERATE=True)
+        return values
+
+    def connect_dialog(self, dialog):
+        """Grey out the road inputs while road generation is off; their values are kept."""
+        wrappers = dialog.mainWidget().wrappers
+        switch = wrappers.get("SYN_GENERATE")
+        if switch is None:
+            return
+
+        def parts(wrapper):
+            found = []
+            for getter, attribute in (("wrappedWidget", "widget"), ("wrappedLabel", "label")):
+                item = getattr(wrapper, getter)() if hasattr(wrapper, getter) else None
+                if item is None:                       # Python wrappers (the name pickers) keep their own
+                    item = getattr(wrapper, attribute, None)
+                if item is not None and hasattr(item, "setEnabled"):
+                    found.append(item)
+            return found
+
+        box = parts(switch)[0] if parts(switch) else None
+        base = box.text() if box is not None and hasattr(box, "text") else ""
+
+        def refresh(*_args):
+            on = bool(switch.parameterValue())
+            for name in self.ROAD_INPUTS:
+                if name in wrappers:
+                    for item in parts(wrappers[name]):
+                        item.setEnabled(on)
+            if box is not None and hasattr(box, "setText") and base:
+                box.setText(base if on else f"{base} (off: terrain scene only, no road will be generated)")
+
+        width = wrappers.get("CORRIDOR_WIDTH")
+        spin = (width.wrappedWidget() if hasattr(width, "wrappedWidget") else None) if width is not None else None
+        if spin is not None and hasattr(spin, "setSpecialValueText"):
+            spin.setSpecialValueText("Auto")             # 0 shows as Auto; any other value is used as given
+        switch.widgetValueHasChanged.connect(refresh)
+        refresh()
+        dialog._road_refresh = refresh          # kept alive with the dialog; tests call it after setParameters
+
+    def _road_half(self, p, c):
+        """Half the road section plus the batter search: the ground a generated road can reach on each side."""
+        return (self.parameterAsDouble(p, "SYN_CARRIAGEWAY", c) / 2 + self.parameterAsDouble(p, "SYN_SHOULDER", c)
+                + self.parameterAsDouble(p, "SYN_MAX_WIDTH", c))
+
+    def _road_names(self, p, c, fb=None):
+        """The alignments to build feasibility roads on, honouring 'Generate a feasibility road'.
+
+        Scripts, models and history from before the switch have no SYN_GENERATE: a nonblank selection still
+        builds its road. An explicit tick with nothing chosen is an incomplete setup, not a terrain-only scene."""
+        names = [n.strip() for n in self.parameterAsString(p, "SYNTHETIC", c).split(";") if n.strip()]
+        if "SYN_GENERATE" not in p or p.get("SYN_GENERATE") is None:
+            return names
+        if not self.parameterAsBool(p, "SYN_GENERATE", c):
+            if names and fb is not None:
+                fb.pushInfo("'Generate a feasibility road' is off: " + ", ".join(f"'{n}'" for n in names)
+                            + " not generated (terrain scene only).")
+            return []
+        if not names:
+            raise QgsProcessingException("'Generate a feasibility road' is ticked but no road alignment is chosen: pick "
+                                         "the alignment(s) under 'Road alignment(s) to generate', or untick it for a "
+                                         "terrain-only scene.")
+        return names
+
+    def _check_room(self, p, c, fb, path, method, params, box, rings, roads, half):
+        """Warn where a chosen extent, polygon or corridor leaves a road less ground than its batters may need.
+
+        The area is never widened: a deliberate restriction stays as chosen."""
+        area = None
+        if rings:
+            polygons = [QgsGeometry.fromPolygonXY([[QgsPointXY(float(x), float(y)) for x, y in ring]]) for ring in rings]
+            area = QgsGeometry.unaryUnion([g for g in polygons if not g.isEmpty()])
+        if box is not None:
+            rect = QgsGeometry.fromRect(QgsRectangle(*box))
+            area = rect if area is None else area.intersection(rect)
+        if area is None or area.isEmpty():
+            return
+        inner = area.buffer(-half, 8)                   # where a road's centre has its whole reach inside
+        catalog = read_catalog(path).alignments
+        for wanted in roads:
+            try:
+                name = match_name(catalog, wanted, "alignment")
+            except QgsProcessingException:
+                continue
+            parts = _alignment_parts(path, 2.0, name)
+            points = merge_parts(parts[0][4]) if parts else []
+            if len(points) < 2:
+                continue
+            raw = np.array(points, float)
+            start = float(parts[0][2]) if parts[0][2] not in (None, "") else 0.0
+            along = start + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(raw[:, :2], axis=0).T))])
+            stations = np.unique(np.concatenate([along, np.arange(along[0], along[-1], 5.0)]))   # a check every 5
+            raw = np.column_stack([np.interp(stations, along, raw[:, 0]), np.interp(stations, along, raw[:, 1])])
+            plan = transform_vertices(np.column_stack([raw[:, :2], np.zeros(len(raw))]), method=method, **params)
+            here = [QgsPointXY(float(x), float(y)) for x, y, _z in plan]
+            inside = np.array([area.contains(pt) for pt in here])
+            if inside.sum() < 2:
+                continue                                  # off the area: reported later as outside
+            roomy = np.array([not inner.isEmpty() and inner.contains(pt) for pt in here])
+            short = inside & ~roomy
+            if short.any():
+                hit = stations[short]
+                fb.pushWarning(f"'{name}': the chosen area leaves less than {half:g} either side (half the section plus "
+                               f"the batter search) between {hit.min():.0f} and {hit.max():.0f}; side slopes there may "
+                               "stop at the area edge. The area is not widened: enlarge it, or set the terrain width to "
+                               "0 (Auto) with no extent or polygon.")
 
     def _area(self, p, c, path, method, params, crs, fb):
         rings = []
@@ -435,15 +558,22 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             plan = transform_vertices(np.column_stack([points, np.zeros(len(points))]), method=method, **params)
             chord = plan[-1, :2] - plan[0, :2]
             self._axis = chord / max(np.hypot(*chord), 1e-9)
-            buffer = QgsGeometry.fromPolylineXY([QgsPointXY(float(x), float(y)) for x, y, _z in plan]).buffer(
-                self.parameterAsDouble(p, "CORRIDOR_WIDTH", c), 8)
+            width = self.parameterAsDouble(p, "CORRIDOR_WIDTH", c)
+            if width <= 0:                                   # Auto: the road envelope when it is a generated road
+                is_road = any(name.lower() == r.lower() or name.lower().startswith(r.lower()) for r in self._road_names(p, c))
+                width = self._road_half(p, c) + AUTO_MARGIN if is_road else AUTO_CORRIDOR
+                fb.pushInfo(f"Scene area: {width:g} either side of '{name}' (Auto"
+                            + (", the generated road's section, batter search and margin)." if is_road else ")."))
+            buffer = QgsGeometry.fromPolylineXY([QgsPointXY(float(x), float(y)) for x, y, _z in plan]).buffer(width, 8)
             for polygon in (buffer.asMultiPolygon() if buffer.isMultipart() else [buffer.asPolygon()]):
                 rings += [[(pt.x(), pt.y()) for pt in ring] for ring in polygon]
-        roads = [t.strip() for t in self.parameterAsString(p, "SYNTHETIC", c).split(";") if t.strip()]
+        roads = self._road_names(p, c)
+        explicit = bool(rings) or box is not None
+        half_auto = self._road_half(p, c)
         if not rings and box is None and roads and path:
             # generated roads and no area chosen: a strip along the roads, not the whole DEM (issue #81)
-            half = (self.parameterAsDouble(p, "SYN_CARRIAGEWAY", c) / 2 + self.parameterAsDouble(p, "SYN_SHOULDER", c)
-                    + self.parameterAsDouble(p, "SYN_MAX_WIDTH", c) + 20.0)
+            manual = self.parameterAsDouble(p, "CORRIDOR_WIDTH", c)
+            half = manual if manual > 0 else half_auto + AUTO_MARGIN
             catalog = read_catalog(path).alignments
             buffers = []
             low, high = p.get("STATION_FROM"), p.get("STATION_TO")
@@ -470,7 +600,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 for polygon in (strip.asMultiPolygon() if strip.isMultipart() else [strip.asPolygon()]):
                     rings += [[(pt.x(), pt.y()) for pt in ring] for ring in polygon]
                 fb.pushInfo(f"Scene area: a strip {half:.0f} either side of the generated road{'s' if len(buffers) > 1 else ''} "
-                            "(no corridor, extent or area polygon chosen).")
+                            f"({'manual width' if manual > 0 else 'Auto: half the section + batter search + ' + format(AUTO_MARGIN, 'g')}; "
+                            "no corridor, extent or area polygon chosen).")
+        if explicit and roads and path:
+            self._check_room(p, c, fb, path, method, params, box, rings, roads, half_auto)
         if rings:
             stack = np.vstack([np.asarray(r) for r in rings])
             ring_box = (stack[:, 0].min(), stack[:, 1].min(), stack[:, 0].max(), stack[:, 1].max())
@@ -1073,20 +1206,23 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 area = Area((e.xMinimum(), e.yMinimum(), e.xMaximum(), e.yMaximum()))
             xyz, faces = raster_mesh(layer, crs, area, max(budget // max(len(rasters) + len(meshes), 1), 10_000), fb, vertical, VERTICAL_UNITS[self.parameterAsEnum(p, "RASTER_VERTICAL_UNIT", c)][1])
             meshes.append((f"r{k + 1}", layer.name(), "raster", xyz, faces, raster_style, None))
-        wanted_roads = [n.strip() for n in self.parameterAsString(p, "SYNTHETIC", c).split(";") if n.strip()]
+        wanted_roads = self._road_names(p, c, fb)
         built, outside = 0, []
+        self._built_roads = []
         for synthetic_name in wanted_roads:
             try:
                 self._synthetic(p, c, fb, path, method, params, area, meshes, unders, vertical_factor, synthetic_name,
                                 first=not built, horizontal_unit=horizontal, vertical_unit=vertical, station_unit=doc.horizontal_unit)
                 built += 1
+                self._built_roads.append(synthetic_name)
             except _OutsideArea as error:          # one of several roads may lie beyond a limited area
                 outside.append(str(error))
         if not wanted_roads and path and read_catalog(path).alignments:
-            fb.pushInfo("Terrain scene: no feasibility road generated (choose alignments under 'Synthetic road: "
-                        "alignments' to build one; the corridor alignment only limits the area).")
+            fb.pushInfo("Terrain scene only: no feasibility road generated (tick 'Generate a feasibility road' and "
+                        "choose its alignments to build one; the scene-area alignment only limits the area).")
         elif built:
-            fb.pushInfo(f"Feasibility roads generated: {built} of {len(wanted_roads)}.")
+            fb.pushInfo(f"Feasibility roads generated: {built} of {len(wanted_roads)} ("
+                        + ", ".join(f"'{n}'" for n in self._built_roads) + ").")
         if outside:
             if not built:
                 raise QgsProcessingException(" ".join(outside) + " Widen the area, or check the coordinate order.")

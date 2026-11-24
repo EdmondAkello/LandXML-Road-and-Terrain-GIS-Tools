@@ -94,6 +94,9 @@ class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
                 self.setParameters({})
                 from .input_units import connect_unit_labels
                 connect_unit_labels(self, algorithm)
+                hook = getattr(algorithm, "connect_dialog", None)
+                if hook is not None:
+                    hook(self)
                 self._project.cleared.connect(self._project_cleared)
                 self.algorithmFinished.connect(self._remember)
 
@@ -103,7 +106,9 @@ class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
 
             def setParameters(self, parameters):
                 # Processing may supply explicit inputs (e.g. history) after creating the dialog.
-                super().setParameters({**self._saved, **parameters})
+                values = {**self._saved, **parameters}
+                complete = getattr(self.algorithm(), "dialog_parameters", None)
+                super().setParameters(complete(values) if complete is not None else values)
 
             def _remember(self, successful, _results):
                 if not successful or not self._project_active or (self.feedback and self.feedback.isCanceled()):
