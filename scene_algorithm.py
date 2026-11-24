@@ -324,7 +324,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         for key, label, default in (("ALIGNMENTS", "Alignments", True), ("FEATURE_LINES", "LandXML feature lines and breaklines", True)):
             self.addParameter(QgsProcessingParameterBoolean(key, label, defaultValue=default))
         self.addParameter(number_param("STATION_LABELS", "Station labels every (0 = none)", 100.0, 0.0, 1e6, decimals=1))
-        self.addParameter(QgsProcessingParameterMultipleLayers("VECTORS", "Other line or polygon layers",
+        self.addParameter(QgsProcessingParameterMultipleLayers("VECTORS", "Other layers: lines draped, points as poles, polygons (DXF: one toggle per CAD layer)",
                                                                QgsProcessing.SourceType.TypeVectorAnyGeometry, optional=True))
         self.addParameter(number_param("STRETCH", "Long corridors: a view every (stations; 0 = none)", 1000.0, 0.0, 1e6, decimals=0))
         self.addParameter(names_param(
@@ -344,6 +344,9 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             "surfaces", ",", layers_param="RASTERS"))
         self.addParameter(QgsProcessingParameterBoolean(
             "SYN_BRIDGES", "Synthetic road: bridges where slopes miss the ground", defaultValue=True))
+        self.addParameter(QgsProcessingParameterBoolean(
+            "SYN_AT_GRADE", "Synthetic road: roads without a profile follow the ground (smoothed; context roads)",
+            defaultValue=False))
         self.addParameter(number_param("SYN_BRIDGE_SPAN", "Synthetic road: bridge span", 25.0, 5.0, 200.0, decimals=1))
         self.addParameter(QgsProcessingParameterFile(
             "SYN_STRUCTURES_CSV", "Synthetic road: culvert and bridge schedule (CSV)", extension="csv", optional=True))
@@ -378,7 +381,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
 
     # ------------------------------------------------------------------ helpers
         mark_advanced(self, ("RASTER_CONTOURS", "STRETCH", "SYN_LANES", "SYN_CAMBER", "SYN_SHOULDER_FALL", "SYN_CUT_SLOPE",
-                             "SYN_FILL_SLOPE", "SYN_MAX_WIDTH", "SYN_BRIDGES", "SYN_BRIDGE_SPAN", "SYN_FIT_WIDTH",
+                             "SYN_FILL_SLOPE", "SYN_MAX_WIDTH", "SYN_BRIDGES", "SYN_AT_GRADE", "SYN_BRIDGE_SPAN", "SYN_FIT_WIDTH",
                              "SYN_CHANNELS", "SYN_MATCH_PROFILE", "WATER", "EXTRUDE_FIELD", "EXTRUDE_HEIGHT",
                              "MAX_TRIANGLES", "EXAGGERATION", "VIEWS", "TITLE"))
 
@@ -436,6 +439,38 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 self.parameterAsDouble(p, "CORRIDOR_WIDTH", c), 8)
             for polygon in (buffer.asMultiPolygon() if buffer.isMultipart() else [buffer.asPolygon()]):
                 rings += [[(pt.x(), pt.y()) for pt in ring] for ring in polygon]
+        roads = [t.strip() for t in self.parameterAsString(p, "SYNTHETIC", c).split(";") if t.strip()]
+        if not rings and box is None and roads and path:
+            # generated roads and no area chosen: a strip along the roads, not the whole DEM (issue #81)
+            half = (self.parameterAsDouble(p, "SYN_CARRIAGEWAY", c) / 2 + self.parameterAsDouble(p, "SYN_SHOULDER", c)
+                    + self.parameterAsDouble(p, "SYN_MAX_WIDTH", c) + 20.0)
+            catalog = read_catalog(path).alignments
+            buffers = []
+            low, high = p.get("STATION_FROM"), p.get("STATION_TO")
+            for order, wanted in enumerate(roads):
+                name = match_name(catalog, wanted, "alignment")
+                parts = _alignment_parts(path, 2.0, name)
+                points = merge_parts(parts[0][4]) if parts else []
+                if len(points) < 2:
+                    continue
+                raw = np.array(points, float)
+                if order == 0 and (low not in (None, "") or high not in (None, "")):
+                    start = float(parts[0][2]) if parts[0][2] not in (None, "") else 0.0
+                    stations = start + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(raw[:, :2], axis=0).T))])
+                    a = stations[0] if low in (None, "") else float(low)
+                    b = stations[-1] if high in (None, "") else float(high)
+                    keep = (stations >= a) & (stations <= b)
+                    if keep.sum() >= 2:
+                        raw = raw[keep]
+                        fb.pushInfo(f"Stations {a:g}–{b:g} limit '{name}'.")
+                plan = transform_vertices(np.column_stack([raw[:, :2], np.zeros(len(raw))]), method=method, **params)
+                buffers.append(QgsGeometry.fromPolylineXY([QgsPointXY(float(x), float(y)) for x, y, _z in plan]).buffer(half, 8))
+            if buffers:
+                strip = QgsGeometry.unaryUnion(buffers)
+                for polygon in (strip.asMultiPolygon() if strip.isMultipart() else [strip.asPolygon()]):
+                    rings += [[(pt.x(), pt.y()) for pt in ring] for ring in polygon]
+                fb.pushInfo(f"Scene area: a strip {half:.0f} either side of the generated road{'s' if len(buffers) > 1 else ''} "
+                            "(no corridor, extent or area polygon chosen).")
         if rings:
             stack = np.vstack([np.asarray(r) for r in rings])
             ring_box = (stack[:, 0].min(), stack[:, 1].min(), stack[:, 0].max(), stack[:, 1].max())
@@ -516,8 +551,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
     def _synthetic(self, p, c, fb, path, method, params, area, meshes, unders, vertical_factor, wanted, first=True, horizontal_unit="meter", vertical_unit="meter", station_unit="meter"):
         """Add a synthetic finished road along an alignment's profile, cut into the ground meshes."""
         from .landxml.grading import volume_summary
-        from .landxml.structures import (MeshBuilder, bridge, carve_channels, culvert, low_points, read_schedule_csv,
-                                         read_schedule_text)
+        from .landxml.structures import (MeshBuilder, bridge, carve_channels, culvert, for_road, low_points,
+                                         read_schedule_csv, read_schedule_text)
         from .landxml.synthetic_corridor import _normals as corridor_normals, synthetic_corridor
         from .landxml.tin_overlay import depth_tin
 
@@ -532,9 +567,24 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         depth_label = LINEAR_UNITS[vertical_unit.lower()][1]
         name = match_name(read_catalog(path).alignments, wanted, "alignment")
         lines = centerlines_3d(path, 2.0, name, fb.pushInfo, fb.isCanceled, max_step=2.0)
-        if not lines:
-            raise QgsProcessingException(f"Alignment '{name}' has no vertical profile; a synthetic corridor follows the profile.")
-        _n, start_station, _e, stored = lines[0]
+        at_grade = False
+        if lines:
+            _n, start_station, _e, stored = lines[0]
+        else:
+            if not self.parameterAsBool(p, "SYN_AT_GRADE", c):
+                raise QgsProcessingException(
+                    f"Alignment '{name}' has no vertical profile; a synthetic corridor follows the profile. For an existing "
+                    "or context road, tick 'Roads without a profile follow the ground' to draw it on the smoothed ground.")
+            from .landxml.geometry import read_alignments
+            found = [a for a in read_alignments(path, 2.0)[0] if a["name"] == name]
+            if not found:
+                raise QgsProcessingException(f"Alignment '{name}' has no plan geometry.")
+            plan = np.asarray(found[0]["points"], float)[:, :2]
+            plan = plan[np.r_[True, np.hypot(*np.diff(plan, axis=0).T) > 1e-6]]
+            plan = _densify(plan, 2.0)                  # long straights come as two vertices
+            stored = np.column_stack([plan, np.zeros(len(plan))])
+            start_station = float(found[0].get("sta_start") or 0.0)
+            at_grade = True
         centre = transform_vertices(stored, method=method, **params)
         stations = start_station + np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(stored[:, :2], axis=0).T))])
         if area is not None:
@@ -574,7 +624,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         if first:
             fb.pushInfo("Synthetic corridors run their side slopes out to "
                         + " then ".join(f"'{m[1]}'" for m in (picked or grounds[:1])) + ".")
-        if grounds[0][2] == "raster" and first:
+        if grounds[0][2] == "raster" and first and not at_grade:
             shift = self._dem_offset(path, name, centre, stations, ground, fb)
             if shift is not None and self.parameterAsBool(p, "SYN_MATCH_PROFILE", c):
                 for index, mesh in enumerate(meshes):
@@ -591,7 +641,54 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             idx = np.flatnonzero(covered)
             centre, stations = centre[idx[0]:idx[-1] + 1], stations[idx[0]:idx[-1] + 1]
             fb.pushInfo(f"Synthetic corridor limited to {stations[0]:.0f}–{stations[-1]:.0f}, where the ground covers the alignment.")
-        if self.parameterAsBool(p, "SYN_FIT_PROFILE", c):
+        # ---- the structure schedule (CSV and typed), only the items for this road
+        schedule = []
+        csv_path = self.parameterAsFile(p, "SYN_STRUCTURES_CSV", c)
+        if csv_path:
+            try:
+                items, notes_csv = read_schedule_csv(csv_path, horizontal_unit, vertical_unit, station_unit)
+            except (OSError, ValueError) as exc:
+                raise QgsProcessingException(f"Structure schedule: {exc}") from exc
+            if first:
+                for note in notes_csv:
+                    fb.pushInfo(note)
+            schedule += items
+        try:
+            schedule += read_schedule_text(self.parameterAsString(p, "SYN_STRUCTURES", c), horizontal_unit, vertical_unit, station_unit)
+        except ValueError as exc:
+            raise QgsProcessingException(str(exc)) from exc
+        schedule = for_road(schedule, name)
+        if at_grade:
+            level = TinIndex(*ground).sample(centre[:, :2])
+            known = np.isfinite(level)
+            level = np.interp(stations, stations[known], level[known])
+            per_metre = 1.0 / LINEAR_UNITS[station_unit.lower()][0]
+            window = 40.0 * per_metre                   # 40 m of smoothing, so the road does not follow every hummock
+            csum = np.concatenate([[0.0], np.cumsum(level)])
+            lo = np.searchsorted(stations, stations - window / 2)
+            hi = np.searchsorted(stations, stations + window / 2, side="right")
+            centre = centre.copy()
+            centre[:, 2] = (csum[hi] - csum[lo]) / np.maximum(hi - lo, 1)
+            fb.pushInfo(f"'{name}' has no profile: its levels follow the ground, smoothed over 40 m (a context "
+                        "road, not a design).")
+        for item in schedule:                           # fixed deck levels (an existing bridge on a context road)
+            if item["kind"] != "bridge" or not item.get("deck_levels") or item["end"] is None:
+                continue
+            a, b = sorted((item["station"], item["end"]))
+            z_a, z_b = item["deck_levels"] if item["station"] <= item["end"] else item["deck_levels"][::-1]
+            span = (stations >= a) & (stations <= b)
+            if not span.any():
+                continue
+            centre = centre.copy()
+            centre[span, 2] = np.interp(stations[span], [a, b], [z_a, z_b])
+            if at_grade:                                # the smoothed ground eases onto the deck over 40 either side
+                for edge_station, edge_z in ((a, z_a), (b, z_b)):
+                    blend = 40.0 / LINEAR_UNITS[station_unit.lower()][0]
+                    near = (np.abs(stations - edge_station) <= blend) & ~span
+                    weight = 1.0 - np.abs(stations[near] - edge_station) / blend
+                    centre[near, 2] = centre[near, 2] * (1.0 - weight) + edge_z * weight
+            fb.pushInfo(f"{item['id']}: deck from {z_a:g} to {z_b:g} between {a:.1f} and {b:.1f}.")
+        if self.parameterAsBool(p, "SYN_FIT_PROFILE", c) and not at_grade:
             profile = self._ground_profile(path, name)
             if profile is None:
                 fb.pushWarning(f"Alignment '{name}' has no surveyed ground profile; the ground is not fitted to it.")
@@ -644,24 +741,10 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         normal = corridor_normals(centre[:, :2])
         edge = width / 2 + shoulder
 
-        # ---- structures: the schedule (CSV and typed), and bridges over the stretches without daylight
-        schedule = []
-        csv_path = self.parameterAsFile(p, "SYN_STRUCTURES_CSV", c)
-        if csv_path:
-            try:
-                items, notes = read_schedule_csv(csv_path, horizontal_unit, vertical_unit, station_unit)
-            except (OSError, ValueError) as exc:
-                raise QgsProcessingException(f"Structure schedule: {exc}") from exc
-            for note in notes:
-                fb.pushInfo(note)
-            schedule += items
-        try:
-            schedule += read_schedule_text(self.parameterAsString(p, "SYN_STRUCTURES", c), horizontal_unit, vertical_unit, station_unit)
-        except ValueError as exc:
-            raise QgsProcessingException(str(exc)) from exc
+        # ---- bridges: scheduled ones, and automatic ones over the stretches without daylight
         bridge_rows = np.zeros(len(centre), bool)
         auto = np.zeros(len(centre), bool)
-        if self.parameterAsBool(p, "SYN_BRIDGES", c) and short.any():
+        if self.parameterAsBool(p, "SYN_BRIDGES", c) and short.any() and not at_grade:
             edges = np.flatnonzero(np.diff(np.concatenate([[0], short.astype(int), [0]])))
             for first_row, after in zip(edges[::2], edges[1::2]):
                 auto[max(first_row - 1, 0):min(after + 1, len(centre))] = True
@@ -709,9 +792,11 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 middle_row = rows[len(rows) // 2]
                 self._synthetic_labels.append((f"Bridge {stations[rows[0]]:.0f}–{stations[rows[-1]]:.0f}",
                                                tuple(centre[middle_row])))
-                text, _piers = bridge(builder, centre, stations, normal, rows, 2 * edge + 1.0 / h,
-                                      item.get("span") or default_span, ground_at,
-                                      spans=item.get("spans"), piers=item.get("piers"), horizontal_unit=horizontal_unit, vertical_unit=vertical_unit, station_unit=station_unit)
+                text, _piers = bridge(builder, centre, stations, normal, rows, item.get("deck_width") or 2 * edge + 1.0 / h,
+                                      item.get("span") or default_span, ground_at, depth=item.get("deck_depth"),
+                                      spans=item.get("spans"), piers=item.get("piers"),
+                                      pier_specs=[k for k in schedule if k["kind"] == "pier"],
+                                      horizontal_unit=horizontal_unit, vertical_unit=vertical_unit, station_unit=station_unit)
                 notes.append(text)
                 middle = rows[len(rows) // 2]
                 n = normal[middle]
@@ -722,6 +807,11 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             if item["kind"] == "bridge":
                 continue
             s = item["station"]
+            if item["kind"] == "pier":
+                if item.get("road") and not (bridge_rows.any() and stations[0] <= s <= stations[-1]
+                                             and bridge_rows[int(np.clip(np.searchsorted(stations, s), 0, len(stations) - 1))]):
+                    notes.append(f"{item['id']} at {s:.1f} is not under a bridge on '{name}'; not drawn.")
+                continue
             if not stations[0] <= s <= stations[-1]:
                 notes.append(f"{item['id']} at {s:.0f} is outside the corridor; not drawn.")
                 continue
@@ -788,7 +878,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             runs = [f"{stations[a]:.0f}–{stations[b - 1]:.0f}" for a, b in zip(edges[::2], edges[1::2])]
             fb.pushWarning("Side slopes do not reach the ground within the longest slope at " + ", ".join(runs[:12])
                            + (" …" if len(runs) > 12 else "") + ": a deep crossing or high embankment, likely a structure "
-                           "at design stage." + (" Drawn as bridges." if self.parameterAsBool(p, "SYN_BRIDGES", c) else ""))
+                           "at design stage." + (" Left open: a road without a profile gets no automatic bridge." if at_grade
+                                                  else " Drawn as bridges." if self.parameterAsBool(p, "SYN_BRIDGES", c) else ""))
         whole = volumes(earth_faces if bridge_rows.any() else faces)
         if whole:
             fb.pushInfo(f"Synthetic corridor {stations[0]:.0f}–{stations[-1]:.0f}: about {whole['cut_volume']:,.0f} cut and "
@@ -801,11 +892,26 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 fb.pushInfo(f"Leaving the stretches without daylight out: about {earthworks['cut_volume']:,.0f} cut and "
                             f"{earthworks['fill_volume']:,.0f} fill.")
 
-    def _cut_synthetic(self, meshes, unders):
-        """Cut the ground under every synthetic corridor, as for a designed surface drawn over it."""
+    def _cut_synthetic(self, meshes, unders, budget=None, fb=None):
+        """Cut the ground under every synthetic corridor, as for a designed surface drawn over it. The ground
+        next to the roads is refined to about a quarter of the carriageway, coarser when that would overrun the
+        triangle budget."""
         cuts = self._synthetic_cuts
         if not cuts:
             return
+        if budget:
+            ground_now = sum(len(m[4]) for m in meshes if m[2] in ("surface", "raster"))
+            design_now = sum(len(m[4]) for m in meshes if m[2] not in ("surface", "raster"))
+            room = max(budget - ground_now - design_now, budget // 10)
+            area_sum = 0.0
+            for xyz, faces, _t in cuts:
+                tri = np.asarray(xyz, float)[np.asarray(faces)][:, :, :2]
+                area_sum += float(np.abs(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])).sum() / 2.0)
+            floor = math.sqrt(2.0 * area_sum / room) if room > 0 else 0.0     # target edge that fits the room left
+            if any(t < floor for _x, _f, t in cuts):
+                cuts = [(x, f, max(t, floor)) for x, f, t in cuts]
+                if fb:
+                    fb.pushInfo(f"Ground next to the roads refined to about {floor:.1f} (triangle budget {budget:,}).")
         offsets = np.cumsum([0] + [len(x) for x, _f, _t in cuts[:-1]])
         footprint = (np.vstack([x for x, _f, _t in cuts]), np.vstack([f + o for (_x, f, _t), o in zip(cuts, offsets)]))
         footprint_index = TinIndex(*footprint)
@@ -813,6 +919,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             if mesh[2] not in ("surface", "raster"):
                 continue
             gxyz, gfaces = mesh[3], mesh[4]
+            original = (np.asarray(gxyz, float), np.asarray(gfaces, np.int64))
             for xyz, faces, target in cuts:
                 gxyz, gfaces = refine_near(gxyz, gfaces, (xyz, faces), target)
                 gxyz, gfaces = refine_edges(gxyz, gfaces, (xyz, faces))
@@ -823,7 +930,14 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             snapped[inside, 2] = np.minimum(snapped[inside, 2], under[inside])
             meshes[index] = (*mesh[:3], snapped, gfaces, *mesh[5:])
             if removed.any():
-                uxyz, ufaces, _u = _compact(gxyz, gfaces[removed])
+                # the hidden "before" copy only has to show the ground under the roads: the original
+                # triangles there, not the refinement the cut edges need (which can run to millions)
+                oxyz, ofaces = original
+                centroid = oxyz[ofaces].mean(axis=1)
+                below = np.isfinite(footprint_index.sample(centroid[:, :2]))
+                for corner in range(3):
+                    below |= np.isfinite(footprint_index.sample(oxyz[ofaces[:, corner], :2]))
+                uxyz, ufaces, _u = _compact(oxyz, ofaces[below])
                 unders.append((mesh[0], mesh[1], uxyz, ufaces, mesh[5]))
                 keep = gfaces[~removed]
                 if len(keep):
@@ -968,12 +1082,17 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                 built += 1
             except _OutsideArea as error:          # one of several roads may lie beyond a limited area
                 outside.append(str(error))
+        if not wanted_roads and path and read_catalog(path).alignments:
+            fb.pushInfo("Terrain scene: no feasibility road generated (choose alignments under 'Synthetic road: "
+                        "alignments' to build one; the corridor alignment only limits the area).")
+        elif built:
+            fb.pushInfo(f"Feasibility roads generated: {built} of {len(wanted_roads)}.")
         if outside:
             if not built:
                 raise QgsProcessingException(" ".join(outside) + " Widen the area, or check the coordinate order.")
             fb.pushWarning("Skipped: " + " ".join(outside) + " (the scene area is limited by the stations, "
                            "corridor or extent chosen).")
-        self._cut_synthetic(meshes, unders)
+        self._cut_synthetic(meshes, unders, budget, fb)
         if not meshes:
             raise QgsProcessingException("Nothing to render in the area.")
         total = sum(len(m[4]) for m in meshes)
@@ -1136,17 +1255,39 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         extrude_field = self.parameterAsString(p, "EXTRUDE_FIELD", c).strip()
         default_height = self.parameterAsDouble(p, "EXTRUDE_HEIGHT", c)
         solids = []
-        for layer in self.parameterAsLayerList(p, "VECTORS", c):
+        palette = ["#37474f", "#8d6e63", "#2e7d32", "#1565c0", "#c62828", "#6a1b9a", "#ef6c00", "#00838f", "#9e9d24", "#5d4037"]
+        for layer_index, layer in enumerate(self.parameterAsLayerList(p, "VECTORS", c)):
             transform = QgsCoordinateTransform(layer.crs(), crs, QgsProject.instance())
             rect = QgsCoordinateTransform(crs, layer.crs(), QgsProject.instance()).transformBoundingBox(QgsRectangle(*area.box[:2], *area.box[2:]))
             has_z = QgsWkbTypes.hasZ(layer.wkbType())
             count = 0
+            # a CAD layer field (DXF, DWG exports) splits the layer into its own toggles; colours from the QGIS style
+            cad_field = next((f for f in layer.fields().names() if f.lower() == "layer"), None)
+            colours = {}
+            renderer = layer.renderer()
+            try:
+                if hasattr(renderer, "categories") and renderer.classAttribute() == cad_field:
+                    colours = {str(cat.value()): cat.symbol().color().name() for cat in renderer.categories()}
+                elif hasattr(renderer, "symbol") and renderer.symbol() is not None:
+                    colours = {None: renderer.symbol().color().name()}
+            except (AttributeError, TypeError):
+                colours = {}
+            seen = {}
+
+            def layer_style(feature):
+                value = str(feature[cad_field]) if cad_field else None
+                name = f"{layer.name()}: {value}" if cad_field else layer.name()
+                if name not in seen:
+                    seen[name] = colours.get(value) or (None if cad_field else colours.get(None)) or palette[(layer_index + len(seen)) % len(palette)]
+                return name, seen[name]
+
             for feature in layer.getFeatures(QgsFeatureRequest().setFilterRect(rect)):
                 geometry = QgsGeometry(feature.geometry())
                 if geometry.isEmpty():
                     continue
                 geometry.transform(transform)
                 kind = QgsWkbTypes.geometryType(geometry.wkbType())
+                line_name, line_colour = layer_style(feature)
                 parts = []
                 if kind == QgsWkbTypes.GeometryType.LineGeometry:
                     parts = [list(part) for part in geometry.constParts()]
@@ -1160,6 +1301,20 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                         height = float(feature[extrude_field])
                     except (TypeError, ValueError):
                         height = default_height
+                if kind == QgsWkbTypes.GeometryType.PointGeometry:        # posts and poles
+                    pole = height if height > 0 else 6.0
+                    for point in geometry.constParts():
+                        xy = np.array([[point.x(), point.y()]], float)
+                        if not area.keep_points(xy)[0]:
+                            continue
+                        ground = drape_points(xy)
+                        if ground is None:
+                            continue
+                        bxyz, bfaces = extrude(np.array([[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]]) + xy, ground[0, 2], pole)
+                        if len(bfaces):
+                            solids.append((bxyz, bfaces + sum(len(x) for x, _f in solids)))
+                            count += 1
+                    continue
                 if kind == QgsWkbTypes.GeometryType.PolygonGeometry and height > 0:
                     for part in geometry.constParts():
                         ring = np.array([[v.x(), v.y()] for v in part.exteriorRing()], float)
@@ -1181,14 +1336,15 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
                         if points is None:
                             continue
                     for run in _runs_inside(points, area):
-                        writer.line("vector", layer.name(), run, {"layer": layer.name()}, color="#37474f", width=2, lift=0.2)
+                        writer.line(line_name if cad_field else "vector", line_name, run, {"layer": layer.name()},
+                                    color=line_colour, width=2, lift=0.2)
                         count += 1
             fb.pushInfo(f"{layer.name()}: {count:,} lines or solids.")
         if solids:
             sxyz = np.vstack([x for x, _f in solids])
             sfaces = np.vstack([f for _x, f in solids])
             style = ss.resolve(ss.parse_style("plain #d9d4c7"), None, unit_label)
-            style["classes"][0]["label"] = "Raised polygons"
+            style["classes"][0]["label"] = "Raised polygons and poles"
             writer.surface("solids", "Buildings and structures", "solid", sxyz, sfaces,
                            np.tile(np.array([0xd9, 0xd4, 0xc7], np.uint8), (len(sxyz), 1)), style)
         if getattr(self, "_synthetic_structures", None):
