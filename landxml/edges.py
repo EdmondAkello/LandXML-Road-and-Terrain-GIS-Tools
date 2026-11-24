@@ -163,7 +163,7 @@ def edge_analysis(xyz, faces, depth, vertical_factor=1.0, tolerance=0.01, tie=0.
                     "type": keys[current[0]][0], "kind": keys[current[0]][1], "band": keys[current[0]][2],
                     "length": float(length[current].sum()), "height_max": float(height[current].max()),
                     "height_mean": float(np.average(height[current], weights=np.maximum(length[current], 1e-12))),
-                    "face_area": float((height[current] * length[current]).sum()),
+                    "face_area": float((height[current] * vertical_factor * length[current]).sum()),
                     "points": np.array(pts),
                 })
                 current = []

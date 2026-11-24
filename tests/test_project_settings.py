@@ -60,6 +60,85 @@ class ProjectSettingsTests(unittest.TestCase):
     def saved(self, name="prepare_landxml"):
         return json.loads(self.project.readEntry("LandXML", "processing/" + name, "{}")[0])
 
+    def test_dimensional_labels_refresh_without_converting_values(self):
+        from qgis.PyQt.QtWidgets import QLabel
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "feet.xml"
+            path.write_text(
+                '<LandXML><Units><Imperial linearUnit="USSurveyFoot"/></Units></LandXML>'
+            )
+            dialog = self.dialog(
+                "landxml_profile_cut_fill",
+                {"INPUT": str(path), "VERTICAL_UNIT": 3, "INTERVAL": 15.0},
+            )
+
+            def label(prefix):
+                return next(
+                    l.text()
+                    for l in dialog.findChildren(QLabel)
+                    if l.text().startswith(prefix)
+                )
+
+            self.assertIn("[ftUS]", label("Table station interval"))
+            self.assertIn("[ftUS]", label("Flag fills deeper than"))
+            self.assertIn("[ftUS]", label("Level-section estimate: formation width"))
+            dialog.setParameters({"VERTICAL_UNIT": 1})
+            self.assertIn("[m]", label("Flag fills deeper than"))
+            self.assertIn("[ftUS]", label("Table station interval"))
+            self.assertEqual(self.value(dialog, "INTERVAL"), 15.0)
+            dialog.setParameters({"INPUT": ""})
+            self.assertIn("[unknown]", label("Table station interval"))
+
+    def test_custom_criteria_and_output_crs_unit_labels(self):
+        from qgis.PyQt.QtWidgets import QLabel
+
+        dialog = self.dialog(
+            "landxml_design_review",
+            {"CRITERIA_FILE": str(ROOT / "criteria/aashto_2018_us_customary.json")},
+        )
+        labels = lambda: [l.text() for l in dialog.findChildren(QLabel)]
+        self.assertTrue(
+            any(t.startswith("Design speed (") and "[mph]" in t for t in labels())
+        )
+        dialog.setParameters({"CRITERIA_FILE": str(ROOT / "criteria/aashto_2018.json")})
+        self.assertTrue(
+            any(t.startswith("Design speed (") and "[km/h]" in t for t in labels())
+        )
+        dialog = self.dialog(
+            "landxml_grading_quantities", {"OUTPUT_CRS": "EPSG:2277", "VOLUME_UNITS": 0}
+        )
+        self.assertTrue(
+            any(t.startswith("Civil 3D cut volume") and "[CY]" in t for t in labels())
+        )
+        dialog.setParameters({"VOLUME_UNITS": 2})
+        self.assertTrue(
+            any(t.startswith("Civil 3D cut volume") and "[CF]" in t for t in labels())
+        )
+
+    def test_dimensional_input_bases_match_the_tool_contract(self):
+        expected = {
+            "prepare_landxml": {"PROFILE_INTERVAL": "source horizontal", "LEFT_WIDTH": "source horizontal"},
+            "landxml_station_points": {"INTERVAL": "source horizontal"},
+            "landxml_profiles_to_vector": {"POINT_INTERVAL": "source horizontal", "MAP_OFFSET": "source horizontal"},
+            "landxml_complete_road_design": {"RESOLUTION": "output CRS", "CONTOUR_INTERVAL": "source elevation"},
+            "landxml_profile_cut_fill": {"INTERVAL": "source horizontal", "FORMATION_WIDTH": "source horizontal", "HIGH_FILL": "source elevation"},
+            "landxml_corridor_quantities": {"MAX_SPACING": "source horizontal"},
+            "landxml_cross_section_sheets": {"HALF_WIDTH": "source horizontal"},
+            "landxml_design_review": {"MAX_CHANGE": "source elevation", "DESIGN_SPEED": "criteria speed"},
+            "landxml_basin_storage": {"FREEBOARD": "source elevation", "REQUIRED_VOLUME": "selected volume"},
+            "landxml_grading_quantities": {"CIVIL3D_AREA": "output CRS units²", "CIVIL3D_CUT": "selected volume"},
+            "landxml_platform_levels": {"MIN_AREA": "output CRS units²"},
+            "landxml_earthwork_balance": {"TOPSOIL_DEPTH": "source elevation"},
+            "landxml_3d_scene": {"STATION_FROM": "source horizontal", "SYN_CARRIAGEWAY": "output CRS", "WATER": "source elevation"},
+        }
+        for algorithm in self.provider.algorithms():
+            contract = dict(expected.get(algorithm.name(), {}))
+            if algorithm.parameterDefinition("DX") is not None:
+                contract["DX"] = "output CRS"
+            for name, units in contract.items():
+                self.assertIn(units, algorithm.parameterDefinition(name).description(), (algorithm.name(), name))
+
     def test_round_trip_project_file_and_input_types(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "road.qgz"

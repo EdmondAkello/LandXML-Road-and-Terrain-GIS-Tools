@@ -20,7 +20,7 @@ def _normals(xy):
 
 
 def synthetic_corridor(centre, stations, ground, carriageway=7.0, shoulder=1.5, camber=0.025, shoulder_fall=0.04,
-                       cut_slope=2.0, fill_slope=2.0, max_width=60.0, step=0.5):
+                       cut_slope=2.0, fill_slope=2.0, max_width=60.0, step=0.5, vertical_factor=1.0):
     """(xyz, faces, station, offset, daylight) of a corridor surface along ``centre`` ((n, 3) at profile level).
 
     Slopes are horizontal:vertical (2 = 1V:2H). Each side runs out from the shoulder edge at the cut or
@@ -30,7 +30,7 @@ def synthetic_corridor(centre, stations, ground, carriageway=7.0, shoulder=1.5, 
     stations = np.asarray(stations, float)
     half = carriageway / 2.0
     edge = half + shoulder
-    edge_drop = camber * half + shoulder_fall * shoulder
+    edge_drop = (camber * half + shoulder_fall * shoulder) / vertical_factor
     normal = _normals(centre[:, :2])
     steps = np.arange(0.0, max_width + step, step)
     columns = []                      # per side: offsets and levels of the outer slope point
@@ -40,7 +40,7 @@ def synthetic_corridor(centre, stations, ground, carriageway=7.0, shoulder=1.5, 
         z_edge = centre[:, 2] - edge_drop
         ground_edge = sample_tin(ground, base)
         fill = ~(ground_edge > z_edge)            # unknown ground counts as fill: the slope runs to max width
-        rate = np.where(fill, -1.0 / fill_slope, 1.0 / cut_slope)
+        rate = np.where(fill, -1.0 / fill_slope, 1.0 / cut_slope) / vertical_factor
         points = (base[:, None, :] + normal[:, None, :] * side * steps[None, :, None]).reshape(-1, 2)
         ground_z = sample_tin(ground, points).reshape(len(centre), len(steps))
         slope_z = z_edge[:, None] + rate[:, None] * steps[None, :]
@@ -61,8 +61,8 @@ def synthetic_corridor(centre, stations, ground, carriageway=7.0, shoulder=1.5, 
     (left_off, left_z), (right_off, right_z) = columns
     offsets = np.column_stack([-left_off, np.full(len(centre), -edge), np.full(len(centre), -half), np.zeros(len(centre)),
                                np.full(len(centre), half), np.full(len(centre), edge), right_off])
-    levels = np.column_stack([left_z, centre[:, 2] - edge_drop, centre[:, 2] - camber * half, centre[:, 2],
-                              centre[:, 2] - camber * half, centre[:, 2] - edge_drop, right_z])
+    levels = np.column_stack([left_z, centre[:, 2] - edge_drop, centre[:, 2] - camber * half / vertical_factor, centre[:, 2],
+                              centre[:, 2] - camber * half / vertical_factor, centre[:, 2] - edge_drop, right_z])
     plan = centre[:, None, :2] + normal[:, None, :] * offsets[:, :, None]
     xyz = np.column_stack([plan.reshape(-1, 2), levels.reshape(-1)])
     width = offsets.shape[1]

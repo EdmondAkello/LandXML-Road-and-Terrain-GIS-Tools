@@ -158,7 +158,8 @@ class ProfileViewerDock(QgsDockWidget):
         self.tolerance_spin.setToolTip(
             "Depths within ± this value are treated as on grade, so small flips do not count as transitions."
         )
-        grid.addWidget(QLabel("Exclude"), 2, 0)
+        self.exclude_label = QLabel("Exclude [source stations]")
+        grid.addWidget(self.exclude_label, 2, 0)
         grid.addWidget(self.exclude_edit, 2, 1)
         grid.addWidget(QLabel("Grade tol."), 2, 2)
         grid.addWidget(self.tolerance_spin, 2, 3)
@@ -286,6 +287,10 @@ class ProfileViewerDock(QgsDockWidget):
                 self._message(str(error), Qgis.MessageLevel.Critical)
                 return False
             self.document = document
+            from ..input_units import short_unit
+            self.exclude_label.setText("Exclude [" + short_unit(document.horizontal_unit) + "]")
+            self.tolerance_spin.setSuffix(" " + short_unit(document.vertical_unit))
+            self.exclude_edit.setToolTip("Excluded internal station ranges in " + short_unit(document.horizontal_unit))
             self.path = path
             self.file_edit.setText(path)
             self.file_edit.setToolTip(path)
@@ -755,9 +760,10 @@ class ProfileViewerDock(QgsDockWidget):
         self._message("Chart copied to the clipboard.", Qgis.MessageLevel.Success)
 
     def export_samples_csv(self):
+        from ..input_units import short_unit
         if not self._require_result():
             return
-        interval, ok = QInputDialog.getDouble(self, "Station table", "Station interval", 20.0, 0.01, 100000.0, 2)
+        interval, ok = QInputDialog.getDouble(self, "Station table", "Station interval (" + short_unit(self.document.horizontal_unit) + ")", 20.0, 0.01, 100000.0, 2)
         if not ok:
             return
         path = self._save_path("Export station table", ".csv", "CSV (*.csv)")

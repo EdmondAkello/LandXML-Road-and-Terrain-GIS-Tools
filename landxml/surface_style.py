@@ -107,7 +107,9 @@ def _nice(value, step):
 def resolve(style, values=None, vertical_unit="m"):
     """Classes of a style as [{"low", "high", "color", "label"}], computing data breaks if asked."""
     if isinstance(style, dict) and style.get("attribute") == "road":
-        return dict(style, unit=vertical_unit)
+        return dict(style, unit=vertical_unit,
+                    classes=[dict(item, label=item["label"] + (f" {vertical_unit}" if index < 2 else ""))
+                             for index, item in enumerate(style["classes"])])
     spec = dict(PRESETS.get(style.get("attribute"), {}), **style) if isinstance(style, dict) else dict(PRESETS[style])
     attribute = spec["attribute"]
     breaks = spec.get("breaks") if "classes" not in style else None

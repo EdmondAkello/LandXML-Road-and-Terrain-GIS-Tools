@@ -121,6 +121,8 @@ a { color: var(--accent); }
 </head>
 <body>
 
+
+
 <!-- ============================== COVER ============================== -->
 <section class="cover">
   <div class="hero"></div>
@@ -279,6 +281,11 @@ a { color: var(--accent); }
 <p><b>OpenRoads axis-order reminder.</b> Every coordinate-interpretation selector includes a reminder and detailed help. Standard LandXML uses Northing, Easting, with elevation third (see the <a href="https://www.anzlic.gov.au/sites/default/files/files/ePlan-Protocol-LandXML-Mapping-v2.1.4.pdf">ICSM mapping</a>); the downloaded FHWA OpenRoads examples follow this order. Verify a known control point instead of assuming every version or edited export behaves identically. Use stored coordinates if the file already contains Easting, Northing. Preparation preserves axis order; apply the same choice to matching geometry and terrains. Profile station/elevation and section offset/elevation pairs are not plan coordinates and must not be swapped.</p>
 <p><b>Units.</b> Metres, international feet and US survey feet are kept distinct. When a file declares a horizontal unit, the output CRS must use the same unit or the tool stops. Vertical units are never inferred from horizontal ones; if the file does not declare them, the log says so.</p>
 
+<section id="input-units"><h2>Units beside inputs</h2>
+<p>Every dimensional Processing input states its unit basis. Desktop dialogs show actual units such as <strong>Table station interval [ftUS]</strong>, <strong>Flag fills deeper than [ftUS]</strong> and <strong>Grid cell size [m]</strong>, refreshed from the file, output CRS and explicit choices. Horizontal and elevation units remain distinct. Unknown units say <strong>unknown</strong>. Labels never convert existing numbers or defaults. Model/batch parameter IDs and numeric meanings are unchanged; station intervals/ranges use continuous internal source stations, while grades and slope ratios are unitless.</p>
+<p>Section area labels identify the actual source horizontal × elevation units: matching feet display ft² or ftUS²; mixed or unknown elevations display ft·m or ft·unknown without changing numeric outputs.</p>
+<p>Customary scenes render with physically correct elevation proportions; paths retain source station units after reprojection, with 100-foot station notation and mph driving speeds. Structure CSV headings can explicitly use _m, _mm, _ft, _ftUS, _in or _yd, including legacy DiameterMM. Plain spans use output horizontal units; rises/inverts use source elevation units. Bare diameters remain in those units: the old guess that a diameter above 20 meant millimetres has been removed. Add explicit headings to affected schedules. Concept structure covers, walls and parapets retain their physical sizes; mixed-unit road crossfalls, batters and edge face areas are converted explicitly.</p>
+<p>For scenes, choose <strong>Vertical unit</strong> when absent from the file (or for raster-only scenes), and <strong>Raster elevation unit</strong> for DEMs lacking band-unit metadata. Declared band units take precedence per raster and are converted to the scene elevation unit. Unknown units are refused. These choices establish no vertical datum. Regenerate older scenes and section drawings to apply the corrected conversions and labels.</p></section>
 <h2 id="inspect"><span class="sec">5</span>Inspect LandXML first</h2>
 <p><b>Inspect LandXML</b> (Utilities) reads the file without converting anything and reports: the producing software and version, horizontal and vertical units, declared CRS, an axis-order warning, surfaces with point and face counts, alignments, design and surface profiles, cross-sections, breaklines, feature lines, coordinate bounds, the elevation range and any warnings. It can save the report as JSON for the project record.</p>
 <p>Use it to confirm that the file holds what you expect (for example that cross-sections are present before running corridor tools) and to decide on the coordinate interpretation.</p>
