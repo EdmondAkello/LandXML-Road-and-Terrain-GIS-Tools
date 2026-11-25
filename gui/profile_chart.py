@@ -291,6 +291,8 @@ class ProfileChart(QWidget):
         painter.restore()
 
     def _shade(self, painter, rows, x, y):
+        rows = [r for r in rows if all(math.isfinite(float(r.get(k) if r.get(k) is not None else math.nan))
+                                       for k in ("station", "design", "ground", "depth"))]
         if len(rows) < 2:
             return
         segment = [rows[0]]

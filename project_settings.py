@@ -25,6 +25,7 @@ GUIDE_SECTIONS = {
     "landxml_design_review": "review-run", "landxml_section_project": "section-editor",
     "landxml_build_corridor": "corridor-build", "landxml_export_roads": "export-roads",
     "landxml_export_design_stage": "export-stage", "landxml_export_dxf": "export-dxf",
+    "landxml_setting_out": "setting-out",
 }
 
 

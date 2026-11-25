@@ -231,7 +231,7 @@ a { color: var(--accent); }
     <tr><td>4. Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
     <tr><td>5. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference)</td></tr>
     <tr><td>6. Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
-    <tr><td>7. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report · Export 3D Scene and Viewer (Roads and Terrain)</td></tr>
+    <tr><td>7. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report · <a href="#setting-out">Setting-Out Data</a> · Export 3D Scene and Viewer (Roads and Terrain)</td></tr>
     <tr><td>8. Site grading (land development)</td><td><a href="#design-shapes">Design Surface from Shapes</a> · Grading Quantities (Volume Surface) · Platform Levels and Falls · Basin Stage–Storage · Earthwork Balance (Volume Surfaces) · Grading Revision Comparison (Volume Surfaces) · Grading Edge Analysis · Surface Classes · Site Grading Report · Export 3D Scene and Viewer (Site Grading)</td></tr>
     <tr><td>9. Corridor design</td><td><a href="#section-editor">Create Corridor Section Project</a> · <a href="#corridor-build">Build Corridor from Section Project</a> · <a href="#export-stage">Export Design for Civil 3D or OpenRoads (by Stage)</a> · <a href="#export-roads">Export Roads to LandXML</a> · <a href="#export-dxf">Export LandXML to DXF</a></td></tr>
     <tr><td>Outside the Toolbox</td><td><a href="#workflow">Workflow</a> panel, <a href="#plan-editor">Plan Editor</a>, <a href="#section-editor">Corridor Section Editor</a> and <a href="#grading-editor">Grading Editor</a> docks, the LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
@@ -643,6 +643,16 @@ a { color: var(--accent); }
 </figure>
 <p>The report also tabulates horizontal elements, vertical controls and superelevation transitions. Long alignments are split into strips (default 5,000 m per row). Select a <b>Design standard</b> to add the geometric design review (Part D) to each alignment.</p>
 
+<h3 id="setting-out">Setting-Out Data (alignment and feature lines)</h3>
+<p><b>Setting-Out Data (Alignment and Feature Lines)</b> (Reports and sheets) turns an alignment in any LandXML (a Civil 3D or OpenRoads design, or a corridor built here) into setting-out sheets, as an Excel workbook, an HTML report and a CSV of points for a total station or data collector (point, easting, northing, level, description):</p>
+<ul>
+  <li><b>Horizontal geometry</b>: every line, spiral and curve with its chainages, length, radius (or the spiral parameter A), turn, start and end coordinates and bearings in and out;</li>
+  <li><b>Key points</b> (BP, TS, SC, CS, ST, PC, PT, PCC, PRC, EP) and the <b>intersection points</b> with deflection, radius and spiral lengths;</li>
+  <li><b>Centreline stations</b> at the chosen interval with the key points added: easting, northing, whole-circle bearing from grid north, design and ground level and the cut or fill;</li>
+  <li><b>Feature lines</b> in the file (road edges, shoulders, drains, daylight): every point with its chainage and offset, and a sheet of the offset and level of each line at every station, the usual edge setting-out table.</li>
+</ul>
+<p>Coordinates are the file's, in its CRS and unit, easting before northing in the tables; choose the axis order the file stores. Positions are computed on the alignment densified to 0.25 m, good to the millimetre, and bearings to about a second. The workbook's Notes sheet records the source, CRS, units and profiles. Check against the drawings and the survey control before setting out.</p>
+
 <!-- ============================== PART D ============================== -->
 <h1 class="part"><span class="num">Part D</span>Geometric design review</h1>
 <p class="part-intro">Check the horizontal and vertical alignment, superelevation and roadside against a design standard, and get computed changes to apply in the design software.</p>
@@ -899,7 +909,7 @@ a { color: var(--accent); }
 <p><b>Export Roads to LandXML (Lines to Alignments and Profiles)</b> writes each line of a layer as an alignment: every vertex a PI, curves of the <code>radius</code> field (or the default) with spirals from <code>spiral_in</code>/<code>spiral_out</code>, reduced where they do not fit (and reported). Lines with Z get a design profile with a PVI at each vertex and vertical curves of <code>vc_length</code>; a DEM adds a ground profile. The name comes from the <code>name</code> field; coordinates are written in the layer's CRS with its EPSG code, in the axis order you choose.</p>
 
 <h2 id="export-dxf"><span class="sec">E6</span>Export LandXML to DXF</h2>
-<p><b>Export LandXML to DXF (Alignments, Feature Lines, Surfaces)</b> writes any LandXML (a built corridor, a Grading Editor build, a Civil 3D or OpenRoads export) as an ASCII DXF (AutoCAD R12) that Civil 3D, AutoCAD, BricsCAD and QGIS open without add-ons: each alignment as a polyline with station ticks and labels, each feature line and breakline as a 3D polyline (daylight lines and outlines on their own layers) and, optionally, each TIN surface as 3D faces. Layers are named by kind and object (<code>ALIGNMENT-…</code>, <code>FEATURE-…</code>, <code>DAYLIGHT-…</code>, <code>TIN-…</code>). Choose the file's axis order (Civil 3D writes northing first); coordinates, CRS and unit are the file's. For surfaces going on into design, LandXML remains the better route into Civil 3D; the DXF is for drawings, checking and CAD users.</p>
+<p><b>Export LandXML to DXF (Alignments, Feature Lines, Surfaces)</b> writes any LandXML (a built corridor, a Grading Editor build, a Civil 3D or OpenRoads export) as an ASCII DXF (AutoCAD 2018 format, the writer the Road Furniture Designer uses) that Civil 3D, AutoCAD, BricsCAD and QGIS open without add-ons: each alignment as a polyline with station ticks and labels, each feature line and breakline as a 3D polyline (daylight lines and outlines on their own layers) and, optionally, each TIN surface as 3D faces. Layers are named by kind and object (<code>ALIGNMENT-…</code>, <code>FEATURE-…</code>, <code>DAYLIGHT-…</code>, <code>TIN-…</code>). Choose the file's axis order (Civil 3D writes northing first); coordinates, CRS and unit are the file's. For surfaces going on into design, LandXML remains the better route into Civil 3D; the DXF is for drawings, checking and CAD users.</p>
 
 <h2 id="grading-editor"><span class="sec">E7</span>Grading Editor (pads and graded lines)</h2>
 <p>The <b>Grading Editor</b> draws and edits grading objects on the map like feature lines in Civil 3D, with a level at every vertex and the earthworks recomputed as you edit:</p>

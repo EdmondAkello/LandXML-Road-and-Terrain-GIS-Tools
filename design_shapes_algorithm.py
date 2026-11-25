@@ -401,20 +401,20 @@ def _epsg(crs):
 
 
 def _report(rows, cut, fill, unit, cell, dem_name):
-    head = ("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Design Surface from Shapes</title><style>"
-            "body{font-family:system-ui,sans-serif;margin:24px;color:#1d2430}table{border-collapse:collapse}"
-            "td,th{border:1px solid #d5dbe3;padding:4px 10px;text-align:right}td:first-child,th:first-child,td:nth-child(2)"
-            "{text-align:left}th{background:#eef2f6}</style></head><body>")
-    body = [f"<h1>Design Surface from Shapes</h1><p>Ground: {html.escape(dem_name)}; design grid {cell:g} {unit}. "
-            f"Volumes are bank (in-place) volumes in cubic {unit}s, each shape's cut and fill on the result of the shapes "
-            "before it.</p><table><tr><th>Shape</th><th>Type</th><th>Parameters</th><th>Cut</th><th>Fill</th></tr>"]
-    for row in rows:
-        params = ", ".join(f"{k} {v}" for k, v in row["values"].items() if k not in ("shape", "name", "order"))
-        body.append(f"<tr><td>{html.escape(row['label'])}</td><td>{row['kind']}</td><td>{html.escape(params) or 'defaults'}</td>"
-                    f"<td>{row['cut']:,.0f}</td><td>{row['fill']:,.0f}</td></tr>")
-    body.append(f"<tr><th>Total</th><th></th><th></th><th>{cut:,.0f}</th><th>{fill:,.0f}</th></tr></table>"
-                f"<p>Net: {fill - cut:+,.0f} (fill − cut).</p></body></html>")
-    return head + "".join(body)
+    from .landxml.reports import _cards, _document, _table
+
+    body = [_cards([("Cut", f"{cut:,.0f} {unit}³"), ("Fill", f"{fill:,.0f} {unit}³"),
+                    ("Net (fill − cut)", f"{fill - cut:+,.0f} {unit}³"), ("Shapes", str(len(rows))),
+                    ("Grid", f"{cell:g} {unit}")])]
+    table = [(row["label"], row["kind"],
+              ", ".join(f"{k} {v}" for k, v in row["values"].items() if k not in ("shape", "name", "order")) or "defaults",
+              row["cut"], row["fill"], row["fill"] - row["cut"]) for row in rows]
+    table.append(("Total", "", "", cut, fill, fill - cut))
+    body.append("<h2>Volumes by shape</h2><p class='note'>Bank (in-place) volumes in cubic " + html.escape(unit)
+                + "s; each shape's cut and fill is measured on the result of the shapes before it.</p>"
+                + _table(["Shape", "Type", "Parameters", "Cut", "Fill", "Net"], table))
+    return _document("Design Surface from Shapes", "".join(body), meta=[("Ground", dem_name)],
+                     kicker="Site grading · Design Surface from Shapes")
 
 
 __all__ = ["DesignShapesAlgorithm", "SHAPES", "os"]

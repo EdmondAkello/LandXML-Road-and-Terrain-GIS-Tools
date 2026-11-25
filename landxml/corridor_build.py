@@ -31,7 +31,7 @@ from .profile import read_profile_controls
 from .section_standards import load_section_standard
 from .superelevation import lane_slopes, read_superelevation
 from .tin_overlay import TinIndex
-from .writer import VerticalProfile, quoteattr, _fmt
+from .writer import VerticalProfile, civil3d_feature, civil3d_planfeatures, quoteattr, _fmt
 
 PROJECT_VERSION = 1
 
@@ -1052,7 +1052,7 @@ def surface_xml(name, xyz, faces, northing_first, desc=""):
     return f'<Surface name={quoteattr(name)}{d}><Definition surfType="TIN"><Pnts>{pts}</Pnts><Faces>{fs}</Faces></Definition></Surface>'
 
 
-def feature_line_xml(line, northing_first):
+def feature_line_xml(line, northing_first, site="Corridor"):
     parts = []
     for seg in line["segments"]:
         if seg[0] == "line":
@@ -1063,8 +1063,7 @@ def feature_line_xml(line, northing_first):
     locs = "".join(f'<Location desc="FeatureLine Elevation Point">{_pt3(p, northing_first)}</Location>'
                    for p in line["elevation_points"])
     return (f"<PlanFeature name={quoteattr(line['name'])} desc={quoteattr(line['code'])}><CoordGeom>{''.join(parts)}</CoordGeom>"
-            f'{locs}<Feature code="FeatureLine"><Property label="layer" value="C-ROAD-FEAT"/>'
-            f'<Property label="code" value={quoteattr(line["code"])}/></Feature></PlanFeature>')
+            f"{locs}{civil3d_feature(site, 'C-ROAD-FEAT', line['code'])}</PlanFeature>")
 
 
 def escape_ramps(result):
@@ -1277,9 +1276,12 @@ def write_corridor_landxml(result, path, include_ground_surface=False, target="c
         body += _ramp_alignment_xml(ramp, nf)
     text.append("<Alignments name=\"Corridor\">" + body + "</Alignments>")
     if lines:
-        writer = feature_line_xml if target == "civil3d" else plain_feature_line_xml
-        text.append('<PlanFeatures name="Corridor feature lines">' + "".join(writer(line, nf) for line in lines)
-                    + "</PlanFeatures>")
+        if target == "civil3d":
+            site = project.get("site") or "Corridor"
+            text.append(civil3d_planfeatures("".join(feature_line_xml(line, nf, site) for line in lines), site))
+        else:
+            text.append('<PlanFeatures name="Corridor feature lines">'
+                        + "".join(plain_feature_line_xml(line, nf) for line in lines) + "</PlanFeatures>")
     text.append("</LandXML>\n")
     with open(path, "w", encoding="utf-8") as stream:
         stream.write("".join(text))

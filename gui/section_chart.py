@@ -415,25 +415,47 @@ def section_svg(view, style, width=760, height=360):
 
 
 def _legend(painter, rect, colors, metrics):
+    """The legend inside ``rect``, wrapped onto as many rows as it needs (it never runs into the title block); the
+    text shrinks when even the rows do not fit."""
     items = [("Design", DESIGN_COLOR, "line"), ("Ground", GROUND_COLOR, "line"), ("Datum", DATUM_COLOR, "dash"),
              ("Fill", FILL_COLOR, "area"), ("Cut", CUT_COLOR, "area")]
     items += [(name, color, "layer") for name, color in colors.items()]
-    cursor = rect.left()
-    baseline = rect.center().y() + metrics.height() / 3
-    for label, color, kind in items:
-        if kind in ("line", "dash"):
-            painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.DashLine if kind == "dash" else Qt.PenStyle.SolidLine))
-            painter.drawLine(QPointF(cursor, baseline - 4), QPointF(cursor + 16, baseline - 4))
-        else:
-            fill = QColor(color)
-            if kind == "area":
-                fill.setAlphaF(0.45)
-            painter.setPen(QPen(QColor("#3c4350"), 0.5))
-            painter.setBrush(QBrush(fill))
-            painter.drawRect(QRectF(cursor, baseline - 9, 16, 9))
-        painter.setPen(QColor("#1d2430"))
-        painter.drawText(QPointF(cursor + 21, baseline), label)
-        cursor += 21 + metrics.horizontalAdvance(label) + 16
+    font = QFont(painter.font())
+    for _attempt in range(6):
+        metrics = QFontMetrics(font)
+        widths = [21 + metrics.horizontalAdvance(label) + 16 for label, _c, _k in items]
+        rows, row_w = [[]], 0.0
+        for item, w in zip(items, widths):
+            if rows[-1] and row_w + w > rect.width() - 8:
+                rows.append([])
+                row_w = 0.0
+            rows[-1].append((item, w))
+            row_w += w
+        line_h = metrics.height() * 1.25
+        if len(rows) * line_h <= rect.height() - 6 or font.pixelSize() <= 9:
+            break
+        font.setPixelSize(max(font.pixelSize() - 1, 9))
+    painter.save()
+    painter.setFont(font)
+    top = rect.top() + (rect.height() - len(rows) * line_h) / 2
+    for r, row in enumerate(rows):
+        cursor = rect.left()
+        baseline = top + line_h * (r + 0.75)
+        for (label, color, kind), w in row:
+            if kind in ("line", "dash"):
+                painter.setPen(QPen(QColor(color), 2, Qt.PenStyle.DashLine if kind == "dash" else Qt.PenStyle.SolidLine))
+                painter.drawLine(QPointF(cursor, baseline - 4), QPointF(cursor + 16, baseline - 4))
+            else:
+                fill = QColor(color)
+                if kind == "area":
+                    fill.setAlphaF(0.45)
+                painter.setPen(QPen(QColor("#3c4350"), 0.5))
+                painter.setBrush(QBrush(fill))
+                painter.drawRect(QRectF(cursor, baseline - 9, 16, 9))
+            painter.setPen(QColor("#1d2430"))
+            painter.drawText(QPointF(cursor + 21, baseline), label)
+            cursor += w
+    painter.restore()
 
 
 def write_section_sheets(
@@ -501,23 +523,33 @@ def write_section_sheets(
             painter.drawRect(cell)
         band = QRectF(margin, height - margin - footer + 6, width - 2 * margin, footer - 6)
         painter.setPen(QPen(QColor("#1d2430"), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(band)
+        # title block on the right, its own box; the legend fills the rest
+        title_w = min(max(band.width() * 0.34, 420.0), band.width() * 0.5)
+        block = QRectF(band.right() - title_w, band.top(), title_w, band.height())
+        painter.drawLine(QPointF(block.left(), block.top()), QPointF(block.left(), block.bottom()))
         painter.setFont(font)
-        _legend(painter, QRectF(band.left() + 10, band.top(), band.width() * 0.62, band.height()), colors, metrics)
+        _legend(painter, QRectF(band.left() + 10, band.top(), block.left() - band.left() - 20, band.height()), colors,
+                metrics)
         first = station_label(chunk[0]["station"], unit)
         last = station_label(chunk[-1]["station"], unit)
-        right = [title or "Cross-sections", f"{subtitle}  CH {first} – {last}".strip(), f"Sheet {page_index + 1} of {pages} · {stamp}"]
-        bold = QFont(font)
-        bold.setBold(True)
-        step = (band.height() - 12) / len(right)
-        for index, text in enumerate(right):
-            painter.setFont(bold if index == 0 else font)
+        lines = [(title or "Cross-sections", True), (f"{subtitle}".strip(), False),
+                 (f"CH {first} – {last}   ·   V:H {exaggeration:g}:1", False),
+                 (f"Sheet {page_index + 1} of {pages}   ·   {stamp}", False)]
+        lines = [item for item in lines if item[0]]
+        step = (block.height() - 8) / len(lines)
+        for index, (text, strong) in enumerate(lines):
+            f = QFont(font)
+            f.setBold(strong)
+            line_metrics = QFontMetrics(f)
+            while line_metrics.horizontalAdvance(text) > block.width() - 20 and f.pixelSize() > 9:
+                f.setPixelSize(f.pixelSize() - 1)
+                line_metrics = QFontMetrics(f)
+            text = line_metrics.elidedText(text, Qt.TextElideMode.ElideMiddle, int(block.width() - 20))
+            painter.setFont(f)
             painter.setPen(QColor("#1d2430"))
-            line_metrics = QFontMetrics(painter.font())
-            painter.drawText(
-                QPointF(band.right() - 10 - line_metrics.horizontalAdvance(text), band.top() + 2 + step * (index + 1)),
-                text,
-            )
+            painter.drawText(QPointF(block.left() + 10, block.top() + 4 + step * (index + 0.72)), text)
         painter.setFont(font)
         if progress is not None:
             progress(int(100 * (page_index + 1) / pages))

@@ -82,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 35)
+        self.assertEqual(len(self.algorithms), 36)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_every_tool_opens_its_section_of_the_bundled_guide(self):
@@ -179,6 +179,22 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertIn("ALIGNMENT-Access_road", names)
             self.assertIn("STATIONS-Access_road", names)
             env = next(g for name, g in features if name == "ALIGNMENT-Access_road" and g is not None).GetEnvelope()
+            # setting-out data from the same file
+            so_tool = self.algorithms["landxml_setting_out"]
+            with self.assertRaises(QgsProcessingException):
+                so_tool.processAlgorithm({"INPUT": out, "ALIGNMENT": "Access road", "AXIS_ORDER": 0, "PROFILE": "",
+                                          "INTERVAL": 25.0, "FEATURE_LINES": True, "DECIMALS": 1,
+                                          "OUTPUT_XLSX": os.path.join(directory, "so.xlsx")}, self.context, self.feedback)
+            done_so = so_tool.processAlgorithm({"INPUT": out, "ALIGNMENT": "Access road", "AXIS_ORDER": 1, "PROFILE": "",
+                                                "INTERVAL": 25.0, "FEATURE_LINES": True, "DECIMALS": 1,
+                                                "OUTPUT_XLSX": os.path.join(directory, "so.xlsx"),
+                                                "REPORT": os.path.join(directory, "so.html"),
+                                                "OUTPUT_CSV": os.path.join(directory, "so.csv")}, self.context, self.feedback)
+            self.assertGreater(done_so["STATIONS"], 30)
+            self.assertTrue(os.path.getsize(done_so["OUTPUT_XLSX"]) > 2000)
+            first = Path(done_so["OUTPUT_CSV"]).read_text(encoding="utf-8").splitlines()[1].split(",")
+            self.assertAlmostEqual(float(first[1]), 500000.0, places=3)                 # easting first in the outputs
+            self.assertAlmostEqual(float(first[3]), 1500.0, places=2)                   # design level at the start
             self.assertAlmostEqual(env[0], 500000.0, places=2)                         # X = easting
             self.assertAlmostEqual(env[2], 9900000.0, places=2)
 
@@ -268,7 +284,7 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertEqual(self.algorithms[name].groupId(), "road_design_extraction")
         self.assertEqual(self.algorithms["landxml_dem_to_tin"].groupId(), "terrain_conversion")
         self.assertEqual(self.algorithms["landxml_design_shapes"].groupId(), "site_grading")
-        for name in ("landxml_design_report", "landxml_cross_section_sheets"):
+        for name in ("landxml_design_report", "landxml_cross_section_sheets", "landxml_setting_out"):
             self.assertEqual(self.algorithms[name].group(), groups[-3])
             self.assertEqual(self.algorithms[name].groupId(), "reports")
         for name in ("landxml_grading_quantities", "landxml_platform_levels", "landxml_basin_storage",

@@ -101,6 +101,11 @@ class BuildTests(unittest.TestCase):
             yard = next(f for f in feats if f.name == "Yard outline")
             self.assertEqual([round(p[2], 3) for p in yard.points], [101.5, 102.0, 102.5, 102.0, 101.5])
             self.assertTrue(any(f.name.startswith("Daylight") for f in feats))
+            with open(out, encoding="utf-8") as handle:
+                text = handle.read()
+            self.assertIn('<PlanFeatures name="Site -Grading- FeatureLines">', text)       # Civil 3D feature lines
+            self.assertEqual(text.count('source="Autodesk Civil 3D"'), len(feats) + 1)
+            self.assertLess(max(len(f.points) for f in feats), 600)                      # thinned daylight lines
             xyz, faces, _m = read_tin(out, "Design")
             self.assertGreater(len(faces), 1000)
             objects, ground_spec, epsg = go.load(os.path.join(directory, "g.json"))

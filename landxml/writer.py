@@ -406,19 +406,40 @@ def surface_xml(surface, northing_first=True):
             f"<Faces>{faces}</Faces></Definition></Surface>")
 
 
-def feature_line_xml(line, northing_first=True):
-    """A PlanFeature of 3D <Line> segments with Feature code="FeatureLine" (as Civil 3D exports and imports them)."""
+CIVIL3D_SOURCE = "Autodesk Civil 3D"
+FEATURE_LAYER = "C-TOPO-FEAT"
+
+
+def civil3d_feature(site="", layer=FEATURE_LAYER, code=""):
+    """The <Feature> Civil 3D needs to import a PlanFeature as a feature line (without it: a 3D polyline, whose arcs
+    become chords). ``site`` names the Civil 3D site (the import dialog can override it)."""
+    props = (f'<Property label="site" value={quoteattr(site)}/>' if site else "") + \
+        f'<Property label="layer" value={quoteattr(layer)}/>' + \
+        (f'<Property label="code" value={quoteattr(code)}/>' if code else "")
+    return f'<Feature code="FeatureLine" source="{CIVIL3D_SOURCE}">{props}</Feature>'
+
+
+def civil3d_planfeatures(body, site=""):
+    """A <PlanFeatures> collection as Civil 3D writes one, with its FeatureLines <Feature>."""
+    name = f"Site -{site}- FeatureLines" if site else "Siteless FeatureLines"
+    prop = f'<Property label="site" value={quoteattr(site)}/>' if site else ""
+    return (f"<PlanFeatures name={quoteattr(name)}>{body}"
+            f'<Feature code="FeatureLines" source="{CIVIL3D_SOURCE}">{prop}</Feature></PlanFeatures>')
+
+
+def feature_line_xml(line, northing_first=True, site=""):
+    """A PlanFeature of 3D <Line> segments that Civil 3D imports as a feature line."""
     def p3(point):
         return f"{_pt(point[:2], northing_first)} {_fmt(point[2])}"
     segments = "".join(f"<Line><Start>{p3(a)}</Start><End>{p3(b)}</End></Line>" for a, b in zip(line.points, line.points[1:]))
     desc = f" desc={quoteattr(line.desc)}" if line.desc else ""
     return (f"<PlanFeature name={quoteattr(line.name)}{desc}><CoordGeom>{segments}</CoordGeom>"
-            '<Feature code="FeatureLine"/></PlanFeature>')
+            f"{civil3d_feature(site, code=line.desc or '')}</PlanFeature>")
 
 
 def landxml_text(alignments, linear_unit="meter", epsg=None, northing_first=True, project="", group="Alignments",
                  surfaces=(), feature_lines=(), vertical_unit=None,
-                 application=APPLICATION):
+                 application=APPLICATION, site="Design"):
     """The LandXML document for [(HorizontalAlignment, [VerticalProfile, ...]), ...], TIN ``surfaces`` and
     ``feature_lines`` as text."""
     if linear_unit not in UNITS:
@@ -471,7 +492,7 @@ def landxml_text(alignments, linear_unit="meter", epsg=None, northing_first=True
         if len(line.points) < 2:
             raise ValueError(f"Feature line '{line.name}' needs at least two points.")
     if feature_lines:
-        text += '<PlanFeatures name="Feature lines">' + "".join(feature_line_xml(line, northing_first) for line in feature_lines) + "</PlanFeatures>"
+        text += civil3d_planfeatures("".join(feature_line_xml(line, northing_first, site) for line in feature_lines), site)
     return text + "</LandXML>\n"
 
 

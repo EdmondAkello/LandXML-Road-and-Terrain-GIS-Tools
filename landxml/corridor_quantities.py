@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import html
+import os
 import json
 import math
 import zipfile
@@ -335,68 +336,84 @@ def comparison_rows(comparison):
 # HTML summary
 # ----------------------------------------------------------------------------------------------------------------
 def report_html(result, q, title="Corridor build", comparison=None):
+    """The corridor build report: summary figures, design basis, regions, superelevation, widening, features, the
+    quantities grouped by kind, advisory departures, warnings and an optional variant comparison."""
+    from .reports import _cards, _document, _table, station_label
+
     ctx = result.context
     project = ctx["project"]
     e = html.escape
-    parts = [f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{e(title)}</title><style>"
-             "body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#222}table{border-collapse:collapse;margin:8px 0}"
-             "td,th{border:1px solid #ccc;padding:3px 8px;font-size:13px}th{background:#eef2f5;text-align:left}"
-             "td.n{text-align:right}.dep{color:#9a5b00}.warn{color:#a00}</style></head><body>"]
-    parts.append(f"<h1>{e(title)}</h1><p>Alignment <b>{e(project['alignment'])}</b>, profile <b>{e(ctx['profile'].name)}</b>; "
-                 f"standard <b>{e(ctx['standard'].name)}</b> (advisory); design speed {project.get('design_speed'):g}; "
-                 f"{len(result.sections)} sections from {result.stations[0]:.2f} to {result.stations[-1]:.2f}.</p>")
-    parts.append("<h2>Regions</h2><table><tr><th>From</th><th>To</th><th>Assembly</th><th>Transition</th></tr>")
-    for r in ctx["regions"]:
-        parts.append(f"<tr><td class=n>{r['start']:.2f}</td><td class=n>{r['end']:.2f}</td><td>{e(r['assembly'])}</td>"
-                     f"<td class=n>{float(r.get('transition') or 0):g}</td></tr>")
-    parts.append("</table>")
+    unit = q.get("unit", "m")
+    hu = "meter" if unit == "m" else "foot"
+
+    def ch(v):
+        return station_label(float(v), hu)
+
+    items = q["items"]
+    totals = q.get("totals", {})
+    footprint = items.get("earthworks/footprint", {}).get("quantity")
+    cards = [("Cut", f"{totals.get('cut', 0):,.0f} {unit}³"), ("Fill", f"{totals.get('fill', 0):,.0f} {unit}³"),
+             ("Net (fill − cut)", f"{totals.get('fill', 0) - totals.get('cut', 0):+,.0f} {unit}³"),
+             ("Length", f"{result.stations[-1] - result.stations[0]:,.1f} {unit}"), ("Sections", f"{len(result.sections):,d}")]
+    if footprint:
+        cards.append(("Footprint", f"{footprint:,.0f} {unit}²"))
+    body = [_cards(cards)]
+    basis = [("Alignment", project["alignment"]), ("Design profile", ctx["profile"].name),
+             ("Section standard (advisory)", ctx["standard"].name), ("Design speed", f"{project.get('design_speed'):g}"),
+             ("Chainage", f"{ch(result.stations[0])} – {ch(result.stations[-1])}"),
+             ("Ground", (project.get("ground") or {}).get("name") or (project.get("ground") or {}).get("surface")
+              or os.path.basename((project.get("ground") or {}).get("path") or "")
+              or (project.get("ground") or {}).get("type", "none")),
+             ("Superelevation", (project.get("superelevation") or {}).get("source", "")),
+             ("Earthworks", "average end area between sections, cut and fill to the datum (bank volumes)")]
+    body.append("<h2>Design basis</h2>" + _table(["Item", "Value"], basis))
+    body.append("<h2>Regions</h2>" + _table(["From", "To", "Assembly", "Transition"],
+                                           [(ch(r["start"]), ch(r["end"]), r["assembly"], float(r.get("transition") or 0))
+                                            for r in ctx["regions"]]))
     sch = ctx["schedules"]
     if sch.records:
-        parts.append("<h2>Superelevation</h2><table><tr><th>Curve</th><th>Rate %</th><th>Runout</th><th>Runoff</th>"
-                     "<th>Full</th><th>Source</th></tr>")
-        for r in sch.records:
-            parts.append(f"<tr><td class=n>{r.get('curve_start', r['full_start']):.1f}</td><td class=n>{r['rate']:.2f}</td>"
-                         f"<td class=n>{r['begin_runout']:.1f}</td><td class=n>{r['begin_runoff']:.1f}</td>"
-                         f"<td class=n>{r['full_start']:.1f}-{r['full_end']:.1f}</td><td>{e(r.get('source', ''))}</td></tr>")
-        parts.append("</table>")
+        body.append("<h2>Superelevation</h2>" + _table(
+            ["Curve", "Rate %", "Runout", "Runoff", "Full from", "Full to", "Source"],
+            [(ch(r.get("curve_start", r["full_start"])), r["rate"], ch(r["begin_runout"]), ch(r["begin_runoff"]),
+              ch(r["full_start"]), ch(r["full_end"]), r.get("source", "")) for r in sch.records]))
     if sch.widen:
-        parts.append("<h2>Curve widening</h2><table><tr><th>From</th><th>Full</th><th>To</th><th>Width</th><th>Source</th></tr>")
-        for w in sch.widen:
-            a, b, c, d = w["stations"]
-            parts.append(f"<tr><td class=n>{a:.1f}</td><td class=n>{b:.1f}-{c:.1f}</td><td class=n>{d:.1f}</td>"
-                         f"<td class=n>{w['width']:.2f}</td><td>{e(w['ref'])}</td></tr>")
-        parts.append("</table>")
+        body.append("<h2>Curve widening</h2>" + _table(
+            ["From", "Full from", "Full to", "To", "Width", "Source"],
+            [(ch(w["stations"][0]), ch(w["stations"][1]), ch(w["stations"][2]), ch(w["stations"][3]), w["width"], w["ref"])
+             for w in sch.widen]))
     feats = ctx.get("features", [])
     if feats:
-        parts.append("<h2>Corridor features</h2><table><tr><th>Feature</th><th>Side</th><th>Chainages</th><th>Source</th></tr>")
-        for f in feats:
-            a, b, c, d = f["spans"]
-            parts.append(f"<tr><td>{e(f['label'])}</td><td>{e(f['side'])}</td><td class=n>{a:.1f} / {b:.1f} - {c:.1f} / {d:.1f}</td>"
-                         f"<td>{e(f['ref'])}</td></tr>")
-        parts.append("</table>")
-    parts.append("<h2>Quantities</h2><table><tr><th>Quantity</th><th>Unit</th><th>Value</th></tr>")
-    for key in sorted(q["items"]):
-        item = q["items"][key]
-        parts.append(f"<tr><td>{e(item['description'])}</td><td>{e(item['unit'])}</td><td class=n>{item['quantity']:,.2f}</td></tr>")
-    parts.append("</table>")
+        body.append("<h2>Corridor features</h2>" + _table(
+            ["Feature", "Side", "Taper in", "Full from", "Full to", "Taper out", "Source"],
+            [(f["label"], f["side"], *(ch(v) for v in f["spans"]), f["ref"]) for f in feats]))
+    groups = {}
+    for key in sorted(items):
+        groups.setdefault(key.split("/")[0], []).append(items[key])
+    names = {"earthworks": "Earthworks", "courses": "Pavement courses", "areas": "Areas", "linear": "Linear items",
+             "count": "Counted items", "shapes": "Pavement courses"}
+    body.append("<h2>Quantities</h2><p class='note'>Measured from the built sections; no rate is assumed. The bill of "
+                "quantities workbook prices them from your item list.</p>")
+    for group, rows in groups.items():
+        body.append(f"<h3>{e(names.get(group, group.replace('_', ' ').capitalize()))}</h3>"
+                    + _table(["Quantity", "Unit", "Value"], [(i["description"], i["unit"], float(i["quantity"])) for i in rows]))
     if result.checks:
-        parts.append("<h2>Departures from the standard (advisory)</h2><ul>")
-        for c in result.checks:
-            parts.append(f"<li class=dep>{e(c.get('assembly', ''))}, {e(c.get('side', ''))}: {e(c['message'])}</li>")
-        parts.append("</ul>")
+        body.append("<h2>Departures from the standard (advisory)</h2>"
+                    "<p class='note'>Values outside the standard's ranges. The corridor is built as designed; record "
+                    "any departure in the usual way.</p>"
+                    + _table(["Assembly", "Side", "Departure"],
+                             [(c.get("assembly", ""), c.get("side", ""), c["message"]) for c in result.checks]))
     if result.warnings:
-        parts.append("<h2>Warnings</h2><ul>" + "".join(f"<li class=warn>{e(w)}</li>" for w in result.warnings) + "</ul>")
+        body.append("<h2>Warnings</h2>" + _table(["Warning"], [(w,) for w in result.warnings]))
     if comparison is not None:
         a, b = comparison["labels"]
-        parts.append(f"<h2>Variant comparison: {e(a)} vs {e(b)}</h2><table><tr><th>Quantity</th><th>Unit</th><th>{e(a)}</th>"
-                     f"<th>{e(b)}</th><th>Difference</th><th>%</th></tr>")
-        for r in comparison["rows"]:
-            pct = f"{r['percent']:+.1f}" if r["percent"] is not None else ""
-            parts.append(f"<tr><td>{e(r['key'])}</td><td>{e(r['unit'])}</td><td class=n>{r['a']:,.2f}</td>"
-                         f"<td class=n>{r['b']:,.2f}</td><td class=n>{r['difference']:+,.2f}</td><td class=n>{pct}</td></tr>")
-        parts.append("</table>")
-    parts.append("</body></html>")
-    return "".join(parts)
+        body.append(f"<h2>Variant comparison: {e(a)} vs {e(b)}</h2>" + _table(
+            ["Quantity", "Unit", a, b, "Difference", "%"],
+            [(r["key"], r["unit"], float(r["a"]), float(r["b"]), f"{r['difference']:+,.2f}",
+              f"{r['percent']:+.1f}" if r["percent"] is not None else "–") for r in comparison["rows"]]))
+    meta = [("Alignment", project["alignment"]), ("Source", os.path.basename(project.get("landxml", "")))]
+    if project.get("crs"):
+        meta.append(("CRS", project["crs"]))
+    return _document(title, "".join(body), meta=meta, kicker="Corridor design · Section Editor build")
 
 
 __all__ = ["quantities", "course_totals", "default_items", "read_items", "boq_rows", "write_boq", "write_xlsx",

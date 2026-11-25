@@ -14,6 +14,7 @@ from .gui.dock_utils import close_pop_out, reveal
 from .provider import LandXMLTinToGeoTIFFProvider
 
 MENU = "LandXML Road && Terrain"
+BOTTOM_DOCKS = ("LandXMLProfileViewer", "LandXMLCorridorSectionEditor", "LandXMLPlanEditor", "LandXMLGradingEditor")
 
 
 class LandXMLTinToGeoTIFFPlugin:
@@ -97,6 +98,20 @@ class LandXMLTinToGeoTIFFPlugin:
             pass
         self._welcome_once()
 
+    def _dock(self, dock, area, beside=()):
+        """Add a dock; tabify it with an existing dock (by object name) in the same area instead of splitting the
+        area, so the Processing Toolbox and the other panels keep their height."""
+        self.iface.addDockWidget(area, dock)
+        window = self.iface.mainWindow()
+        if window is None or not hasattr(window, "tabifyDockWidget"):
+            return
+        from qgis.PyQt.QtWidgets import QDockWidget
+        for name in beside:
+            other = window.findChild(QDockWidget, name)
+            if other is not None and other is not dock and not other.isHidden() and window.dockWidgetArea(other) == area:
+                window.tabifyDockWidget(other, dock)
+                break
+
     def _toolbar_clicked(self, *_args):
         menu = getattr(self, "toolbar_menu", None)
         if menu is not None:
@@ -139,7 +154,7 @@ class LandXMLTinToGeoTIFFPlugin:
             self.viewer = ProfileViewerDock(self.iface, self.iface.mainWindow())
             self.viewer.design_panel.saved.connect(self._profile_saved)
             self.viewer.design_panel.saved.connect(lambda path, alignment, _p: self._record("profile", path, alignment))
-            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.viewer)
+            self._dock(self.viewer, Qt.DockWidgetArea.BottomDockWidgetArea, BOTTOM_DOCKS)
         reveal(self.viewer)
         return self.viewer
 
@@ -162,7 +177,7 @@ class LandXMLTinToGeoTIFFPlugin:
             self.section_editor.built.connect(lambda path, alignment: self._ensure_viewer().load(path, alignment))
             self.section_editor.design_profile.connect(lambda path, alignment: self._ensure_viewer().design(path, alignment))
             self.section_editor.built.connect(lambda path, alignment: self._record("corridor", path, alignment))
-            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.section_editor)
+            self._dock(self.section_editor, Qt.DockWidgetArea.BottomDockWidgetArea, BOTTOM_DOCKS)
         reveal(self.section_editor)
         return self.section_editor
 
@@ -179,7 +194,7 @@ class LandXMLTinToGeoTIFFPlugin:
             self.plan_editor.design_profile.connect(lambda path, name: self._ensure_viewer().design(path, name))
             self.plan_editor.saved.connect(lambda path, name: self._record("plan", path, name))
             self.plan_editor.to_section_editor.connect(lambda path, _name: self.show_section_editor().set_file(path))
-            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.plan_editor)
+            self._dock(self.plan_editor, Qt.DockWidgetArea.BottomDockWidgetArea, BOTTOM_DOCKS)
         reveal(self.plan_editor)
         return self.plan_editor
 
@@ -189,7 +204,7 @@ class LandXMLTinToGeoTIFFPlugin:
 
             self.grading_editor = GradingEditorDock(self.iface, self.iface.mainWindow())
             self.grading_editor.built.connect(lambda path: self._record("site", path, ""))
-            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.grading_editor)
+            self._dock(self.grading_editor, Qt.DockWidgetArea.BottomDockWidgetArea, BOTTOM_DOCKS)
         reveal(self.grading_editor)
         return self.grading_editor
 
@@ -206,7 +221,7 @@ class LandXMLTinToGeoTIFFPlugin:
             self.workflow = WorkflowDock(self, self.iface.mainWindow())
             for kind, (path, name) in self.results.items():
                 self.workflow.set_file(kind, path, name)
-            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.workflow)
+            self._dock(self.workflow, Qt.DockWidgetArea.RightDockWidgetArea, ("ProcessingToolbox", "LayerStyling"))
         reveal(self.workflow)
         return self.workflow
 
@@ -215,7 +230,7 @@ class LandXMLTinToGeoTIFFPlugin:
             from .gui.station_locator import StationOffsetDock
 
             self.locator = StationOffsetDock(self.iface, self.iface.mainWindow())
-            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.locator)
+            self._dock(self.locator, Qt.DockWidgetArea.RightDockWidgetArea, ("LandXMLWorkflow", "ProcessingToolbox"))
         reveal(self.locator)
 
     def unload(self):
