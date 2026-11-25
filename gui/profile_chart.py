@@ -42,6 +42,11 @@ class ProfileChart(QWidget):
 
     stationHovered = pyqtSignal(object)  # float station or None
     stationClicked = pyqtSignal(float)
+    designEdited = pyqtSignal()          # the profile being designed changed (drag, add, delete)
+    pviSelected = pyqtSignal(object)     # index of the selected PVI, or None
+    pviMenuRequested = pyqtSignal(int, object)   # PVI index, global position for a context menu
+
+    HANDLE = 9.0                         # pixels: how close a click must be to grab a PVI
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,9 +68,13 @@ class ProfileChart(QWidget):
         self._drag = None
         self._full = None
         self._view = None
+        self.editor = None               # a ProfileDesign while the profile editor is on
+        self.selected_pvi = None
+        self._edit = None                # (index, undo mark) while a PVI is dragged
+        self._frozen_y = None            # the level range is held while dragging, so the chart does not jump
 
     # ----------------------------------------------------------- data
-    def set_data(self, lines, runs=(), transitions=(), controls=(), title="", horizontal_unit=None):
+    def set_data(self, lines, runs=(), transitions=(), controls=(), title="", horizontal_unit=None, keep_view=False):
         self.lines = list(lines)
         self.runs = list(runs)
         self.transitions = list(transitions)
@@ -73,8 +82,11 @@ class ProfileChart(QWidget):
         self.title = title
         self.horizontal_unit = horizontal_unit
         stations = [p[0] for line in self.lines for part in line["parts"] for p in part]
-        self._full = (min(stations), max(stations)) if stations else None
-        self._view = self._full
+        full = (min(stations), max(stations)) if stations else None
+        keep = keep_view and self._view is not None and full is not None and self._full == full
+        self._full = full
+        if not keep:
+            self._view = self._full
         self._hover = None
         self.update()
 
@@ -121,7 +133,9 @@ class ProfileChart(QWidget):
         return part[i0:i1]
 
     def _y_range(self, low, high):
-        values = []
+        if self._frozen_y is not None:
+            return self._frozen_y
+        values = [p[1] for p in self.editor.pvis if low <= p[0] <= high] if self.editor is not None else []
         for line in self.lines:
             for part in line["parts"]:
                 values.extend(p[1] for p in self._visible(part, low, high))
@@ -234,6 +248,8 @@ class ProfileChart(QWidget):
                     if control.get("k_value"):
                         text += f" K{control['k_value']:.0f}"
                     painter.drawText(QPointF(px + 5, py - 6), text)
+        if self.editor is not None:
+            self._render_editor(painter, plot, low, high, x, y, metrics)
         if self.marker_station is not None and low <= self.marker_station <= high:
             painter.setPen(QPen(QColor("#d23c3c"), 1.4, Qt.PenStyle.DashLine))
             painter.drawLine(QPointF(x(self.marker_station), plot.top()), QPointF(x(self.marker_station), plot.bottom()))
@@ -293,6 +309,75 @@ class ProfileChart(QWidget):
                     painter.setBrush(QBrush(color))
                     painter.drawPolygon(polygon)
                 segment = [row]
+
+    def _render_editor(self, painter, plot, low, high, x, y, metrics):
+        """The design's tangents (dashed), curve extents, grades, K values and PVI handles."""
+        pvis = self.editor.pvis
+        painter.setPen(QPen(QColor("#8a5a00"), 1, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolyline(QPolygonF([QPointF(x(s), y(z)) for s, z, _l in pvis]))
+        label_pen = QPen(QColor("#8a5a00"))
+        for i in range(len(pvis) - 1):                                  # grade on each tangent
+            s0, z0 = pvis[i][:2]
+            s1, z1 = pvis[i + 1][:2]
+            if s1 < low or s0 > high or x(s1) - x(s0) < 60:
+                continue
+            text = f"{self.editor.grade(i) * 100:+.2f} %"
+            mx, my = (x(s0) + x(s1)) / 2, (y(z0) + y(z1)) / 2
+            painter.setPen(label_pen)
+            painter.drawText(QPointF(mx - metrics.horizontalAdvance(text) / 2, my - 7), text)
+        for curve in self.editor.curves():                               # curve extents and K
+            if not low <= curve["station"] <= high:
+                continue
+            z = pvis[curve["index"]][1]
+            if curve["length"]:
+                painter.setPen(QPen(QColor("#8a5a00"), 1.2))
+                for s in (curve["start"], curve["end"]):
+                    level = self.editor.level(s)
+                    painter.drawLine(QPointF(x(s), y(level) - 5), QPointF(x(s), y(level) + 5))
+            text = f"K {curve['k']:.1f}" if curve["k"] else "no curve"
+            painter.setPen(label_pen)
+            painter.drawText(QPointF(x(curve["station"]) + 8, y(z) + (16 if curve["kind"] == "sag" else -10)), text)
+        for i, (s, z, _l) in enumerate(pvis):                            # handles
+            if not low <= s <= high:
+                continue
+            chosen = i == self.selected_pvi
+            painter.setPen(QPen(QColor("#ffffff" if chosen else "#8a5a00"), 1.5))
+            painter.setBrush(QBrush(QColor("#d97706" if chosen else "#ffffff")))
+            size = 6.0 if chosen else 4.5
+            painter.drawRect(QRectF(x(s) - size, y(z) - size, 2 * size, 2 * size))
+
+    def _frame(self):
+        """(plot, low, high, z0, z1) of the widget as painted now."""
+        plot, _depth = self._layout(QRectF(self.rect()))
+        low, high = self._view
+        z0, z1 = self._y_range(low, high)
+        return plot, low, high, z0, z1
+
+    def _to_design(self, point):
+        """(station, level) under a widget point."""
+        plot, low, high, z0, z1 = self._frame()
+        s = low + (point.x() - plot.left()) / max(plot.width(), 1.0) * (high - low)
+        z = z1 - (point.y() - plot.top()) / max(plot.height(), 1.0) * (z1 - z0)
+        return s, z
+
+    def _pvi_at(self, point):
+        if self.editor is None or self._view is None:
+            return None
+        plot, low, high, z0, z1 = self._frame()
+        best = None
+        for i, (s, z, _l) in enumerate(self.editor.pvis):
+            px = plot.left() + (s - low) / ((high - low) or 1.0) * plot.width()
+            py = plot.top() + (z1 - z) / ((z1 - z0) or 1.0) * plot.height()
+            d = math.hypot(px - point.x(), py - point.y())
+            if d <= self.HANDLE and (best is None or d < best[0]):
+                best = (d, i)
+        return best[1] if best else None
+
+    def select_pvi(self, index):
+        self.selected_pvi = index
+        self.pviSelected.emit(index)
+        self.update()
 
     def _render_depth(self, painter, rect, low, high, x, metrics, text_pen, grid):
         d0, d1 = self._depth_range(low, high)
@@ -406,6 +491,17 @@ class ProfileChart(QWidget):
 
     def mouseMoveEvent(self, event):
         point = _event_point(event)
+        if self._edit is not None:
+            index, _mark = self._edit
+            station, level = self._to_design(point)
+            vertical_only = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            try:
+                self.editor.move(index, None if vertical_only else round(station, 1), round(level, 3))
+            except ValueError:
+                pass
+            self.designEdited.emit()
+            self.update()
+            return
         if self._drag is not None and self._view is not None:
             plot, _ = self._layout(QRectF(self.rect()))
             start_x, (low, high) = self._drag
@@ -435,11 +531,30 @@ class ProfileChart(QWidget):
         self.update()
 
     def mousePressEvent(self, event):
+        index = self._pvi_at(_event_point(event)) if self.editor is not None else None
+        if index is not None and event.button() == Qt.MouseButton.RightButton:
+            self.select_pvi(index)
+            point = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+            self.pviMenuRequested.emit(index, point)
+            return
+        if index is not None and event.button() == Qt.MouseButton.LeftButton:
+            self.select_pvi(index)
+            self._frozen_y = self._frame()[3:]
+            self._edit = (index, self.editor.mark())
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._view is not None:
             self._drag = (_event_point(event).x(), self._view)
             self._press_x = _event_point(event).x()
 
     def mouseReleaseEvent(self, event):
+        if self._edit is not None:
+            _index, mark = self._edit
+            self.editor.squash(mark)                    # the whole drag is one undo step
+            self._edit = None
+            self._frozen_y = None
+            self.designEdited.emit()
+            self.update()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             moved = abs(_event_point(event).x() - getattr(self, "_press_x", 0.0)) > 3
             self._drag = None
@@ -447,7 +562,31 @@ class ProfileChart(QWidget):
                 self.stationClicked.emit(float(self._hover))
 
     def mouseDoubleClickEvent(self, event):
+        if self.editor is not None and self._view is not None:
+            point = _event_point(event)
+            plot = self._frame()[0]
+            if plot.contains(point) and self._pvi_at(point) is None:
+                station, level = self._to_design(point)
+                try:
+                    self.select_pvi(self.editor.add(round(station, 1), round(level, 3)))
+                except ValueError:
+                    return
+                self.designEdited.emit()
+                self.update()
+                return
         self.fit()
+
+    def keyPressEvent(self, event):
+        if self.editor is not None and self.selected_pvi is not None and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            try:
+                self.editor.delete(self.selected_pvi)
+            except ValueError:
+                return
+            self.select_pvi(None)
+            self.designEdited.emit()
+            self.update()
+            return
+        super().keyPressEvent(event)
 
     def wheelEvent(self, event):
         if self._view is None or self._full is None:

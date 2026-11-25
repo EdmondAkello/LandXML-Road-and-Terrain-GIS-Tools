@@ -46,6 +46,24 @@ def guide_url(section=""):
     return url.toString()
 
 
+def open_guide(section=""):
+    """Open the user guide (at ``section``) in the system's browser; returns whether it opened."""
+    from qgis.PyQt.QtCore import QUrl
+    from qgis.PyQt.QtGui import QDesktopServices
+
+    return QDesktopServices.openUrl(QUrl(guide_url(section)))
+
+
+def plugin_version():
+    """The plugin's version from metadata.txt ('' when it cannot be read)."""
+    import configparser
+    import os
+
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(os.path.join(os.path.dirname(__file__), "metadata.txt"), encoding="utf-8")
+    return parser.get("general", "version", fallback="")
+
+
 class ProjectSettingsAlgorithm(QgsProcessingAlgorithm):
     def helpUrl(self):
         return guide_url(GUIDE_SECTIONS.get(self.name(), ""))
