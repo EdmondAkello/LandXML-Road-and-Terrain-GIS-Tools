@@ -142,6 +142,7 @@ class WorkflowDock(QgsDockWidget):
         self._menu([("Road Design Report…", lambda: self._dialog("landxml_design_report", {"INPUT": path})),
                     ("Geometric Design Review…", lambda: self._dialog("landxml_design_review", {"INPUT": path})),
                     ("Cross-Section Sheets…", lambda: self._dialog("landxml_cross_section_sheets", {"INPUT": path})),
+                    ("Setting-Out Data…", lambda: self._dialog("landxml_setting_out", {"INPUT": path})),
                     ("Export 3D Scene and Viewer…", lambda: self._dialog("landxml_3d_scene", {"INPUT": path})),
                     ("Open in the Profile Viewer", lambda: latest and self.plugin._ensure_viewer().load(*latest))])
 
@@ -150,6 +151,8 @@ class WorkflowDock(QgsDockWidget):
         path = latest[0] if latest else ""
         self._menu([("Civil 3D or OpenRoads, by stage… (Section Editor)", self._export_stage),
                     ("DXF…", lambda: self._dialog("landxml_export_dxf", {"INPUT": path})),
+                    ("Setting-out data (Excel, report, total-station CSV)…",
+                     lambda: self._dialog("landxml_setting_out", {"INPUT": path})),
                     ("Road Furniture Designer (signs and markings)", self._rfd)])
 
     def _export_stage(self):

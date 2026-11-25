@@ -494,6 +494,19 @@ class SectionEditorTests(unittest.TestCase):
         finally:
             QgsProject.instance().removeMapLayer(layer.id())
 
+    def test_hover_on_an_empty_chart(self):
+        """Moving the mouse over the chart before a file is loaded does nothing (no error)."""
+        from qgis.PyQt.QtCore import QEvent, QPointF, Qt
+        from qgis.PyQt.QtGui import QMouseEvent
+        from qgis.PyQt.QtWidgets import QApplication
+        dock = self.Dock(None)
+        dock.chart.resize(400, 300)
+        event = QMouseEvent(QEvent.Type.MouseMove, QPointF(100, 100), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(dock.chart, event)
+        dock.chart.mouseMoveEvent(event)
+        dock.deleteLater()
+
     def test_axis_order_must_be_chosen(self):
         dock = self.Dock(None)
         dock.set_file(self.path)
@@ -787,6 +800,8 @@ class PlanEditorTests(unittest.TestCase):
             self.assertIsNotNone(viewer.design_panel.design)
             self.assertTrue(viewer.design_panel.edit_button.isChecked())
             viewer.cleanup()
+            viewer.hide()
+            viewer.deleteLater()
 
     def test_design_crs_over_a_geographic_map_and_layers(self):
         """A map in degrees: the design keeps its projected CRS, clicks are transformed, the saved file declares it."""

@@ -423,8 +423,8 @@ class ExportDxfAlgorithm(ProjectSettingsAlgorithm):
         return GROUP_ID
 
     def shortHelpString(self):
-        return ("Writes a LandXML file to an ASCII DXF (AutoCAD R12) that Civil 3D, AutoCAD, BricsCAD and QGIS open "
-                "without add-ons: each alignment as a polyline with station ticks and labels, each feature line and "
+        return ("Writes a LandXML file to an ASCII DXF (AutoCAD 2018 format) that Civil 3D, AutoCAD, BricsCAD and QGIS "
+                "open without add-ons: each alignment as a polyline with station ticks and labels, each feature line and "
                 "breakline as a 3D polyline (daylight lines and outlines on their own layers), and optionally each TIN "
                 "surface as 3D faces. Layers are named by kind and object (ALIGNMENT-…, FEATURE-…, TIN-…).\n\n"
                 "Coordinates are written as stored, in the axis order you state (Civil 3D writes northing first); the "

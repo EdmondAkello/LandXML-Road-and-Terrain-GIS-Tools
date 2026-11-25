@@ -469,6 +469,11 @@ class InteropTests(unittest.TestCase):
                         etw = next(f for f in features if (f.name or "").startswith("ETW R"))
                         pts = np.array(etw.points)
                         self.assertGreater(len(pts), 10)
+                        if target == "civil3d":                   # imported as feature lines, not 3D polylines
+                            text = open(out, encoding="utf-8").read()
+                            self.assertIn('<Feature code="FeatureLine" source="Autodesk Civil 3D">', text)
+                            self.assertIn('<PlanFeatures name="Site -Corridor- FeatureLines">', text)
+                            self.assertIn('<Feature code="FeatureLines" source="Autodesk Civil 3D">', text)
                     names = [e.attrib.get("name") for e in root.iter() if e.tag.endswith("Surface")]
                     self.assertIn("EG", names)                        # the ground over the footprint
             self.assertLess(sizes[("alignment", "civil3d")], sizes[("corridor", "civil3d")])

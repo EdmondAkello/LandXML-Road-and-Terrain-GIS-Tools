@@ -175,8 +175,10 @@ def build(objects, ground_spec, out_xml, unit="meter", epsg=None, wkt=None, grou
             v.append(v[0])
         lines.append(FeatureLine(f"{obj['name']} {'outline' if obj['kind'] == 'pad' else 'line'}", v))
     for k, line in enumerate(daylight_lines(ground, design)):
-        lines.append(FeatureLine(f"Daylight {k + 1}", [tuple(map(float, p)) for p in line]))
-    write_landxml(out_xml, [], linear_unit=unit, vertical_unit=unit, epsg=epsg,
+        thin = thin_3d(line, 0.05)
+        if len(thin) >= 2:
+            lines.append(FeatureLine(f"Daylight {k + 1}", [tuple(map(float, p)) for p in thin]))
+    write_landxml(out_xml, [], linear_unit=unit, vertical_unit=unit, epsg=epsg, site="Grading",
                   surfaces=[Surface("Existing ground", eg_pts.tolist(), eg_faces.tolist(), f"Resampled from {ground_name}"),
                             Surface("Design", fg_pts.tolist(), fg_faces.tolist(), "Grading Editor")],
                   feature_lines=lines)
@@ -186,7 +188,7 @@ def build(objects, ground_spec, out_xml, unit="meter", epsg=None, wkt=None, grou
         write_geotiff(dem_path, np.where(np.isfinite(design.z), design.z, -9999.0), design.x0, design.y0, cell, wkt=wkt)
     if report_path:
         with open(report_path, "w", encoding="utf-8") as stream:
-            stream.write(report_html(rows, cut, fill, unit, cell, ground_name))
+            stream.write(report_html(rows, cut, fill, unit, cell, ground_name, objects))
     if json_path:
         save(json_path, objects, ground_spec, epsg)
     if dxf_path:
@@ -212,20 +214,66 @@ def _tins(ground, design, tolerance):
     return ((np.column_stack([xy, ground.z[rows, cols]]), faces), (np.column_stack([xy, design.z[rows, cols]]), faces))
 
 
-def report_html(rows, cut, fill, unit, cell, ground_name):
+def thin_3d(points, tolerance):
+    """Douglas-Peucker in 3D: the fewest vertices that keep the line within ``tolerance`` in plan and level (Civil 3D
+    imports a feature line of hundreds of vertices quickly, of thousands slowly or not at all)."""
+    pts = np.asarray(points, float)
+    if len(pts) < 3:
+        return pts
+    keep = np.zeros(len(pts), bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        a, b = pts[i], pts[j]
+        ab = b - a
+        seg = pts[i + 1:j] - a
+        L2 = float((ab ** 2).sum())
+        t = np.clip(seg @ ab / L2, 0, 1) if L2 > 0 else np.zeros(len(seg))
+        d = np.linalg.norm(seg - t[:, None] * ab, axis=1)
+        k = int(d.argmax())
+        if d[k] > tolerance:
+            m = i + 1 + k
+            keep[m] = True
+            stack += [(i, m), (m, j)]
+    return pts[keep]
+
+
+def report_html(rows, cut, fill, unit, cell, ground_name, objects=None):
+    from .reports import _cards, _document, _table
+
     u = "m" if unit == "meter" else "ft"
-    body = "".join(f"<tr><td>{html.escape(r['name'])}</td><td>{html.escape(KINDS.get(r['kind'], r['kind']))}</td>"
-                   f"<td>{r['cut']:,.1f}</td><td>{r['fill']:,.1f}</td><td>{r['fill'] - r['cut']:,.1f}</td></tr>"
-                   for r in rows)
-    return ("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Grading quantities</title><style>"
-            "body{font-family:sans-serif;margin:24px}table{border-collapse:collapse}td,th{border:1px solid #bbb;"
-            "padding:4px 8px;text-align:right}td:first-child,td:nth-child(2),th{text-align:left}</style></head><body>"
-            "<h1>Grading quantities</h1>"
-            f"<p>Cut <b>{cut:,.1f}</b> · Fill <b>{fill:,.1f}</b> · Net (fill − cut) <b>{fill - cut:,.1f}</b> "
-            f"cubic {u} (bank volumes, no shrinkage or bulking), on a {cell:.2f} {u} grid from {html.escape(ground_name)}."
-            "</p><table><tr><th>Object</th><th>Type</th><th>Cut</th><th>Fill</th><th>Net</th></tr>"
-            f"{body}</table><p>Each object's volumes are measured on the result of the objects before it.</p>"
-            "</body></html>")
+    body = [_cards([("Cut", f"{cut:,.0f} {u}³"), ("Fill", f"{fill:,.0f} {u}³"), ("Net (fill − cut)", f"{fill - cut:+,.0f} {u}³"),
+                    ("Objects", f"{len(rows)}"), ("Grid", f"{cell:.2f} {u}")])]
+    body.append("<h2>Volumes by object</h2><p class='note'>Bank volumes, no shrinkage or bulking. Each object is measured "
+                "on the result of the objects before it, in the order of the list.</p>"
+                + _table(["Object", "Type", "Cut", "Fill", "Net (fill − cut)"],
+                         [(r["name"], KINDS.get(r["kind"], r["kind"]), r["cut"], r["fill"], r["fill"] - r["cut"]) for r in rows]
+                         + [("Total", "", cut, fill, fill - cut)]))
+    if objects:
+        body.append("<h2>Objects and their parameters</h2>" + _table(
+            ["Object", "Vertices", "Levels (min–max)", "Cut slope", "Fill slope", "Benches", "Top width", "Earthworks"],
+            [(o["name"], len(o["vertices"]),
+              f"{min(v[2] for v in o['vertices']):.3f} – {max(v[2] for v in o['vertices']):.3f}",
+              f"1:{float(o['cut_slope']):g}", f"1:{float(o['fill_slope']):g}",
+              (f"{float(o['bench_width']):g} every {float(o['bench_height']):g} ({o.get('benches_in', 'both')})"
+               if float(o.get("bench_height") or 0) and float(o.get("bench_width") or 0) else "–"),
+              float(o.get("width") or 0) if o["kind"] == "line" else "–", o.get("mode", "both") if o["kind"] == "line" else "cut and fill")
+             for o in objects if valid(o)]))
+        for o in objects:
+            if not valid(o):
+                continue
+            body.append(f"<h3>{html.escape(o['name'])}: vertices</h3>" + _table(
+                ["Vertex", "Easting", "Northing", "Level"],
+                [(i + 1, f"{v[0]:.3f}", f"{v[1]:.3f}", f"{v[2]:.3f}") for i, v in enumerate(o["vertices"])]))
+    body.append("<h2>Method</h2><p>Pads are linear on their own triangles between vertex levels; batters run from the "
+                "nearest edge level at the cut or fill slope (benched where set) until they meet the ground. Volumes "
+                f"are summed on a {cell:.2f} {u} grid of the ground resampled from {html.escape(ground_name)}; the "
+                "LandXML surfaces are an adaptive TIN of both grids within 2 cm.</p>")
+    return _document("Grading quantities", "".join(body), meta=[("Ground", ground_name)],
+                     kicker="Site design · Grading Editor build")
 
 
 def save(path, objects, ground_spec=None, epsg=None):

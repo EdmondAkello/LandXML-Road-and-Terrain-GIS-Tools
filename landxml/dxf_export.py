@@ -1,4 +1,4 @@
-"""LandXML to DXF (ASCII, AutoCAD R12 / AC1009): alignments, profiles' 3D centrelines, feature lines and breaklines,
+"""LandXML to DXF (ASCII, AutoCAD 2018 / AC1032, written from a template drawing): alignments, profiles' 3D centrelines, feature lines and breaklines,
 TIN surfaces as 3DFACEs, and station ticks. No external library; Civil 3D, AutoCAD, BricsCAD and QGIS read it.
 
 The coordinates are written as stored in the file, in the axis order the caller states (``northing_first`` puts the
@@ -7,6 +7,7 @@ second stored value on X); the unit and CRS are the file's. Nothing is inferred.
 
 from __future__ import annotations
 
+import os
 import re
 
 import numpy as np
@@ -26,62 +27,47 @@ def layer_name(*parts):
     return text[:255]
 
 
+TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "dxf_template.dxf")
+
+
 class DxfWriter:
+    """Layers and entities written through :mod:`dxfw` (R2018 with handles, from a template drawing)."""
+
     def __init__(self):
-        self.layers = {}
-        self.entities = []
+        from . import dxfw
+
+        self.doc = dxfw.Drawing(TEMPLATE)
+        self.msp = self.doc.modelspace
 
     def _layer(self, name, colour=7):
-        self.layers.setdefault(name, colour)
+        if not self.doc.has_layer(name):
+            self.doc.add_layer(name, color=colour)
         return name
 
     def polyline(self, layer, points, closed=False, colour=7, three_d=True):
         layer = self._layer(layer, colour)
-        flags = (8 if three_d else 0) | (1 if closed else 0)
-        out = ["0", "POLYLINE", "8", layer, "66", "1", "10", "0.0", "20", "0.0", "30", "0.0", "70", str(flags)]
-        for p in points:
-            z = p[2] if len(p) > 2 and p[2] is not None and np.isfinite(p[2]) else 0.0
-            out += ["0", "VERTEX", "8", layer, "10", f"{p[0]:.4f}", "20", f"{p[1]:.4f}", "30", f"{z:.4f}",
-                    "70", "32" if three_d else "0"]
-        out += ["0", "SEQEND", "8", layer]
-        self.entities.append("\n".join(out))
+        pts = [(float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 and p[2] is not None and np.isfinite(p[2]) else 0.0)
+               for p in points]
+        if three_d:
+            self.msp.add_polyline3d(pts, close=closed, layer=layer)
+        else:
+            self.msp.add_lwpolyline([p[:2] for p in pts], close=closed, layer=layer)
 
     def faces(self, layer, xyz, triangles, colour=8):
         layer = self._layer(layer, colour)
-        chunk = []
         for a, b, c in triangles:
-            pa, pb, pc = xyz[a], xyz[b], xyz[c]
-            chunk.append("\n".join(["0", "3DFACE", "8", layer,
-                                    "10", f"{pa[0]:.4f}", "20", f"{pa[1]:.4f}", "30", f"{pa[2]:.4f}",
-                                    "11", f"{pb[0]:.4f}", "21", f"{pb[1]:.4f}", "31", f"{pb[2]:.4f}",
-                                    "12", f"{pc[0]:.4f}", "22", f"{pc[1]:.4f}", "32", f"{pc[2]:.4f}",
-                                    "13", f"{pc[0]:.4f}", "23", f"{pc[1]:.4f}", "33", f"{pc[2]:.4f}"]))
-        self.entities.extend(chunk)
+            self.msp.add_3dface(tuple(xyz[a]), tuple(xyz[b]), tuple(xyz[c]), layer=layer)
 
     def text(self, layer, x, y, height, value, rotation=0.0, colour=7):
         layer = self._layer(layer, colour)
-        self.entities.append("\n".join(["0", "TEXT", "8", layer, "10", f"{x:.4f}", "20", f"{y:.4f}", "30", "0.0",
-                                        "40", f"{height:.3f}", "1", str(value), "50", f"{rotation:.3f}"]))
+        self.msp.add_text(str(value), (float(x), float(y)), float(height), layer=layer, rotation=float(rotation))
 
     def line(self, layer, a, b, colour=7):
         layer = self._layer(layer, colour)
-        self.entities.append("\n".join(["0", "LINE", "8", layer, "10", f"{a[0]:.4f}", "20", f"{a[1]:.4f}", "30", "0.0",
-                                        "11", f"{b[0]:.4f}", "21", f"{b[1]:.4f}", "31", "0.0"]))
+        self.msp.add_line((float(a[0]), float(a[1]), 0.0), (float(b[0]), float(b[1]), 0.0), layer=layer)
 
     def write(self, path):
-        layers = ["0", "TABLE", "2", "LAYER", "70", str(len(self.layers) + 1),
-                  "0", "LAYER", "2", "0", "70", "0", "62", "7", "6", "CONTINUOUS"]
-        for name, colour in self.layers.items():
-            layers += ["0", "LAYER", "2", name, "70", "0", "62", str(colour), "6", "CONTINUOUS"]
-        layers += ["0", "ENDTAB"]
-        with open(path, "w", encoding="ascii", errors="replace", newline="\r\n") as out:
-            out.write("\n".join(["0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1009", "0", "ENDSEC",
-                                 "0", "SECTION", "2", "TABLES"] + layers + ["0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"]))
-            out.write("\n")
-            for e in self.entities:
-                out.write(e)
-                out.write("\n")
-            out.write("0\nENDSEC\n0\nEOF\n")
+        self.doc.saveas(path)
 
 
 def export_dxf(path, out, northing_first, surfaces=True, station_interval=100.0, text_height=2.5, segment_length=2.0):

@@ -84,7 +84,8 @@ def _table(header, rows, digits=2, cls="", widths=None):
         cols = "<colgroup>" + "".join(f"<col style='width:{w}'>" for w in widths) + "</colgroup>"
     head = "".join(f"<th class='{a}'>{html.escape(str(item))}</th>" for a, item in zip(align, header))
     body = "".join(
-        "<tr>" + "".join(f"<td class='{a}'>{_fmt(value, digits)}</td>" for a, value in zip(align, row)) + "</tr>"
+        ("<tr class='total'>" if row and str(row[0]).strip().lower() in ("total", "totals") else "<tr>")
+        + "".join(f"<td class='{a}'>{_fmt(value, digits)}</td>" for a, value in zip(align, row)) + "</tr>"
         for row in rows
     )
     class_attr = f" class='{cls}'" if cls else ""
@@ -99,34 +100,63 @@ def _cards(items):
 
 
 _STYLE = """
-:root{--fg:#1d2430;--muted:#5b6575;--line:#d8dde5;--bg:#fff;--soft:#f4f6f9;--accent:#1f5f8b}
-*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-body{font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--fg);background:var(--bg);margin:24px auto;max-width:1100px;padding:0 16px}
-h1{font-size:24px;margin:0 0 4px}h2{font-size:18px;margin:28px 0 8px;border-bottom:2px solid var(--fg);padding-bottom:4px}
-h3{font-size:15px;margin:22px 0 6px}
-.meta{color:var(--muted);font-size:13px}.note{background:var(--soft);border-left:3px solid #9aa5b5;padding:8px 12px;font-size:13px;color:var(--muted);margin:8px 0}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:12px 0}
-.card{border:1px solid var(--line);border-radius:8px;padding:10px 12px}.card .k{color:var(--muted);font-size:12px}.card .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
-table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums;margin:6px 0 10px}
-th,td{border-bottom:1px solid var(--line);padding:4px 8px;vertical-align:top}th{background:var(--soft);position:sticky;top:0}
-.num{text-align:right;white-space:nowrap}.txt{text-align:left}
-.scroll{max-height:420px;overflow:auto;border:1px solid var(--line)}
+:root{--fg:#1f2433;--muted:#5d6377;--line:#dcdcec;--bg:#fff;--soft:#f6f6fc;--navy:#2b2766;--indigo:#4a45a6;
+--indigo-soft:#ecebf8;--teal:#1f8f80;--teal-soft:#e6f4f1;--amber:#e39a26;--amber-soft:#fdf1dc;--accent:#1f8f80;
+--accent-soft:#e6f4f1;--cut:#d9822b;--fill:#3a9e5f}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact;box-sizing:border-box}
+html{background:#f1f1f7}
+body{font:14px/1.5 "Segoe UI",Inter,system-ui,-apple-system,Roboto,"Liberation Sans",sans-serif;color:var(--fg);
+background:var(--bg);margin:24px auto;max-width:1120px;padding:0 0 28px;box-shadow:0 2px 18px #2b276614;border-radius:8px}
+.band{background:linear-gradient(90deg,var(--indigo-soft),#f8f8fd 70%);border-left:8px solid var(--indigo);
+border-bottom:3px solid var(--amber);padding:20px 32px 16px;border-radius:8px 8px 0 0}
+.band .kicker{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b06e0c;font-weight:600;margin-bottom:6px}
+.band h1{color:var(--navy);font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
+.band .facts{display:flex;flex-wrap:wrap;gap:4px 22px;font-size:12.5px;color:var(--muted)}
+.band .facts b{color:var(--indigo);font-weight:600;margin-right:4px}
+main{padding:6px 32px 0}
+h1{font-size:24px;margin:0 0 4px}
+h2{font-size:18px;color:var(--navy);margin:30px 0 10px;padding-bottom:5px;border-bottom:2px solid var(--indigo)}
+h2 .no{display:inline-block;min-width:26px;padding:0 6px;margin-right:10px;border-radius:4px;background:var(--teal);
+color:#fff;font-size:14px;text-align:center;font-variant-numeric:tabular-nums}
+h3{font-size:15px;color:var(--indigo);margin:22px 0 6px}
+.meta{color:var(--muted);font-size:12.5px}
+.note{background:var(--teal-soft);border-left:3px solid var(--teal);padding:8px 12px;font-size:13px;color:#2c3a3c;
+margin:10px 0;border-radius:0 4px 4px 0}
+.toc{border:1px solid var(--line);border-radius:6px;padding:10px 16px;margin:18px 0 6px;background:var(--soft)}
+.toc b{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--indigo);margin-bottom:4px}
+.toc ol{margin:0;padding-left:20px;columns:2;column-gap:28px;font-size:13px}.toc a{color:var(--fg);text-decoration:none}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:14px 0}
+.card{border:1px solid var(--line);border-left:4px solid var(--indigo);border-radius:6px;padding:9px 12px;background:#fff}
+.card:nth-child(3n+2){border-left-color:var(--teal)}.card:nth-child(3n+3){border-left-color:var(--amber)}
+.card .k{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+.card .v{font-size:19px;font-weight:650;font-variant-numeric:tabular-nums;color:var(--navy)}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums;margin:6px 0 12px}
+th,td{border-bottom:1px solid var(--line);padding:5px 9px;vertical-align:top}
+th{background:var(--indigo-soft);color:var(--navy);font-weight:650;position:sticky;top:0;text-align:left;
+border-bottom:2px solid var(--indigo)}
+tbody tr:nth-child(even) td{background:#fafafe}
+tr.total td,tfoot td{font-weight:650;border-top:2px solid var(--amber);background:var(--amber-soft)}
+.num{text-align:right;white-space:nowrap}.txt{text-align:left}th.num{text-align:right}
+.scroll{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:4px}
 svg{width:100%;height:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
 .legend span{display:inline-block;margin-right:14px;font-size:12px;color:var(--muted)}.legend i{display:inline-block;width:12px;height:12px;margin-right:4px;vertical-align:-1px;border-radius:2px}
 .sev{display:inline-block;padding:1px 6px;border-radius:3px;color:#fff;font-size:11px;font-weight:600}
 table.findings td{font-size:12px}table.findings tr.group td{background:var(--soft);font-weight:600;color:var(--fg);border-top:1px solid var(--line)}
 table.findings .detail{color:var(--muted);display:block;margin-top:2px}
-.print-hint{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:6px;padding:6px 10px;margin:10px 0}
+.print-hint{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:6px;padding:6px 10px;margin:14px 0}
+.foot{margin:34px 32px 0;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
 @media print{
-  body{font-size:10pt;margin:0;max-width:none;padding:0}
-  h1{font-size:18pt}h2{font-size:13pt;margin-top:16px}h3{font-size:11pt;margin:14px 0 4px}
+  html{background:#fff}
+  body{font-size:9.6pt;margin:0;max-width:none;padding:0;box-shadow:none;border-radius:0}
+  .band{border-radius:0;padding:10px 14px 8px}.band h1{font-size:17pt}main{padding:0 2px}.foot{margin:18px 2px 0}
+  h2{font-size:12.5pt;margin-top:16px}h3{font-size:10.5pt;margin:12px 0 4px}
   h1,h2,h3{break-after:avoid-page}
-  .print-hint{display:none}
+  .print-hint{display:none}.toc{break-inside:avoid}
   .scroll{max-height:none;overflow:visible;border:none}
   th{position:static}thead{display:table-header-group}tr{break-inside:avoid}tr.group{break-after:avoid}
-  table{font-size:8.5pt}table.findings td{font-size:8pt}th,td{padding:3px 6px}
+  table{font-size:8.3pt}table.findings td{font-size:8pt}th,td{padding:3px 6px}
   svg,.card,.note,.keep,.legend{break-inside:avoid}
-  .cards{grid-template-columns:repeat(4,1fr);gap:6px}.card{padding:6px 8px}.card .v{font-size:12pt}
+  .cards{grid-template-columns:repeat(4,1fr);gap:6px}.card{padding:5px 8px}.card .v{font-size:12pt}
 }
 """
 
@@ -160,17 +190,80 @@ def stationing_html(station_maps, unit=None):
             + _table(["Alignment", "Regions", "Distance along", "Internal station", "Back", "Ahead"], rows, 3))
 
 
-def _document(title, body, station_maps=None, horizontal_unit=None):
+def _plugin_version():
+    """The plugin version from metadata.txt (no QGIS needed)."""
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "metadata.txt")
+    try:
+        with open(path, encoding="utf-8") as stream:
+            for line in stream:
+                if line.startswith("version="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+_H2 = re.compile(r"<h2(?P<attrs>[^>]*)>(?P<text>.*?)</h2>", re.S)
+_SOURCE = re.compile(r"<p class=['\"]meta['\"]>\s*Source:\s*(?P<src>[^<]*)</p>")
+
+
+def _number_sections(body):
+    """Number the h2 sections, give them anchors, and return (body, [(anchor, number, plain title)])."""
+    found = []
+
+    def repl(match):
+        text = match.group("text")
+        plain = re.sub(r"<[^>]+>", "", text).strip()
+        number = len(found) + 1
+        anchor = f"s{number}"
+        found.append((anchor, number, plain))
+        attrs = match.group("attrs")
+        if "id=" not in attrs:
+            attrs += f" id='{anchor}'"
+        else:
+            anchor = re.search(r"id=['\"]([^'\"]+)", attrs).group(1)
+            found[-1] = (anchor, number, plain)
+        return f"<h2{attrs}><span class='no'>{number}</span>{text}</h2>"
+
+    return _H2.sub(repl, body), found
+
+
+def _document(title, body, station_maps=None, horizontal_unit=None, meta=None, kicker=None):
+    """A report page: a title band with the report facts, numbered sections with contents, consistent tables and
+    cards, and an A4 print layout with page numbers. ``meta`` adds [(label, value)] facts to the band."""
     body = stationing_html(station_maps, horizontal_unit) + body
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now()
+    facts = list(meta or [])
+    source = _SOURCE.search(body)
+    if source and not any(label == "Source" for label, _v in facts):
+        facts.insert(0, ("Source", source.group("src").strip()))
+        body = body[:source.start()] + body[source.end():]
+    if horizontal_unit and not any(label == "Units" for label, _v in facts):
+        facts.append(("Units", str(horizontal_unit)))
+    facts.append(("Date", now.strftime("%d %B %Y, %H:%M")))
+    body, sections = _number_sections(body)
+    toc = ""
+    if len(sections) >= 3:
+        toc = ("<nav class='toc'><b>Contents</b><ol>"
+               + "".join(f"<li><a href='#{a}'>{html.escape(t)}</a></li>" for a, _n, t in sections) + "</ol></nav>")
+    version = _plugin_version()
+    band = (f"<header class='band'><div class='kicker'>{html.escape(kicker or 'LandXML Road & Terrain GIS Tools')}</div>"
+            f"<h1>{html.escape(title)}</h1><div class='facts'>"
+            + "".join(f"<span><b>{html.escape(str(k))}</b>{html.escape(str(v))}</span>" for k, v in facts)
+            + "</div></header>")
+    foot = ("<footer class='foot'>Prepared with LandXML Road &amp; Terrain GIS Tools"
+            + (f" {html.escape(version)}" if version else "")
+            + f" on {now:%d %B %Y}. Quantities and levels are computed from the files named above; check them against "
+            "the design and the survey before use.</footer>")
     return (
-        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{html.escape(title)}</title><style>{_STYLE}{_page_rule(title)}</style></head><body>"
-        f"<h1>{html.escape(title)}</h1><div class='meta'>Generated {stamp} by LandXML Road &amp; Terrain GIS Tools</div>"
+        f"{band}<main>"
         "<div class='print-hint'>To save as PDF, print this page from a browser (Chrome or Edge: Save as PDF). "
         "Pages are numbered and charts keep their colours; untick <i>Headers and footers</i> to hide the browser's file path.</div>"
-        f"{_keep_headings(body)}</body></html>"
+        f"{toc}{_keep_headings(body)}</main>{foot}</body></html>"
     )
 
 

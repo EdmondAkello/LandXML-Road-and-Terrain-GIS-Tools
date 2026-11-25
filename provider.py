@@ -30,6 +30,7 @@ from .site_tools_algorithm import EdgeAnalysisAlgorithm, ExportSceneAlgorithm, G
 from .prepare_algorithm import PrepareLandXMLAlgorithm
 from .sections_algorithm import CrossSectionSheetsAlgorithm
 from .design_report_algorithm import DesignReportAlgorithm
+from .setting_out_algorithm import SettingOutAlgorithm
 from .review_algorithm import DesignReviewAlgorithm
 from .earthworks_algorithm import (
     CorridorQuantitiesAlgorithm,
@@ -90,6 +91,7 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
         self.addAlgorithm(Scene3DAlgorithm())
         self.addAlgorithm(CrossSectionSheetsAlgorithm())
         self.addAlgorithm(DesignReportAlgorithm())
+        self.addAlgorithm(SettingOutAlgorithm())
         self.addAlgorithm(DesignReviewAlgorithm())
         self.addAlgorithm(DesignShapesAlgorithm())
         self.addAlgorithm(DemToTinAlgorithm())
