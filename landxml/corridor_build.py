@@ -893,6 +893,9 @@ def feature_strings(result):
     return strings
 
 
+MAX_LINE_STATIONS = 400        # Civil 3D imports feature lines of a few hundred PIs quickly; thousands hang it
+
+
 def feature_lines(result, weed=0.005):
     """[{name, code, side, points [(x, y, z)], segments, elevation_points}] in map order."""
     frame = result.context["frame"]
@@ -912,6 +915,13 @@ def feature_lines(result, weed=0.005):
                 run = []
             run.append(b)
         runs.append(run)
+        parts = []
+        for run in runs:                   # long runs in parts that share their end points
+            while len(run) > MAX_LINE_STATIONS:
+                parts.append(run[:MAX_LINE_STATIONS])
+                run = run[MAX_LINE_STATIONS - 1:]
+            parts.append(run)
+        runs = parts
         for r_i, run in enumerate(runs):
             if len(run) < 2:
                 continue
@@ -1052,7 +1062,7 @@ def surface_xml(name, xyz, faces, northing_first, desc=""):
     return f'<Surface name={quoteattr(name)}{d}><Definition surfType="TIN"><Pnts>{pts}</Pnts><Faces>{fs}</Faces></Definition></Surface>'
 
 
-def feature_line_xml(line, northing_first, site="Corridor"):
+def feature_line_xml(line, northing_first, site=""):
     parts = []
     for seg in line["segments"]:
         if seg[0] == "line":
@@ -1277,7 +1287,7 @@ def write_corridor_landxml(result, path, include_ground_surface=False, target="c
     text.append("<Alignments name=\"Corridor\">" + body + "</Alignments>")
     if lines:
         if target == "civil3d":
-            site = project.get("site") or "Corridor"
+            site = project.get("site", "")          # siteless by default: no site interaction on import
             text.append(civil3d_planfeatures("".join(feature_line_xml(line, nf, site) for line in lines), site))
         else:
             text.append('<PlanFeatures name="Corridor feature lines">'

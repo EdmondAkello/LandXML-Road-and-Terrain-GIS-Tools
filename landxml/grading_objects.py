@@ -178,7 +178,7 @@ def build(objects, ground_spec, out_xml, unit="meter", epsg=None, wkt=None, grou
         thin = thin_3d(line, 0.05)
         if len(thin) >= 2:
             lines.append(FeatureLine(f"Daylight {k + 1}", [tuple(map(float, p)) for p in thin]))
-    write_landxml(out_xml, [], linear_unit=unit, vertical_unit=unit, epsg=epsg, site="Grading",
+    write_landxml(out_xml, [], linear_unit=unit, vertical_unit=unit, epsg=epsg,
                   surfaces=[Surface("Existing ground", eg_pts.tolist(), eg_faces.tolist(), f"Resampled from {ground_name}"),
                             Surface("Design", fg_pts.tolist(), fg_faces.tolist(), "Grading Editor")],
                   feature_lines=lines)

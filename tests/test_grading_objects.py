@@ -103,7 +103,7 @@ class BuildTests(unittest.TestCase):
             self.assertTrue(any(f.name.startswith("Daylight") for f in feats))
             with open(out, encoding="utf-8") as handle:
                 text = handle.read()
-            self.assertIn('<PlanFeatures name="Site -Grading- FeatureLines">', text)       # Civil 3D feature lines
+            self.assertIn('<PlanFeatures name="Siteless FeatureLines">', text)            # Civil 3D feature lines
             self.assertEqual(text.count('source="Autodesk Civil 3D"'), len(feats) + 1)
             self.assertLess(max(len(f.points) for f in feats), 600)                      # thinned daylight lines
             xyz, faces, _m = read_tin(out, "Design")

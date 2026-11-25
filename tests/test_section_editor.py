@@ -296,8 +296,8 @@ class CorridorTests(unittest.TestCase):
             lev = np.array([p[2] for p in strings[key]])
             xy, _t, normal = result.context["frame"].at(st)
             plan = xy + normal * off[:, None]
-            line = next(f for f in features if f.name.startswith("ETW R"))
-            pts = np.array(line.points)[:, [1, 0, 2]]                    # stored northing first
+            parts = [f for f in features if f.name.startswith("ETW R")]  # long lines come in parts
+            pts = np.vstack([np.array(f.points)[:, [1, 0, 2]] for f in parts])   # stored northing first
             for p, z in zip(plan, lev):
                 k = int(np.argmin(np.hypot(*(pts[:, :2] - p).T)))
                 self.assertLess(np.hypot(*(pts[k, :2] - p)), 0.005)
@@ -472,7 +472,8 @@ class InteropTests(unittest.TestCase):
                         if target == "civil3d":                   # imported as feature lines, not 3D polylines
                             text = open(out, encoding="utf-8").read()
                             self.assertIn('<Feature code="FeatureLine" source="Autodesk Civil 3D">', text)
-                            self.assertIn('<PlanFeatures name="Site -Corridor- FeatureLines">', text)
+                            self.assertIn('<PlanFeatures name="Siteless FeatureLines">', text)
+                            self.assertNotIn('label="site"', text)
                             self.assertIn('<Feature code="FeatureLines" source="Autodesk Civil 3D">', text)
                     names = [e.attrib.get("name") for e in root.iter() if e.tag.endswith("Surface")]
                     self.assertIn("EG", names)                        # the ground over the footprint
