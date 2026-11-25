@@ -13,6 +13,7 @@ import os
 
 from qgis.core import (
     Qgis,
+    QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsCsException,
     QgsFeature,
@@ -21,11 +22,13 @@ from qgis.core import (
     QgsPoint,
     QgsPointXY,
     QgsProject,
+    QgsRasterLayer,
     QgsSettings,
     QgsVectorLayer,
 )
 from qgis.gui import QgsDockWidget, QgsMapToolEmitPoint, QgsProjectionSelectionWidget, QgsVertexMarker
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from .dock_utils import setup_dock
+from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -33,7 +36,6 @@ from qgis.PyQt.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -87,6 +89,7 @@ def bands_text(bands):
 
 class SectionEditorDock(QgsDockWidget):
     built = pyqtSignal(str, str)                 # output LandXML path, alignment name
+    design_profile = pyqtSignal(str, str)        # LandXML path, alignment: edit its profile in the Profile Viewer
 
     def __init__(self, iface=None, parent=None):
         super().__init__("Corridor Section Editor", parent)
@@ -113,7 +116,6 @@ class SectionEditorDock(QgsDockWidget):
         body = QWidget()
         outer = QVBoxLayout(body)
         outer.setContentsMargins(4, 4, 4, 4)
-        top = QGridLayout()
         self.file_edit = QLineEdit()
         self.file_edit.setPlaceholderText("LandXML with the alignment and its design profile")
         browse = QToolButton()
@@ -124,29 +126,49 @@ class SectionEditorDock(QgsDockWidget):
         self.profile_combo = QComboBox()
         self.axis_combo = QComboBox()
         self.axis_combo.addItems(AXIS_CHOICES)
+        self.vunit_combo = QComboBox()
+        for text, unit in (("Elevations: as the file declares", ""), ("Elevations in metres", "meter"),
+                           ("Elevations in feet", "foot"), ("Elevations in US survey feet", "USSurveyFoot")):
+            self.vunit_combo.addItem(text, unit)
+        self.vunit_combo.setToolTip("Civil 3D metric exports usually omit the elevation unit. State it here and the "
+                                    "built corridor declares it, so the report, section, review and 3D tools take the "
+                                    "file without asking (never inferred)")
+        index = self.vunit_combo.findData(QgsSettings().value(f"{SETTINGS}/vertical_unit", ""))
+        self.vunit_combo.setCurrentIndex(max(index, 0))
         self.ground_combo = QComboBox()
-        self.ground_combo.setToolTip("Existing ground: a TIN surface in this file, a DEM (same CRS as the file), or none")
+        self.ground_combo.setToolTip("Existing ground: a TIN surface in this file, a DEM or raster layer already in the "
+                                     "project (any CRS: it is transformed into the design CRS), a surface in another "
+                                     "LandXML, a DEM file, or none")
+        self.ground_combo.setMinimumContentsLength(18)
         self.crs_widget = QgsProjectionSelectionWidget()
-        self.crs_widget.setToolTip("The CRS of the file's coordinates, used to show the section position on the map "
-                                   "(never inferred)")
+        try:
+            self.crs_widget.setOptionVisible(QgsProjectionSelectionWidget.CrsOption.CrsNotSet, True)
+            self.crs_widget.setNotSetText("Not set (choose)")
+        except AttributeError:
+            pass
+        self.crs_widget.setToolTip("The CRS of the file's coordinates (the design CRS): from the file when it "
+                                   "declares one that fits, otherwise chosen by you, never guessed. Used to place the "
+                                   "section on the map and to transform a DEM in another CRS.")
+        self.file_edit.editingFinished.connect(self._file_typed)
         load = QPushButton("Load")
         load.clicked.connect(self.load_context)
-        top.addWidget(QLabel("LandXML"), 0, 0)
-        top.addWidget(self.file_edit, 0, 1, 1, 3)
-        top.addWidget(browse, 0, 4)
-        top.addWidget(QLabel("Alignment"), 0, 5)
-        top.addWidget(self.alignment_combo, 0, 6)
-        top.addWidget(QLabel("Profile"), 0, 7)
-        top.addWidget(self.profile_combo, 0, 8)
-        top.addWidget(self.axis_combo, 1, 0, 1, 3)
-        top.addWidget(QLabel("Ground"), 1, 3)
-        top.addWidget(self.ground_combo, 1, 4, 1, 2)
-        top.addWidget(QLabel("File CRS"), 1, 6)
-        top.addWidget(self.crs_widget, 1, 7)
-        top.addWidget(load, 1, 8)
+        rows = [QHBoxLayout() for _ in range(3)]
+        for w, stretch in ((QLabel("LandXML"), 0), (self.file_edit, 4), (browse, 0), (QLabel("Alignment"), 0),
+                           (self.alignment_combo, 2), (QLabel("Profile"), 0), (self.profile_combo, 2)):
+            rows[0].addWidget(w, stretch)
+        for w, stretch in ((self.axis_combo, 2), (self.vunit_combo, 2), (QLabel("Design CRS"), 0), (self.crs_widget, 3),
+                           (QLabel("Ground"), 0), (self.ground_combo, 3), (load, 0)):
+            rows[1].addWidget(w, stretch)
+        for combo in (self.alignment_combo, self.profile_combo, self.ground_combo, self.axis_combo, self.vunit_combo):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(10)
         self.standard_combo = QComboBox()
         for sid, name, _path in list_section_standards():
             self.standard_combo.addItem(name, sid)
+        remembered = QgsSettings().value(f"{SETTINGS}/standard", "kenya_rdm13_2025_sections")
+        index = self.standard_combo.findData(remembered)
+        if index >= 0:
+            self.standard_combo.setCurrentIndex(index)
         self.standard_combo.currentIndexChanged.connect(self._standard_changed)
         self.speed_spin = QDoubleSpinBox()
         self.speed_spin.setRange(5, 200)
@@ -154,6 +176,7 @@ class SectionEditorDock(QgsDockWidget):
         self.speed_spin.setSuffix(" design speed")
         self.speed_spin.valueChanged.connect(lambda v: self._set_project("design_speed", float(v)))
         self.template_combo = QComboBox()
+        QTimer.singleShot(0, self._standard_changed)           # the templates of the remembered standard
         add_tpl = QPushButton("New assembly from template")
         add_tpl.clicked.connect(self.add_template_assembly)
         buttons = QHBoxLayout()
@@ -176,6 +199,9 @@ class SectionEditorDock(QgsDockWidget):
                                 ("Save…", self.save_project, "Save the section project (JSON)"),
                                 ("Undo", self.undo, "Undo (every edit and drag is one step)"),
                                 ("Redo", self.redo, "Redo"),
+                                ("Edit profile…", self._edit_profile,
+                                 "Open this alignment on the Profile Viewer's Design tab; a profile saved there "
+                                 "comes back here"),
                                 ("Preview on map", self.preview_on_map, "Show the edges as a temporary map layer"),
                                 ("Build…", self.build, "Write the corridor LandXML, report and bill of quantities"),
                                 ("Guide", self._guide, "Open the user guide at the Section Editor")):
@@ -183,12 +209,11 @@ class SectionEditorDock(QgsDockWidget):
             b.setToolTip(tip)
             b.clicked.connect(slot)
             buttons.addWidget(b)
-        top.addWidget(QLabel("Standard"), 2, 0)
-        top.addWidget(self.standard_combo, 2, 1, 1, 2)
-        top.addWidget(self.speed_spin, 2, 3)
-        top.addWidget(self.template_combo, 2, 4, 1, 2)
-        top.addWidget(add_tpl, 2, 6)
-        outer.addLayout(top)
+        for w, stretch in ((QLabel("Standard"), 0), (self.standard_combo, 3), (self.speed_spin, 1),
+                           (self.template_combo, 2), (add_tpl, 0)):
+            rows[2].addWidget(w, stretch)
+        for row in rows:
+            outer.addLayout(row)
         outer.addLayout(buttons)
 
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -292,7 +317,7 @@ class SectionEditorDock(QgsDockWidget):
         self.status = QLabel("")
         self.status.setWordWrap(True)
         outer.addWidget(self.status)
-        self.setWidget(body)
+        setup_dock(self, body, "section_editor")
 
     def _element_tab(self):
         w = QWidget()
@@ -561,17 +586,62 @@ class SectionEditorDock(QgsDockWidget):
             self.alignment_combo.clear()
             for r in records:
                 self.alignment_combo.addItem(r["name"])
-            self.ground_combo.clear()
-            for name, _node in list_surfaces(path):
-                self.ground_combo.addItem(f"Surface: {name}", ("tin", path, name))
-            self.ground_combo.addItem("Surface in another LandXML (Civil 3D or OpenRoads)…", ("other", "", ""))
-            self.ground_combo.addItem("DEM…", ("dem", "", ""))
-            self.ground_combo.addItem("No ground", ("none", "", ""))
+            self._fill_ground(path, list_surfaces(path))
+            self._crs_from_file(path, records)
         except (OSError, ValueError) as error:
             self._message(f"Cannot read the file: {error}", Qgis.MessageLevel.Warning)
         finally:
             self._loading = False
         self._alignment_changed()
+
+    def _file_typed(self):
+        path = self.file_edit.text().strip()
+        if path and os.path.isfile(path) and (self.project is None or self.project.get("landxml") != path):
+            self.set_file(path)
+
+    def _fill_ground(self, path, surfaces):
+        """TIN surfaces in the file, raster layers in the project, another LandXML, a DEM file, none."""
+        self.ground_combo.clear()
+        for name, _node in surfaces:
+            self.ground_combo.addItem(f"Surface in this file: {name}", ("tin", path, name))
+        for layer in QgsProject.instance().mapLayers().values():
+            if isinstance(layer, QgsRasterLayer):
+                crs = layer.crs().authid() or "no CRS"
+                self.ground_combo.addItem(f"Layer: {layer.name()} ({crs})", ("layer", layer.id(), layer.name()))
+        self.ground_combo.addItem("Surface in another LandXML (Civil 3D or OpenRoads)…", ("other", "", ""))
+        self.ground_combo.addItem("DEM file…", ("dem", "", ""))
+        self.ground_combo.addItem("No ground", ("none", "", ""))
+        # a surface in the file that looks like existing ground, else the first raster layer, else the first surface
+        best = None
+        for i in range(self.ground_combo.count()):
+            kind, _p, name = self.ground_combo.itemData(i)
+            if kind == "tin" and any(k in name.lower() for k in ("eg", "exist", "ground", "survey", "topo")):
+                best = i
+                break
+        if best is None:
+            for i in range(self.ground_combo.count()):
+                if self.ground_combo.itemData(i)[0] == "layer":
+                    best = i
+                    break
+        self.ground_combo.setCurrentIndex(best or 0)
+
+    def _crs_from_file(self, path, records):
+        """The declared EPSG code when it fits the coordinates (either axis order), else left for the user."""
+        from .crs_utils import crs_fits, declared_epsg
+
+        code = declared_epsg(path)
+        pts = [p for r in records for seg in r["segments"] for p in seg["points"]][:50]
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        if code:
+            crs = QgsCoordinateReferenceSystem(f"EPSG:{code}")
+            if crs.isValid() and (not pts or (crs_fits(crs, xs, ys) and crs_fits(crs, ys, xs))) and not crs.isGeographic():
+                self.crs_widget.setCrs(crs)
+                return
+            self._message(f"The file declares EPSG:{code}, which does not fit its coordinates: choose the design CRS.",
+                          Qgis.MessageLevel.Warning)
+        elif not self._file_crs():
+            self._message("The file does not declare its CRS: choose the design CRS (needed to show the section on "
+                          "the map and to use a DEM in another CRS).", Qgis.MessageLevel.Info)
 
     def _alignment_changed(self):
         if self._loading:
@@ -591,11 +661,24 @@ class SectionEditorDock(QgsDockWidget):
 
     def _ground_spec(self):
         kind, path, name = self.ground_combo.currentData() or ("none", "", "")
+        if kind == "layer":
+            layer = QgsProject.instance().mapLayer(path)
+            if layer is None:
+                self._message("That raster layer is no longer in the project.", Qgis.MessageLevel.Warning)
+                return None
+            source = layer.source().split("|")[0]
+            crs = layer.crs()
+            return {"type": "dem", "path": source, "name": layer.name(),
+                    "crs": crs.authid() or crs.toWkt() if crs.isValid() else None}
         if kind == "dem":
-            dem, _ = QFileDialog.getOpenFileName(self, "DEM (same CRS as the LandXML)", "", "Rasters (*.tif *.tiff *.img *.vrt);;All (*)")
+            dem, _ = QFileDialog.getOpenFileName(self, "DEM (its CRS is read from the file)", "",
+                                                 "Rasters (*.tif *.tiff *.img *.vrt);;All (*)")
             if not dem:
                 return None
-            return {"type": "dem", "path": dem}
+            from osgeo import gdal
+            ds = gdal.Open(dem)
+            wkt = ds.GetProjection() if ds is not None else ""
+            return {"type": "dem", "path": dem, "crs": wkt or None}
         if kind == "other":
             from ..core import list_surfaces
 
@@ -624,6 +707,11 @@ class SectionEditorDock(QgsDockWidget):
         if ground is None:
             return
         northing_first = self.axis_combo.currentIndex() == 1
+        design_crs = self._file_crs()
+        if ground.get("type") == "dem" and ground.get("crs") and design_crs is None:
+            self._message("Choose the design CRS (File CRS) so the DEM can be transformed into it.",
+                          Qgis.MessageLevel.Warning)
+            return
         if self.project is None or self.project.get("landxml") != path:
             std = self.standard_combo.currentData() or "generic_sections"
             template = self.template_combo.currentText() or None
@@ -633,6 +721,10 @@ class SectionEditorDock(QgsDockWidget):
         else:
             self.project.update(alignment=self.alignment_combo.currentText(), profile=self.profile_combo.currentText(),
                                 northing_first=northing_first, ground=ground)
+        if design_crs is not None:
+            self.project["crs"] = design_crs.authid() or design_crs.toWkt()
+        self.project["vertical_unit"] = self.vunit_combo.currentData() or None
+        QgsSettings().setValue(f"{SETTINGS}/vertical_unit", self.vunit_combo.currentData() or "")
         self._prepare()
 
     def _prepare(self):
@@ -839,6 +931,8 @@ class SectionEditorDock(QgsDockWidget):
 
     def _standard_changed(self):
         sid = self.standard_combo.currentData()
+        if sid:
+            QgsSettings().setValue(f"{SETTINGS}/standard", sid)
         try:
             std = load_section_standard(sid)
         except ValueError:
@@ -944,7 +1038,7 @@ class SectionEditorDock(QgsDockWidget):
             elif kind == "text":
                 widget = QLineEdit(str(value or ""))
                 widget.editingFinished.connect(lambda w=widget, k=key: self._set_element(k, w.text()))
-            elif kind in ("buildup", "drain", "material") or isinstance(kind, list):
+            elif kind in ("buildup", "drain", "material", "profile") or isinstance(kind, list):
                 widget = QComboBox()
                 if isinstance(kind, list):
                     options = kind
@@ -952,6 +1046,8 @@ class SectionEditorDock(QgsDockWidget):
                     options = [""] + list((self.project or {}).get("buildups", {}))
                 elif kind == "drain":
                     options = [""] + (std.side_drain_names() if std else [])
+                elif kind == "profile":
+                    options = [""] + [self.profile_combo.itemText(i) for i in range(self.profile_combo.count())]
                 else:
                     options = (std.materials() if std else []) or ["earth"]
                 for o in options:
@@ -1462,6 +1558,13 @@ class SectionEditorDock(QgsDockWidget):
                                   stage=stage)
         self._message(f"Exported the {stage} stage to {path}.")
         return path
+
+    def _edit_profile(self):
+        path, alignment = self.file_edit.text(), self.alignment_combo.currentText()
+        if not path or not alignment:
+            self._message("Open a LandXML file and choose the alignment first.", Qgis.MessageLevel.Warning)
+            return
+        self.design_profile.emit(path, alignment)
 
     def _guide(self):
         from ..project_settings import open_guide

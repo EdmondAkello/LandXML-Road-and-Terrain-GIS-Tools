@@ -402,3 +402,57 @@ class ExportDesignStageAlgorithm(ProjectSettingsAlgorithm):
         cb.write_corridor_landxml(result, out, self.parameterAsBoolean(p, "GROUND", c), target, stage)
         fb.pushInfo(f"Wrote the {stage} stage for {'Civil 3D' if target == 'civil3d' else 'OpenRoads Designer'}: {out}")
         return {"OUTPUT": out}
+
+
+class ExportDxfAlgorithm(ProjectSettingsAlgorithm):
+    """Any LandXML (a corridor, a grading build, a Civil 3D or OpenRoads export) to DXF for CAD."""
+
+    def createInstance(self):
+        return ExportDxfAlgorithm()
+
+    def name(self):
+        return "landxml_export_dxf"
+
+    def displayName(self):
+        return "Export LandXML to DXF (Alignments, Feature Lines, Surfaces)"
+
+    def group(self):
+        return GROUP
+
+    def groupId(self):
+        return GROUP_ID
+
+    def shortHelpString(self):
+        return ("Writes a LandXML file to an ASCII DXF (AutoCAD R12) that Civil 3D, AutoCAD, BricsCAD and QGIS open "
+                "without add-ons: each alignment as a polyline with station ticks and labels, each feature line and "
+                "breakline as a 3D polyline (daylight lines and outlines on their own layers), and optionally each TIN "
+                "surface as 3D faces. Layers are named by kind and object (ALIGNMENT-…, FEATURE-…, TIN-…).\n\n"
+                "Coordinates are written as stored, in the axis order you state (Civil 3D writes northing first); the "
+                "CRS and unit are the file's. For design surfaces, LandXML stays the better route into Civil 3D "
+                "(Insert > LandXML): the DXF is for drawings and checking.")
+
+    def initAlgorithm(self, config=None):
+        self.addParameter(QgsProcessingParameterFile("INPUT", "LandXML", fileFilter="LandXML (*.xml *.landxml)"))
+        self.addParameter(QgsProcessingParameterEnum("AXIS_ORDER", "The file stores coordinates",
+                                                     options=["Choose…", "Northing first (Civil 3D)", "Easting first"],
+                                                     defaultValue=0))
+        self.addParameter(QgsProcessingParameterBoolean("SURFACES", "Include TIN surfaces as 3D faces", defaultValue=True))
+        self.addParameter(number_param("STATIONS", "Station tick interval (0 = none)", 100.0, 0.0, 100000.0, decimals=1))
+        self.addParameter(number_param("TEXT", "Text height", 2.5, 0.1, 100.0, decimals=2))
+        self.addParameter(QgsProcessingParameterFileDestination("OUTPUT", "DXF", fileFilter="DXF (*.dxf)"))
+
+    def processAlgorithm(self, p, c, fb):
+        from .landxml.dxf_export import export_dxf
+
+        axis = self.parameterAsEnum(p, "AXIS_ORDER", c)
+        if axis == 0:
+            raise QgsProcessingException("Choose the axis order of the file (it is never guessed).")
+        path, out = self.parameterAsFile(p, "INPUT", c), self.parameterAsFileOutput(p, "OUTPUT", c)
+        try:
+            counts = export_dxf(path, out, axis == 1, self.parameterAsBoolean(p, "SURFACES", c),
+                                self.parameterAsDouble(p, "STATIONS", c), self.parameterAsDouble(p, "TEXT", c))
+        except (OSError, ValueError) as error:
+            raise QgsProcessingException(str(error)) from error
+        fb.pushInfo(f"{counts['alignments']} alignments, {counts['feature_lines']} feature lines, {counts['surfaces']} "
+                    f"surfaces ({counts['triangles']} triangles) written to {out}")
+        return {"OUTPUT": out, **{k.upper(): v for k, v in counts.items()}}

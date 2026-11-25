@@ -82,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 34)
+        self.assertEqual(len(self.algorithms), 35)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_every_tool_opens_its_section_of_the_bundled_guide(self):
@@ -162,6 +162,25 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertIn("Access road FRL", text)
             self.assertIn('epsgCode="32737"', text)
             self.assertIsNotNone(load_document(out))
+            # the same file to DXF: the alignment in easting-northing order, station labels, the profile as text
+            dxf = os.path.join(directory, "roads.dxf")
+            dxf_tool = self.algorithms["landxml_export_dxf"]
+            with self.assertRaises(QgsProcessingException):                            # axis order must be chosen
+                dxf_tool.processAlgorithm({"INPUT": out, "AXIS_ORDER": 0, "SURFACES": True, "STATIONS": 100, "TEXT": 2.5,
+                                           "OUTPUT": dxf}, self.context, self.feedback)
+            done = dxf_tool.processAlgorithm({"INPUT": out, "AXIS_ORDER": 1, "SURFACES": True, "STATIONS": 100,
+                                              "TEXT": 2.5, "OUTPUT": dxf}, self.context, self.feedback)
+            self.assertEqual(done["ALIGNMENTS"], 1)
+            from osgeo import ogr
+            source = ogr.Open(dxf)
+            features = [(f.GetField("Layer"), f.GetGeometryRef().Clone() if f.GetGeometryRef() else None)
+                        for f in source.GetLayer(0)]
+            names = {name for name, _g in features}
+            self.assertIn("ALIGNMENT-Access_road", names)
+            self.assertIn("STATIONS-Access_road", names)
+            env = next(g for name, g in features if name == "ALIGNMENT-Access_road" and g is not None).GetEnvelope()
+            self.assertAlmostEqual(env[0], 500000.0, places=2)                         # X = easting
+            self.assertAlmostEqual(env[2], 9900000.0, places=2)
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
         fixtures = ROOT / "tests/fixtures/generic"
@@ -257,7 +276,7 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertEqual(self.algorithms[name].group(), groups[-2])
             self.assertEqual(self.algorithms[name].groupId(), "site_grading")
         for name in ("landxml_section_project", "landxml_build_corridor", "landxml_export_roads",
-                     "landxml_export_design_stage"):
+                     "landxml_export_design_stage", "landxml_export_dxf"):
             self.assertEqual(self.algorithms[name].groupId(), "corridor_design")
 
     def test_coordinate_selectors_explain_landxml_axis_order(self):
@@ -1209,6 +1228,38 @@ class QgisProcessingTests(unittest.TestCase):
                                                 self.context, self.feedback)
             self.assertEqual(read_catalog(str(out2)).surfaces, ["Existing ground", "Design"])
             self.assertGreater(result["CUT"] + result["FILL"], 0)
+
+            # a pad with a level at every vertex (PolygonZ) and a graded line (LineStringZ), from two layers
+            from qgis.core import QgsLineString, QgsPoint, QgsPolygon
+            pads = QgsVectorLayer("PolygonZ?crs=EPSG:26915&field=shape:string&field=name:string", "Pads", "memory")
+            ring = QgsLineString([QgsPoint(0, 0, 99.0), QgsPoint(30, 0, 101.0), QgsPoint(30, 20, 101.5),
+                                  QgsPoint(0, 20, 99.5), QgsPoint(0, 0, 99.0)])
+            polygon = QgsPolygon()
+            polygon.setExteriorRing(ring)
+            f = QgsFeature(pads.fields())
+            f.setGeometry(QgsGeometry(polygon))
+            f.setAttributes(["pad", "Sloped pad"])
+            pads.dataProvider().addFeatures([f])
+            lines = QgsVectorLayer("LineStringZ?crs=EPSG:26915&field=name:string&field=width:double&field=mode:string",
+                                   "Lines", "memory")
+            g = QgsFeature(lines.fields())
+            g.setGeometry(QgsGeometry(QgsLineString([QgsPoint(45, -10, 98.0), QgsPoint(75, 15, 99.0)])))
+            g.setAttributes(["Swale", 1.0, "cut"])
+            lines.dataProvider().addFeatures([g])
+            out3 = Path(directory) / "graded.xml"
+            result = algorithm.processAlgorithm(dict(GROUND=QgsRasterLayer(tif, "DEM"), SHAPES=pads, LINES=lines, MARGIN=15.0,
+                                                     CELL=0.5, OUTPUT_XML=str(out3)), self.context, self.feedback)
+            self.assertEqual(result["SHAPE_COUNT"], 2)
+            from landxml_plugin.landxml.features import read_line_features
+            feats, _w = read_line_features(load_document(str(out3)).root)
+            outline = next(f for f in feats if f.name == "Sloped pad outline")
+            self.assertEqual([round(p[2], 3) for p in outline.points][:4], [99.0, 101.0, 101.5, 99.5])   # vertex levels kept
+            self.assertTrue(any(f.name == "Swale line" for f in feats))
+            from landxml_plugin.core import read_tin
+            xyz, faces, _m = read_tin(str(out3), "Design")
+            from landxml_plugin.landxml.tin_overlay import TinIndex
+            z = TinIndex(xyz, faces).sample(np.array([[15.0, 10.0]]))
+            self.assertAlmostEqual(float(z[0]), 100.25, delta=0.3)        # inside the pad, from its vertex levels
 
     def test_road_scene_with_surfaces_rasters_contours_and_linework(self):
         from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer

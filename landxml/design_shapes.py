@@ -234,3 +234,163 @@ def _smooth(z, cells):
     k = 2 * cells + 1
     total = c[k:k + rows, k:k + cols] - c[:rows, k:k + cols] - c[k:k + rows, :cols] + c[:rows, :cols]
     return total / (k * k)
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# Graded objects with a level at every vertex (feature-line grading): pads and lines
+# ----------------------------------------------------------------------------------------------------------------
+def nearest_on_edges(points, vertices, closed=True):
+    """For each (n, 2) point: (distance, level) of the nearest point on the polyline ``vertices`` (n, 3), the level
+    interpolated linearly along that edge (as a Civil 3D feature line's grade between vertices)."""
+    points = np.asarray(points, float)
+    v = np.asarray(vertices, float)
+    if closed and len(v) > 2 and np.allclose(v[0, :2], v[-1, :2]):
+        v = v[:-1]
+    a = v if closed else v[:-1]
+    b = np.roll(v, -1, axis=0) if closed else v[1:]
+    ab = b[:, :2] - a[:, :2]
+    length2 = np.maximum((ab ** 2).sum(axis=1), 1e-12)
+    dist = np.full(len(points), np.inf)
+    level = np.full(len(points), np.nan)
+    step = max(1, 4_000_000 // max(len(a), 1))
+    for start in range(0, len(points), step):
+        p = points[start:start + step, None, :]
+        t = np.clip(((p - a[:, :2]) * ab).sum(axis=2) / length2, 0.0, 1.0)
+        near = a[:, :2] + t[..., None] * ab
+        d = np.sqrt(((p - near) ** 2).sum(axis=2))
+        k = d.argmin(axis=1)
+        rows = np.arange(len(k))
+        dist[start:start + step] = d[rows, k]
+        level[start:start + step] = a[k, 2] + t[rows, k] * (b[k, 2] - a[k, 2])
+    return dist, level
+
+
+def batter_rise(d, slope, bench_height=0.0, bench_width=0.0):
+    """Height gained ``d`` out from the edge on a batter of ``slope`` (H per V), with level benches of ``bench_width``
+    every ``bench_height`` when both are given."""
+    d = np.maximum(np.asarray(d, float), 0.0)
+    if bench_height > 0 and bench_width > 0:
+        face = bench_height * slope
+        period = face + bench_width
+        k = np.floor(d / period)
+        return k * bench_height + np.minimum((d - k * period) / max(face, 1e-9), 1.0) * bench_height
+    return d / slope
+
+
+def triangulate_polygon(vertices):
+    """Ear-clipping triangulation of a simple polygon (n, 2+); returns index triples. Orientation-independent."""
+    v = np.asarray(vertices, float)[:, :2]
+    if len(v) > 3 and np.allclose(v[0], v[-1]):
+        v = v[:-1]
+    n = len(v)
+    if n < 3:
+        return []
+    area = 0.5 * np.sum(v[:, 0] * np.roll(v[:, 1], -1) - np.roll(v[:, 0], -1) * v[:, 1])
+    order = list(range(n)) if area > 0 else list(range(n))[::-1]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def inside(p, a, b, c):
+        return cross(a, b, p) >= -1e-12 and cross(b, c, p) >= -1e-12 and cross(c, a, p) >= -1e-12
+
+    triangles = []
+    guard = 0
+    while len(order) > 3 and guard < n * n:
+        guard += 1
+        m = len(order)
+        for i in range(m):
+            i0, i1, i2 = order[i - 1], order[i], order[(i + 1) % m]
+            a, b, c = v[i0], v[i1], v[i2]
+            if cross(a, b, c) <= 1e-12:
+                continue
+            if any(inside(v[j], a, b, c) for j in order if j not in (i0, i1, i2)):
+                continue
+            triangles.append((i0, i1, i2))
+            order.pop(i)
+            break
+        else:
+            break                                       # not simple: stop with what was clipped
+    if len(order) == 3:
+        triangles.append(tuple(order))
+    return triangles
+
+
+def pad_levels(points, vertices):
+    """Levels inside a pad at (n, 2) points: linear on the pad's own triangles (each vertex at its level), NaN outside."""
+    points = np.asarray(points, float)
+    v = np.asarray(vertices, float)
+    if len(v) > 3 and np.allclose(v[0, :2], v[-1, :2]):
+        v = v[:-1]
+    out = np.full(len(points), np.nan)
+    for i, j, k in triangulate_polygon(v):
+        a, b, c = v[i], v[j], v[k]
+        det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+        if abs(det) < 1e-12:
+            continue
+        lo, hi = np.minimum(np.minimum(a[:2], b[:2]), c[:2]), np.maximum(np.maximum(a[:2], b[:2]), c[:2])
+        box = np.flatnonzero((points[:, 0] >= lo[0] - 1e-9) & (points[:, 0] <= hi[0] + 1e-9)
+                             & (points[:, 1] >= lo[1] - 1e-9) & (points[:, 1] <= hi[1] + 1e-9))
+        if not len(box):
+            continue
+        p = points[box]
+        w1 = ((b[1] - c[1]) * (p[:, 0] - c[0]) + (c[0] - b[0]) * (p[:, 1] - c[1])) / det
+        w2 = ((c[1] - a[1]) * (p[:, 0] - c[0]) + (a[0] - c[0]) * (p[:, 1] - c[1])) / det
+        w3 = 1 - w1 - w2
+        ok = (w1 >= -1e-9) & (w2 >= -1e-9) & (w3 >= -1e-9)
+        out[box[ok]] = (w1 * a[2] + w2 * b[2] + w3 * c[2])[ok]
+    return out
+
+
+def _graded(grid, outside, edge_level, inner, cut_slope, fill_slope, bench_height, bench_width, benches_in, max_width,
+            mode):
+    """Shared daylight: ``inner`` levels where the object is (NaN elsewhere), batters from the edge level outside."""
+    ground = grid.z.ravel()
+    cut_b = benches_in in ("both", "cut")
+    fill_b = benches_in in ("both", "fill")
+    up = edge_level + batter_rise(outside, cut_slope, bench_height if cut_b else 0, bench_width if cut_b else 0)
+    down = edge_level - batter_rise(outside, fill_slope, bench_height if fill_b else 0, bench_width if fill_b else 0)
+    batter = np.where(ground > edge_level, np.minimum(ground, up), np.maximum(ground, down))
+    if max_width:
+        batter = np.where(outside <= max_width, batter, ground)
+    design = np.where(np.isfinite(inner), inner, batter)
+    if mode == "cut":
+        design = np.minimum(design, ground)
+    elif mode == "fill":
+        design = np.maximum(design, ground)
+    return grid.like(design.reshape(grid.z.shape))
+
+
+def graded_pad(grid, vertices, cut_slope=1.5, fill_slope=2.0, bench_height=0.0, bench_width=0.0, benches_in="both",
+               max_width=None):
+    """A pad on a closed outline with a level at every vertex (a sloped or twisted platform): linear on its own
+    triangles inside, batters (optionally benched) from the nearest edge level out to the ground."""
+    v = np.asarray(vertices, float)
+    if v.shape[1] < 3 or not np.isfinite(v[:, 2]).all():
+        raise ValueError("every vertex of a pad needs a level.")
+    xy = grid.xy
+    inner = pad_levels(xy, v)
+    inside = _inside_many(xy, v[:, :2])
+    inner = np.where(inside, inner, np.nan)
+    dist, edge = nearest_on_edges(xy, v, closed=True)
+    inner = np.where(inside & ~np.isfinite(inner), edge, inner)          # sliver cells missed by the triangles
+    return _graded(grid, np.where(inside, 0.0, dist), edge, inner, cut_slope, fill_slope, bench_height, bench_width,
+                   benches_in, max_width, "both")
+
+
+def graded_line(grid, vertices, width=0.0, cut_slope=1.5, fill_slope=2.0, bench_height=0.0, bench_width=0.0,
+                benches_in="both", max_width=None, mode="both", crossfall=0.0):
+    """An open feature line with a level at every vertex (a ramp, haul road, bund crest, swale or channel invert):
+    a top ``width`` wide centred on it (falling ``crossfall`` % to each side), then batters to the ground. ``mode``
+    "cut" only excavates (a swale or channel), "fill" only builds up (a bund)."""
+    v = np.asarray(vertices, float)
+    if len(v) < 2 or v.shape[1] < 3 or not np.isfinite(v[:, 2]).all():
+        raise ValueError("a graded line needs two or more vertices, each with a level.")
+    xy = grid.xy
+    dist, level = nearest_on_edges(xy, v, closed=False)
+    half = max(float(width), 0.0) / 2
+    top = level - np.minimum(dist, half) * float(crossfall) / 100.0
+    inner = np.where(dist <= half, top, np.nan)
+    edge = level - half * float(crossfall) / 100.0
+    return _graded(grid, np.maximum(dist - half, 0.0), edge, inner, cut_slope, fill_slope, bench_height, bench_width,
+                   benches_in, max_width, mode)
