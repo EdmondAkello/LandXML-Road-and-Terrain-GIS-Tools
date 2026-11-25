@@ -117,5 +117,17 @@ class ShapeTests(unittest.TestCase):
         self.assertTrue((hole.z <= g.z + 1e-9).all())
 
 
+class BenchedDumpTests(unittest.TestCase):
+    def test_lifts_and_berms(self):
+        grid = flat(100.0, 200, 1.0)
+        ring = np.array([[20.0, -180.0], [180.0, -180.0], [180.0, -20.0], [20.0, -20.0]])
+        dump = stockpile(grid, ring, top=130.0, slope=2.0, bench=10.0, berm=5.0)
+        profile = dump.sample(np.column_stack([np.linspace(20.5, 99.5, 160), np.full(160, -100.0)]))
+        self.assertAlmostEqual(float(np.nanmax(profile)), 130.0)
+        flats = np.isclose(profile[1:], profile[:-1]) & (profile[1:] < 129.9) & (profile[1:] > 100.1)
+        self.assertGreater(flats.sum(), 8)                       # the berms at 110 and 120
+        self.assertTrue(np.any(np.isclose(profile, 110.0)) and np.any(np.isclose(profile, 120.0)))
+
+
 if __name__ == "__main__":
     unittest.main()

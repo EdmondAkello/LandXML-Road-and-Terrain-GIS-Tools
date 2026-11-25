@@ -1,0 +1,203 @@
+{
+ "id": "generic_sections",
+ "name": "Generic (no limits)",
+ "source": "Plain geometry with no standard limits; every value is the user's.",
+ "units": "metric",
+ "review_criteria": null,
+ "advisory": "No checks.",
+ "references": {},
+ "limits": {},
+ "slope_bands": {
+  "earth": {
+   "fill": [
+    [
+     null,
+     2.0
+    ]
+   ],
+   "cut": [
+    [
+     null,
+     1.5
+    ]
+   ]
+  }
+ },
+ "side_drains": {
+  "V": {
+   "shape": "v",
+   "foreslope": 2.0,
+   "depth": 0.5,
+   "bottom": 0.0
+  },
+  "Trapezoidal": {
+   "shape": "trapezoidal",
+   "foreslope": 1.5,
+   "depth": 0.6,
+   "bottom": 0.6
+  }
+ },
+ "widening": {
+  "by_speed": {}
+ },
+ "superelevation": {
+  "normal_crown": 2.5,
+  "rotation": "centreline",
+  "runoff_on_tangent": 0.5,
+  "shoulder_rule": "own"
+ },
+ "buildups": {
+  "Carriageway": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "HMA surface course",
+     "material": "HMA",
+     "thickness": 0.05,
+     "unit": "m2"
+    },
+    {
+     "name": "HMA base course",
+     "material": "HMA",
+     "thickness": 0.1,
+     "unit": "m3"
+    },
+    {
+     "name": "Aggregate base",
+     "material": "AB",
+     "thickness": 0.2,
+     "unit": "m3"
+    },
+    {
+     "name": "Granular subbase",
+     "material": "GSB",
+     "thickness": 0.2,
+     "unit": "m3"
+    }
+   ]
+  },
+  "Gravel shoulder": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Aggregate shoulder",
+     "material": "AB",
+     "thickness": 0.15,
+     "unit": "m3"
+    }
+   ]
+  },
+  "Footway": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Concrete sidewalk",
+     "material": "PCC",
+     "thickness": 0.1,
+     "unit": "m2"
+    },
+    {
+     "name": "Aggregate base",
+     "material": "AB",
+     "thickness": 0.1,
+     "unit": "m3"
+    }
+   ]
+  },
+  "Median": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Topsoil and turf",
+     "material": "TS",
+     "thickness": 0.1,
+     "unit": "m2"
+    }
+   ]
+  }
+ },
+ "templates": {
+  "Rural single carriageway with side drains": {
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.5
+    },
+    {
+     "type": "shoulder",
+     "width": 1.5
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "V"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "Urban street with kerbs and NMT": {
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.5
+    },
+    {
+     "type": "kerb",
+     "kind": "barrier",
+     "channel": 0.3
+    },
+    {
+     "type": "verge",
+     "width": 1.0
+    },
+    {
+     "type": "cycle_track",
+     "width": 1.5
+    },
+    {
+     "type": "sidewalk",
+     "width": 2.0
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "Dual carriageway with raised median": {
+   "median": {
+    "type": "median",
+    "kind": "raised",
+    "width": 3.0,
+    "kerb_height": 0.15
+   },
+   "right": [
+    {
+     "type": "shoulder",
+     "width": 0.5,
+     "name": "Inner shoulder"
+    },
+    {
+     "type": "lane",
+     "width": 3.5
+    },
+    {
+     "type": "lane",
+     "width": 3.5
+    },
+    {
+     "type": "shoulder",
+     "width": 2.0
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "Trapezoidal"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  }
+ },
+ "unsourced": []
+}

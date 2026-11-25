@@ -22,7 +22,9 @@ GUIDE_SECTIONS = {
     "landxml_grading_revision_comparison": "revisions", "landxml_design_shapes": "design-shapes", "landxml_dem_to_tin": "dem-to-tin", "landxml_basin_storage": "basins", "landxml_grading_edges": "edges",
     "landxml_surface_style": "styles", "landxml_grading_report": "site-report", "landxml_export_scene": "scene",
     "landxml_3d_scene": "scene-viewer", "landxml_cross_section_sheets": "sheets", "landxml_design_report": "report",
-    "landxml_design_review": "review-run",
+    "landxml_design_review": "review-run", "landxml_section_project": "section-editor",
+    "landxml_build_corridor": "corridor-build", "landxml_export_roads": "export-roads",
+    "landxml_export_design_stage": "export-stage",
 }
 
 

@@ -142,22 +142,30 @@ def pit(grid, ring, floor, bench_height=10.0, berm=8.0, face_slope=0.5, rim=None
     return grid.like(np.where(sd <= 0, np.minimum(grid.z, surface), grid.z))
 
 
-def stockpile(grid, ring, top=None, slope=1.5, volume=None):
+def stockpile(grid, ring, top=None, slope=1.5, volume=None, bench=0.0, berm=0.0):
     """A stockpile or mound on the footprint: sides at ``slope`` (H per V; 1.5 is about the angle of repose of loose
     earth) from the toe to a flat top at ``top``, or to a peak where the footprint is too narrow. With ``volume``
-    instead of ``top``, the top is found so the pile holds that volume above the ground."""
+    instead of ``top``, the top is found so the pile holds that volume above the ground. With ``bench`` (a lift
+    height) and ``berm``, the sides are built in lifts with berms between them, as a waste dump is."""
     sd = signed_distance(grid, ring)
     inside = np.maximum(-sd, 0.0)
     toe = float(np.nanmean(grid.sample(np.asarray(ring, float)[:, :2])))
+    if bench > 0 and berm > 0:
+        face = bench * slope
+        period = face + berm
+        k = np.floor(inside / period)
+        rise = k * bench + np.minimum((inside - k * period) / max(face, 1e-9), 1.0) * bench
+    else:
+        rise = inside / slope
 
     def build(level):
-        pile = np.minimum(level, toe + inside / slope)
+        pile = np.minimum(level, toe + rise)
         return np.where(sd <= 0, np.maximum(grid.z, pile), grid.z)
 
     if top is None:
         if volume is None:
             raise ValueError("Give the stockpile a top level or a volume.")
-        low, high = toe, toe + float(inside.max()) / slope + 1.0
+        low, high = toe, toe + float(rise.max()) + 1.0
         if (build(high) - grid.z).sum() * grid.cell ** 2 < volume:
             raise ValueError(f"The footprint cannot hold {volume:,.0f} at slope {slope:g}; enlarge it or steepen the sides.")
         for _ in range(60):

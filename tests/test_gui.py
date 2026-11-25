@@ -115,8 +115,10 @@ class ProfileViewerTests(unittest.TestCase):
         self.assertEqual(chart.marker_station, 200)
 
     def test_profile_design_on_the_chart_and_saved_to_a_copy(self):
-        from qgis.PyQt.QtCore import QPoint, Qt
+        from qgis.PyQt.QtCore import QEvent, QPoint, QPointF, Qt
+        from qgis.PyQt.QtGui import QMouseEvent
         from qgis.PyQt.QtTest import QTest
+        from qgis.PyQt.QtWidgets import QApplication
 
         panel, chart = self.dock.design_panel, self.dock.chart
         chart.resize(900, 500)
@@ -139,7 +141,11 @@ class ProfileViewerTests(unittest.TestCase):
         before = design.pvis[1][1]
         QTest.mousePress(chart, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, start)
         for dy in (-10, -20, -30):
-            QTest.mouseMove(chart, start + QPoint(0, dy))
+            # Qt 5's QTest.mouseMove only moves the cursor (no event on the offscreen platform)
+            # and drops the modifiers, so send the drag moves as real events on both Qt versions.
+            QApplication.sendEvent(chart, QMouseEvent(
+                QEvent.Type.MouseMove, QPointF(start + QPoint(0, dy)), Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier))
         QTest.mouseRelease(chart, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, start + QPoint(0, -30))
         self.assertGreater(design.pvis[1][1], before)                          # dragged up
         self.assertEqual(design.pvis[1][0], 100.0)                             # Shift: up and down only
@@ -375,9 +381,10 @@ class PluginGuiTests(unittest.TestCase):
         iface = Interface()
         plugin = LandXMLTinToGeoTIFFPlugin(iface)
         plugin.initGui()
-        self.assertEqual(len(iface.menus), 4)                  # viewer, pick, locator, user guide
+        self.assertEqual(len(iface.menus), 6)                  # viewer, pick, plan and section editors, locator, guide
         self.assertIn("User Guide", [a.text() for a in iface.menus])
-        self.assertEqual([a.text() for a in iface.icons], ["LandXML Profile Viewer and Designer", "Pick Alignment Profile on Map"])
+        self.assertEqual([a.text() for a in iface.icons], ["LandXML Profile Viewer and Designer", "Pick Alignment Profile on Map",
+                                                           "Plan Editor (Horizontal Alignment)", "Corridor Section Editor"])
         from qgis.core import QgsSettings
         from landxml_plugin.project_settings import plugin_version
         self.assertEqual(QgsSettings().value("LandXMLRoadTerrain/welcomed_version"), plugin_version())   # shown once
@@ -393,12 +400,221 @@ class PluginGuiTests(unittest.TestCase):
         self.assertEqual(buttons, ["Open Profile Viewer", "User Guide"])
         plugin.show_locator()
         self.assertIsNotNone(plugin.locator)
+        self.assertIsNotNone(plugin.show_section_editor())
+        self.assertIsNotNone(plugin.show_plan_editor())
         plugin.pick_on_map()
         self.assertIs(iface.canvas.mapTool(), plugin.viewer.tool)
         plugin.unload()
         self.assertEqual(iface.menus, [])
         self.assertEqual(iface.docks, [])
         self.assertIsNone(plugin.provider)
+
+
+class SectionEditorTests(unittest.TestCase):
+    """The Corridor Section Editor dock on a synthetic road (offscreen Qt)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = application()
+        from landxml_plugin.gui.section_editor import SectionEditorDock
+        from tests.test_section_editor import curved_road
+
+        cls.Dock = SectionEditorDock
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.path = curved_road(os.path.join(cls.tmp.name, "curved.xml"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        self.dock = self.Dock(None)
+        self.dock.standard_combo.setCurrentIndex(self.dock.standard_combo.findData("kenya_rdm13_2025_sections"))
+        self.dock.template_combo.setCurrentText("R5 single carriageway")
+        self.dock.set_file(self.path)
+        self.dock.axis_combo.setCurrentIndex(1)
+        self.dock.load_context()
+
+    def tearDown(self):
+        self.dock.cleanup()
+        self.dock.deleteLater()
+
+    def test_axis_order_must_be_chosen(self):
+        dock = self.Dock(None)
+        dock.set_file(self.path)
+        dock.load_context()
+        self.assertIsNone(dock.context)
+        self.assertIn("axis order", dock.status.text())
+        dock.deleteLater()
+
+    def test_live_section_edit_undo_and_why(self):
+        dock = self.dock
+        self.assertIsNotNone(dock.section)
+        self.assertEqual(dock.element_list.count(), 4)                     # lane, shoulder, side drain, daylight
+        dock.set_station(260.0)
+        lane_width = float(dock._items()[0]["width"])
+        etw_before = next(p for p in dock.section["top"] if p.code == "ETW" and p.d > 0)
+        dock.element_list.setCurrentRow(0)
+        dock._set_element("width", 4.0)
+        etw = next(p for p in dock.section["top"] if p.code == "ETW" and p.d > 0)
+        self.assertAlmostEqual(etw.d - etw_before.d, 4.0 - lane_width, places=6)
+        dock.undo()
+        etw = next(p for p in dock.section["top"] if p.code == "ETW" and p.d > 0)
+        self.assertAlmostEqual(etw.d, etw_before.d, places=6)
+        dock.redo()
+        self.assertEqual(dock._items()[0]["width"], 4.0)
+        # a drag is one undo step
+        steps = len(dock.undo_stack)
+        for w in (4.1, 4.2, 4.3):
+            dock._drag_value("right", "lane1", "width", w)
+        dock._drag_finished()
+        self.assertEqual(len(dock.undo_stack), steps + 1)
+        dock._set_path(("superelevation", "source"), "standard")
+        etw = next(p for p in dock.section["top"] if p.code == "ETW" and p.d > 0)
+        dock._point_clicked(etw)
+        self.assertIn("Superelevation on the right", dock.why_text.toPlainText())
+        self.assertIn("computed from Kenya RDM", etw.why)
+        # add a kerb before the side drain and a barrier; departures are reported, never blocking
+        dock.element_list.setCurrentRow(1)
+        dock.add_element("kerb")
+        self.assertTrue(any(p.code == "KERB_T" for p in dock.section["top"]))
+        dock.element_list.setCurrentRow(0)
+        dock._set_element("width", 2.5)
+        texts = [dock.checks_list.item(i).text() for i in range(dock.checks_list.count())]
+        self.assertTrue(any("Table 4.1" in t for t in texts))
+
+    def test_render_regions_and_build(self):
+        from qgis.PyQt.QtCore import QRectF
+
+        dock = self.dock
+        image = QImage(1000, 500, QImage.Format.Format_ARGB32)
+        image.fill(QColor("#ffffff"))
+        painter = QPainter(image)
+        dock.chart.resize(1000, 500)
+        dock.chart.render(painter, QRectF(0, 0, 1000, 500))
+        painter.end()
+        colors = {image.pixelColor(x, y).name() for x in range(0, 1000, 5) for y in range(0, 500, 5)}
+        self.assertGreater(len(colors), 8)
+        dock.set_station(300.0)
+        dock.split_region()
+        self.assertEqual(len(dock.project["regions"]), 2)
+        out = os.path.join(self.tmp.name, "built.xml")
+        from qgis.PyQt.QtWidgets import QFileDialog
+        original = QFileDialog.getSaveFileName
+        QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: (out, ""))
+        try:
+            dock.build()
+        finally:
+            QFileDialog.getSaveFileName = original
+        self.assertTrue(os.path.isfile(out))
+        self.assertTrue(os.path.isfile(out[:-4] + "_quantities.xlsx"))
+        self.assertTrue(os.path.isfile(out[:-4] + "_report.html"))
+
+    def test_adopts_a_profile_saved_in_the_profile_viewer(self):
+        from landxml_plugin.landxml.writer import VerticalProfile
+        from landxml_plugin.landxml.profile_design import splice_profile
+
+        dock = self.dock
+        text = Path(self.path).read_text(encoding="utf-8")
+        copy_path = os.path.join(self.tmp.name, "with_new_frl.xml")
+        new = VerticalProfile("New FRL", [(0, 1502.0, 0), (dock.context["frame"].end, 1510.0, 0)])
+        Path(copy_path).write_text(splice_profile(text, "Curved", new), encoding="utf-8")
+        self.assertFalse(dock.adopt_profile(copy_path, "Other", "New FRL"))
+        self.assertTrue(dock.adopt_profile(copy_path, "Curved", "New FRL"))
+        self.assertEqual(dock.context["profile"].name, "New FRL")
+        self.assertAlmostEqual(dock.context["profile"].elevation(0.0), 1502.0)
+
+    def test_features_build_into_the_section(self):
+        dock = self.dock
+        dock.set_station(100.0)
+        dock.feature_type.setCurrentIndex(dock.feature_type.findData("bus_bay"))
+        dock.add_feature()
+        self.assertEqual(dock.feature_list.count(), 1)
+        dock.set_station(115.0)
+        self.assertTrue(any(p.code == "KERB_T" for p in dock.section["top"]))
+        self.assertEqual(dock.section["features"][0]["type"], "bus_bay")
+        dock._set_feature(0, "depth", 5.0)
+        bay = [p for p in dock.section["top"] if p.eid == "feat_bus_bay_1"]
+        self.assertTrue(bay)
+        dock.undo()
+        dock.undo()
+        self.assertEqual(dock.project["features"], [])
+
+
+class PlanEditorTests(unittest.TestCase):
+    """The plan editor dock and its map tool on an offscreen canvas."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = application()
+
+    def test_draw_drag_refuse_and_save(self):
+        from qgis.core import QgsMapLayerProxyModel  # noqa: F401 - imported by the dock
+        from qgis.gui import QgsMapMouseEvent
+        from qgis.PyQt.QtCore import QEvent, QPoint, Qt
+        from landxml_plugin.gui.plan_editor import PlanEditorDock, PlanEditTool
+
+        class Iface:
+            def __init__(self):
+                self.canvas = QgsMapCanvas()
+                self.canvas.resize(800, 600)
+                self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:32737"))
+                self.canvas.setExtent(QgsRectangle(0, 0, 1000, 750))
+
+            def mapCanvas(self):
+                return self.canvas
+
+            def activeLayer(self):
+                return None
+
+        iface = Iface()
+        dock = PlanEditorDock(iface)
+        dock.radius.setValue(150)
+        dock.draw_button.setChecked(True)
+        self.assertIsInstance(iface.canvas.mapTool(), PlanEditTool)
+        tool = iface.canvas.mapTool()
+
+        def click(mx, my, button=Qt.MouseButton.LeftButton, kind=QEvent.Type.MouseButtonPress):
+            pixel = iface.canvas.getCoordinateTransform().transform(QgsPointXY(mx, my))
+            return QgsMapMouseEvent(iface.canvas, kind, QPoint(round(pixel.x()), round(pixel.y())), button, button,
+                                    Qt.KeyboardModifier.NoModifier)
+
+        for x, y in ((100, 100), (500, 100), (700, 400)):
+            tool.canvasPressEvent(click(x, y))
+        design = dock.design
+        self.assertEqual(len(design.pis), 3)
+        self.assertIsNotNone(design.alignment)
+        self.assertEqual(design.curves[0]["radius"], 150)
+        self.assertGreater(dock.elements.rowCount(), 2)
+        # drag the middle PI: one undo step
+        before = list(design.pis[1])
+        tool.canvasPressEvent(click(*before))
+        for dx in (5, 10, 20):
+            tool.canvasMoveEvent(click(before[0] + dx, before[1], kind=QEvent.Type.MouseMove))
+        tool.canvasReleaseEvent(click(before[0] + 20, before[1], kind=QEvent.Type.MouseButtonRelease))
+        self.assertGreater(design.pis[1][0], before[0])
+        design.undo()
+        self.assertAlmostEqual(design.pis[1][0], before[0], places=3)
+        # a radius that cannot fit is refused with the reason, the design is kept
+        dock.edit(lambda: design.set_curve(1, radius=100000))
+        self.assertIn("overlap", dock.status.text())
+        self.assertEqual(design.curves[0]["radius"], 150)
+        # typed values in the table
+        dock.table.item(1, 4).setText("30")
+        self.assertEqual(design.curves[0]["spiral_in"], 30.0)
+        self.assertTrue(dock.handles())
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "plan.xml")
+            self.assertIsNone(dock.save(path))                     # the axis order must be chosen
+            dock.axis.setCurrentIndex(1)
+            seen = []
+            dock.saved.connect(lambda p, n: seen.append(p))
+            self.assertEqual(dock.save(path), path)
+            self.assertEqual(seen, [path])
+            from landxml_plugin.landxml.geometry import read_alignments
+            records, _bad = read_alignments(path, 1.0)
+            self.assertAlmostEqual(records[0]["vertex_distances"][-1], design.alignment.length, places=3)
+        dock.cleanup()
 
 
 if __name__ == "__main__":

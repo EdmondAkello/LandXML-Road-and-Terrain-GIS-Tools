@@ -1167,7 +1167,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             area_sum = 0.0
             for xyz, faces, _t in cuts:
                 tri = np.asarray(xyz, float)[np.asarray(faces)][:, :, :2]
-                area_sum += float(np.abs(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])).sum() / 2.0)
+                u, v = tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+                area_sum += float(np.abs(u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]).sum() / 2.0)
             floor = math.sqrt(2.0 * area_sum / room) if room > 0 else 0.0     # target edge that fits the room left
             if any(t < floor for _x, _f, t in cuts):
                 cuts = [(x, f, max(t, floor)) for x, f, t in cuts]

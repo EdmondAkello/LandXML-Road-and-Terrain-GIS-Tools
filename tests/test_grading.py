@@ -81,6 +81,11 @@ def _sampled(xyz, n=600):
     return z, cell
 
 
+
+def _cross2(u, v):
+    """2-D cross product (np.cross refuses 2-D vectors in NumPy 2)."""
+    return u[0] * v[1] - u[1] * v[0]
+
 class TriangleFormulaTests(unittest.TestCase):
     def test_lone_fill_vertex_closed_form(self):
         # Zero line cuts at a third of the way up; the fill triangle is 4/9 of the plan area.
@@ -742,7 +747,7 @@ class SceneSolidsTests(unittest.TestCase):
 
         l_shape = np.array([[0, 0], [4, 0], [4, 1], [1, 1], [1, 3], [0, 3]], float)
         tris = triangulate_ring(l_shape)
-        area = sum(0.5 * abs(np.cross(l_shape[b] - l_shape[a], l_shape[c] - l_shape[a])) for a, b, c in tris)
+        area = sum(0.5 * abs(_cross2(l_shape[b] - l_shape[a], l_shape[c] - l_shape[a])) for a, b, c in tris)
         self.assertEqual(len(tris), 4)
         self.assertAlmostEqual(area, 6.0)
         xyz, faces = extrude(np.vstack([l_shape, l_shape[:1]]), 100.0, 5.0)
@@ -750,7 +755,7 @@ class SceneSolidsTests(unittest.TestCase):
         self.assertEqual((xyz[:, 2].min(), xyz[:, 2].max()), (100.0, 105.0))
         plane = np.array([[0, 0, 0], [10, 0, 10], [10, 10, 10], [0, 10, 0]], float)     # z = x
         wxyz, wfaces = water_mesh(plane, np.array([[0, 1, 2], [0, 2, 3]]), 4.0)
-        wet = sum(0.5 * abs(np.cross(wxyz[b, :2] - wxyz[a, :2], wxyz[c, :2] - wxyz[a, :2])) for a, b, c in wfaces)
+        wet = sum(0.5 * abs(_cross2(wxyz[b, :2] - wxyz[a, :2], wxyz[c, :2] - wxyz[a, :2])) for a, b, c in wfaces)
         self.assertAlmostEqual(wet, 40.0)
         self.assertTrue(np.allclose(wxyz[:, 2], 4.0))
 
