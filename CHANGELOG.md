@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added (LandXML writer, groundwork)
+- `landxml/writer.py` lays out horizontal alignments from design elements (tangents, circular curves and clothoid
+  spirals, from a start point and bearing; each element must join the next in curvature) and vertical profiles from
+  PVIs with symmetric parabolic curves, and writes them as LandXML 1.2: northing first by default as Civil 3D does,
+  the units given, and a coordinate system only when one is given. The plugin's own readers get the written
+  centreline back within a centimetre and the profile levels exactly. No tools use it yet.
+
 ### Changed (3D scene dialog, #84)
 - **Generate a feasibility road** switches road generation on and off. While it is off the road inputs are greyed
   out but keep their values and the export is a terrain scene only, said so in the log; ticking it with no road
