@@ -114,6 +114,57 @@ class ProfileViewerTests(unittest.TestCase):
         self.dock.table.selectRow(1)
         self.assertEqual(chart.marker_station, 200)
 
+    def test_profile_design_on_the_chart_and_saved_to_a_copy(self):
+        from qgis.PyQt.QtCore import QPoint, Qt
+        from qgis.PyQt.QtTest import QTest
+
+        panel, chart = self.dock.design_panel, self.dock.chart
+        chart.resize(900, 500)
+        panel.spacing_spin.setValue(100)
+        panel.new_from_ground()
+        design = panel.design
+        self.assertIsNotNone(design)
+        self.assertIs(chart.editor, design)                                   # editing is on, on the chart
+        self.assertEqual([p[0] for p in design.pvis], [0.0, 100.0, 200.0])
+        self.assertEqual(panel.table.rowCount(), 3)
+        self.assertTrue(any("(editing)" in line["name"] for line in chart.lines))
+
+        def pixel(index):
+            plot, low, high, z0, z1 = chart._frame()
+            s, z, _l = design.pvis[index]
+            return QPoint(round(plot.left() + (s - low) / (high - low) * plot.width()),
+                          round(plot.top() + (z1 - z) / (z1 - z0) * plot.height()))
+
+        start = pixel(1)
+        before = design.pvis[1][1]
+        QTest.mousePress(chart, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, start)
+        for dy in (-10, -20, -30):
+            QTest.mouseMove(chart, start + QPoint(0, dy))
+        QTest.mouseRelease(chart, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, start + QPoint(0, -30))
+        self.assertGreater(design.pvis[1][1], before)                          # dragged up
+        self.assertEqual(design.pvis[1][0], 100.0)                             # Shift: up and down only
+        self.assertEqual(chart.selected_pvi, 1)
+        panel.undo_button.click()
+        self.assertAlmostEqual(design.pvis[1][1], before)                      # the whole drag is one undo step
+
+        plot = chart._frame()[0]
+        QTest.mouseDClick(chart, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                          QPoint(round(plot.left() + plot.width() * 0.25), round(plot.center().y())))
+        self.assertEqual(len(design.pvis), 4)                                  # double-click adds a PVI
+        panel.apply_menu(1, "curve", 30.0)
+        self.assertEqual(design.pvis[1][2], 30.0)
+        panel.table.item(2, 1).setText("101.5")                                # typed level
+        self.assertEqual(design.pvis[2][1], 101.5)
+        panel.grade_spin.setValue(0.1)
+        self.assertGreater(panel.checks_list.count(), 0)
+
+        out = os.path.join(tempfile.mkdtemp(), "with_design.xml")
+        panel.name_edit.setText("New FRL")
+        self.assertEqual(panel.save(out), out)
+        self.assertEqual(self.dock.path, out)                                  # the copy is opened
+        self.assertIn("New FRL", self.dock.design_combo.currentText())
+        self.assertIsNone(panel.save(CORRIDOR))                                # never over the source file
+
     def test_exports(self):
         with tempfile.TemporaryDirectory() as directory:
             png = Path(directory) / "chart.png"
@@ -326,6 +377,20 @@ class PluginGuiTests(unittest.TestCase):
         plugin.initGui()
         self.assertEqual(len(iface.menus), 4)                  # viewer, pick, locator, user guide
         self.assertIn("User Guide", [a.text() for a in iface.menus])
+        self.assertEqual([a.text() for a in iface.icons], ["LandXML Profile Viewer and Designer", "Pick Alignment Profile on Map"])
+        from qgis.core import QgsSettings
+        from landxml_plugin.project_settings import plugin_version
+        self.assertEqual(QgsSettings().value("LandXMLRoadTerrain/welcomed_version"), plugin_version())   # shown once
+        from qgis.gui import QgsMessageBar
+        bar = QgsMessageBar()
+        iface.messageBar = lambda: bar
+        plugin._welcome_once()
+        self.assertEqual(len(bar.items()), 0)                  # not again for the same version
+        QgsSettings().setValue("LandXMLRoadTerrain/welcomed_version", "0.0")
+        plugin._welcome_once()
+        self.assertEqual(len(bar.items()), 1)                  # a new version is welcomed, with its buttons
+        buttons = [w.text() for w in bar.items()[0].findChildren(__import__("qgis.PyQt.QtWidgets", fromlist=["QPushButton"]).QPushButton)]
+        self.assertEqual(buttons, ["Open Profile Viewer", "User Guide"])
         plugin.show_locator()
         self.assertIsNotNone(plugin.locator)
         plugin.pick_on_map()

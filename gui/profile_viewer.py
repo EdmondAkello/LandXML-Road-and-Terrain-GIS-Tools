@@ -55,7 +55,7 @@ from ..landxml.earthworks import (
     summarize_segments,
 )
 from ..landxml.common import descendants
-from ..landxml.longsection import default_pair, read_alignment_profiles
+from ..landxml.longsection import ProfileLine, default_pair, read_alignment_profiles
 from ..landxml.parser import load_document
 from ..landxml.profile import profile_control_points, read_profile_controls
 from ..landxml.reports import (
@@ -137,6 +137,11 @@ class ProfileViewerDock(QgsDockWidget):
         file_row.addWidget(self.file_edit, 1)
         file_row.addWidget(browse)
         file_row.addWidget(self.pick_button)
+        self.guide_button = QToolButton()
+        self.guide_button.setText("Guide")
+        self.guide_button.setToolTip("Open the user guide at the Profile Viewer (installed with the plugin; works offline)")
+        self.guide_button.clicked.connect(lambda: self._open_guide("viewer"))
+        file_row.addWidget(self.guide_button)
         layout.addLayout(file_row)
 
         grid = QGridLayout()
@@ -227,6 +232,10 @@ class ProfileViewerDock(QgsDockWidget):
         self.section_panel = SectionPanel()
         self.tabs.addTab(self.section_panel, "Cross-sections")
         self.tabs.setTabEnabled(1, False)
+        from .profile_design_panel import ProfileDesignPanel
+        self.design_panel = ProfileDesignPanel()
+        self.tabs.addTab(self.design_panel, "Design")
+        self.tabs.setTabToolTip(2, "Design a vertical profile on the long section and save it to LandXML.")
         self.tabs.currentChanged.connect(self._tab_changed)
         splitter.addWidget(self.tabs)
         splitter.setStretchFactor(0, 3)
@@ -241,11 +250,11 @@ class ProfileViewerDock(QgsDockWidget):
         self.setWidget(scroll)
 
         self.alignment_combo.currentIndexChanged.connect(self.alignment_changed)
-        self.design_combo.currentIndexChanged.connect(self.refresh)
-        self.ground_combo.currentIndexChanged.connect(self.refresh)
-        self.exclude_edit.editingFinished.connect(self.refresh)
-        self.tolerance_spin.valueChanged.connect(self.refresh)
-        self.others_check.toggled.connect(self.refresh)
+        self.design_combo.currentIndexChanged.connect(lambda *_args: self.refresh())
+        self.ground_combo.currentIndexChanged.connect(lambda *_args: self.refresh())
+        self.exclude_edit.editingFinished.connect(lambda *_args: self.refresh())
+        self.tolerance_spin.valueChanged.connect(lambda *_args: self.refresh())
+        self.others_check.toggled.connect(lambda *_args: self.refresh())
         self.depth_check.toggled.connect(self._toggle_view)
         self.shade_check.toggled.connect(self._toggle_view)
         self.controls_check.toggled.connect(self._toggle_view)
@@ -255,6 +264,13 @@ class ProfileViewerDock(QgsDockWidget):
         self.chart.stationHovered.connect(self.section_panel.hover_station)
         self.section_panel.stationChanged.connect(self._section_station)
         self.section_panel.message.connect(lambda text: self._message(text, Qgis.MessageLevel.Success))
+        self.design_panel.changed.connect(lambda: self.refresh(keep_view=True))
+        self.design_panel.editingToggled.connect(self._design_editing)
+        self.design_panel.stationRequested.connect(self._section_station)
+        self.design_panel.saved.connect(self._design_saved)
+        self.chart.designEdited.connect(self._design_edited)
+        self.chart.pviSelected.connect(self.design_panel.select_row)
+        self.chart.pviMenuRequested.connect(self.design_panel.show_menu)
         self._update_summary()
 
     def _toggle_view(self):
@@ -366,9 +382,57 @@ class ProfileViewerDock(QgsDockWidget):
         return self.profiles[index] if index is not None and index < len(self.profiles) else None
 
     # -------------------------------------------------------- analysis
-    def refresh(self):
+    def _open_guide(self, section):
+        from ..project_settings import open_guide
+
+        open_guide(section)
+
+    def _design_editing(self, on):
+        self.chart.editor = self.design_panel.design if on else None
+        self.chart.select_pvi(None)
+        if on:
+            self.tabs.setCurrentWidget(self.design_panel)
+
+    def _design_edited(self):
+        self.design_panel.sync()
+        self.refresh(keep_view=True)
+
+    def _design_saved(self, path, alignment, profile):
+        """Open the copy that was written, on the same alignment, with the saved profile as the design."""
+        self.load(path, alignment)
+        index = next((i for i in range(self.design_combo.count()) if self.design_combo.itemText(i).startswith(profile + " (")), -1)
+        if index >= 0:
+            self.design_combo.setCurrentIndex(index)
+        self._message(f"Saved the design profile '{profile}' to {path}.", Qgis.MessageLevel.Success)
+
+    def _design_context(self):
+        ground = self._selected(self.ground_combo)
+        stations = [p[0] for profile in self.profiles for part in profile.parts for p in part] if self.profiles else []
+        span = None
+        element = self.alignments.get(self.alignment_combo.currentText())
+        if element is not None:
+            try:
+                start = float(element.attrib.get("staStart", 0) or 0)
+                length = float(element.attrib.get("length", 0) or 0)
+                span = (start, start + length) if length > 0 else None
+            except ValueError:
+                span = None
+        if span is None and stations:
+            span = (min(stations), max(stations))
+        self.design_panel.set_context(self.document, self.path, self.alignment_combo.currentText(), self.profiles, ground, span)
+        if self.design_panel.design is None:
+            self.chart.editor = None
+
+    def refresh(self, keep_view=False):
+        if getattr(self, "_refreshing_context", False) is False:
+            self._refreshing_context = True
+            try:
+                self._design_context()
+            finally:
+                self._refreshing_context = False
         design = self._selected(self.design_combo)
         ground = self._selected(self.ground_combo)
+        editing = self.design_panel.design is not None and self.design_panel.editing
         lines, runs, segments, transitions, controls = [], [], [], [], []
         try:
             excluded = parse_station_ranges(self.exclude_edit.text())
@@ -379,7 +443,11 @@ class ProfileViewerDock(QgsDockWidget):
             self.exclude_edit.setToolTip(str(exc))
         if ground is not None:
             lines.append(dict(name=ground.name, parts=ground.parts, color=GROUND_COLOR, width=1.5))
-        if design is not None:
+        if editing:                       # the design being edited takes the place of the chosen design profile
+            sketch = self.design_panel.design
+            design = ProfileLine(self.alignment_combo.currentText(), sketch.name, "design", parts=[sketch.sample(1.0)])
+            lines.append(dict(name=sketch.name + " (editing)", parts=design.parts, color="#d97706", width=2.0))
+        elif design is not None:
             lines.append(dict(name=design.name, parts=design.parts, color=DESIGN_COLOR, width=1.8))
             if design.kind == "design" and design.element is not None:
                 try:
@@ -425,7 +493,7 @@ class ProfileViewerDock(QgsDockWidget):
                 for i, e in enumerate(mapping.equations)))
         else:
             self.chart.setToolTip("")
-        self.chart.set_data(lines, runs, transitions, controls, title, unit)
+        self.chart.set_data(lines, runs, transitions, controls, title, unit, keep_view=keep_view)
         self._toggle_view()
         self._fill_table(segments, unit)
         self._update_summary()

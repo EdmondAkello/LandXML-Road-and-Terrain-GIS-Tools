@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added (Profile Viewer: design a profile)
+- A **Design** tab in the Profile Viewer draws a new vertical profile on the long section: start from the existing
+  ground (PVIs at the ends, or every chosen length, averaged) or copy an existing design; drag PVIs on the chart
+  (Shift: up and down only), double-click to add one, right-click for its curve length, K value or to delete it; type
+  exact stations, levels, curve lengths or K in the PVI table. The grades, curve ends, K values and the cut/fill shading
+  follow every change, and a whole drag is one Undo step.
+- Live checks against the chosen standard (Kenya RDM or AASHTO), design speed and grade limit: steep or flat grades,
+  grade changes without a curve, crest and sag K below the standard and curves below the minimum length.
+- **Save to LandXML…** writes the design into a copy of the file (never the source), as a profile of the alignment,
+  and opens the copy with the new profile chosen.
+- The editing model (`landxml/profile_design.py`) is plain Python and tested without QGIS.
+
+### Added (finding the tools)
+- The Profile Viewer has its own toolbar button (it was only in the Plugins menu) and is now named *LandXML Profile
+  Viewer and Designer*; the viewer has a **Guide** button and the Design tab a **Help** button that open the user guide
+  at their sections, offline.
+- Once after installing or upgrading, a message bar names the toolbox group and the Profile Viewer with **Open Profile
+  Viewer** and **User Guide** buttons. It is not shown again for the same version.
+
 ### Added (LandXML writer, groundwork)
 - `landxml/writer.py` lays out horizontal alignments from design elements (tangents, circular curves and clothoid
   spirals, from a start point and bearing; each element must join the next in curvature) and vertical profiles from

@@ -29,8 +29,9 @@ class LandXMLTinToGeoTIFFPlugin:
         if self.iface is None:
             return
         icon = QIcon(os.path.join(os.path.dirname(__file__), "icon.png"))
-        viewer_action = QAction(icon, "LandXML Profile Viewer", self.iface.mainWindow())
-        viewer_action.setToolTip("Show existing-ground and design profiles, cut/fill and exports")
+        viewer_action = QAction(icon, "LandXML Profile Viewer and Designer", self.iface.mainWindow())
+        viewer_action.setToolTip("Long sections of a LandXML alignment: existing ground and design profiles, cut/fill, "
+                                 "cross-sections, and a Design tab to draw a new vertical profile and save it to LandXML")
         viewer_action.triggered.connect(self.show_viewer)
         pick_action = QAction(icon, "Pick Alignment Profile on Map", self.iface.mainWindow())
         pick_action.setToolTip("Click an alignment in the map to open its long-section at that station")
@@ -44,7 +45,38 @@ class LandXMLTinToGeoTIFFPlugin:
         for action in (viewer_action, pick_action, locator_action, guide_action):
             self.iface.addPluginToMenu(MENU, action)
             self.actions.append(action)
+        self.iface.addToolBarIcon(viewer_action)
         self.iface.addToolBarIcon(pick_action)
+        self._welcome_once()
+
+    def _welcome_once(self):
+        """Once for each new version: a message bar naming what the plugin offers, with buttons to try it."""
+        from qgis.core import QgsSettings
+
+        from .project_settings import plugin_version
+
+        version = plugin_version()
+        settings = QgsSettings()
+        key = "LandXMLRoadTerrain/welcomed_version"
+        if not version or settings.value(key, "") == version:
+            return
+        settings.setValue(key, version)
+        try:
+            from qgis.core import Qgis
+            from qgis.PyQt.QtWidgets import QPushButton
+
+            bar = self.iface.messageBar()
+            item = bar.createMessage(
+                f"LandXML Road & Terrain GIS Tools {version}",
+                "Processing tools are in the Toolbox under 'LandXML Road & Terrain'. The Profile Viewer (toolbar) shows long "
+                "sections and, in its Design tab, lets you draw a vertical profile and save it to LandXML.")
+            for text, slot in (("Open Profile Viewer", self.show_viewer), ("User Guide", self.show_guide)):
+                button = QPushButton(text)
+                button.clicked.connect(slot)
+                item.layout().addWidget(button)
+            bar.pushWidget(item, Qgis.MessageLevel.Info, 30)
+        except (AttributeError, RuntimeError, TypeError):      # no message bar (a script or a test without the GUI)
+            pass
 
     def _ensure_viewer(self):
         if self.viewer is None:
@@ -62,13 +94,10 @@ class LandXMLTinToGeoTIFFPlugin:
     def pick_on_map(self):
         self._ensure_viewer().pick_button.setChecked(True)
 
-    def show_guide(self):
-        from qgis.PyQt.QtCore import QUrl
-        from qgis.PyQt.QtGui import QDesktopServices
+    def show_guide(self, *_args):
+        from .project_settings import open_guide
 
-        from .project_settings import guide_url
-
-        QDesktopServices.openUrl(QUrl(guide_url()))
+        open_guide()
 
     def show_locator(self):
         if self.locator is None:
