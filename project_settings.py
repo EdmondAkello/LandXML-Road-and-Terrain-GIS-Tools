@@ -19,7 +19,7 @@ GUIDE_SECTIONS = {
     "landxml_cross_sections": "sections", "landxml_breaklines": "sections", "landxml_feature_lines": "sections",
     "landxml_profile_cut_fill": "cutfill", "landxml_corridor_quantities": "corridor", "landxml_surface_cut_fill": "tin-diff",
     "landxml_grading_quantities": "grading", "landxml_platform_levels": "platforms", "landxml_earthwork_balance": "balance",
-    "landxml_grading_revision_comparison": "revisions", "landxml_basin_storage": "basins", "landxml_grading_edges": "edges",
+    "landxml_grading_revision_comparison": "revisions", "landxml_design_shapes": "design-shapes", "landxml_dem_to_tin": "dem-to-tin", "landxml_basin_storage": "basins", "landxml_grading_edges": "edges",
     "landxml_surface_style": "styles", "landxml_grading_report": "site-report", "landxml_export_scene": "scene",
     "landxml_3d_scene": "scene-viewer", "landxml_cross_section_sheets": "sheets", "landxml_design_report": "report",
     "landxml_design_review": "review-run",

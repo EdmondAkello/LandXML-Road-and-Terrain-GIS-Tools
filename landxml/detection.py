@@ -26,4 +26,6 @@ def detect_vendor(root) -> tuple[str, str | None]:
             return "OpenRoads Designer", f"{label}: {value}"
         if any(token in lower for token in ("autodesk", "civil 3d", "civ3d")):
             return "Civil 3D", f"{label}: {value}"
+        if "landxml road & terrain gis tools" in lower:
+            return "LandXML Road & Terrain GIS Tools", f"{label}: {value}"
     return "generic", None

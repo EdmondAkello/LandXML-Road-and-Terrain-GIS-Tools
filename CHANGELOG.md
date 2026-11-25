@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Added (land development: design surfaces and DEM to TIN)
+- **Design Surface from Shapes** (Site grading): draws design surfaces from polygons on a DEM or a LandXML TIN —
+  platforms at a level with cut and fill batters, basins and ponds, open pits with benches and berms, stockpiles and
+  mounds (to a top level or to a volume), terraces, and golf fairways, greens and bunkers. Each polygon's attributes
+  (shape, level, floor, volume, slopes…) override the defaults. Writes a LandXML with the existing ground, the design
+  surface, outlines and daylight lines, a design GeoTIFF and an HTML volume report (cut and fill per shape).
+- **DEM to LandXML TIN** (Terrain conversion): an adaptive TIN within a vertical tolerance (large triangles on even
+  ground, small ones where it bends; crack-free, every point a DEM cell centre) or a regular grid, for the whole DEM,
+  an extent or mask polygons, with an optional triangle limit. Reports the points, triangles and the largest miss.
+- The LandXML writer fits alignments from PIs (circular curves with optional spirals) and writes TIN surfaces and
+  feature lines.
+- **Basin Stage–Storage** takes an optional **basin area** polygon, so one pond can be measured on a surface that covers
+  a whole site; without one, a surface whose lowest point is on its edge is reported as holding no water.
+- **Test scenarios** (`tests/scenarios`): a generator that builds road and land-development scenarios on any projected
+  DEM (sites found by terrain slope; a hill road traced along a contour) and a runner that runs every tool on them and
+  writes an index of times, numbers, warnings and reports. Outputs stay local (git-ignored).
+
+### Changed
+- Toolbox: *Extract LandXML Alignments to Lines* moved into **2. Road design extraction** and the groups after it are
+  renumbered (3. Terrain conversion … 8. Site grading); group and algorithm ids are unchanged, so models and scripts
+  keep working. The road 3D scene tool is now *Export 3D Scene and Viewer (Roads and Terrain)*, beside *Export 3D
+  Scene and Viewer (Site Grading)*.
+- LandXML files the plugin writes declare their elevation unit (when known) and name the plugin as their application,
+  so the tools no longer warn that the unit and source are unknown; existing-ground profiles are written as
+  `ProfSurf`, as Civil 3D does, so they are read as ground and not as a second design profile.
+
+### Performance
+- Site Grading Report: about 4–10× faster and far smaller (17 MB to 2.2 MB on a 250,000-triangle site). Class areas
+  are exact without building pieces, the maps draw merged class outlines, and matching holes to their outer rings in
+  outlines is no longer quadratic (the report could run out of memory on large sites).
+- Grading Quantities, Earthwork Balance, Grading Edge Analysis and the report: a design surface on the existing
+  ground's own triangles (as Design Surface from Shapes writes) gets its depth directly at the vertices instead of an
+  overlay, about 8× faster with the same volumes.
+- Surface Classes: triangles within one class are merged before the union, so only the triangles cut by a class break
+  are clipped.
+
+### Fixed
+- Rerunning a tool over a GeoTIFF left broken by a cancelled or crashed run failed with "Input file too large to be
+  opened"; the old file is now removed first, and a file still open in another program gets a clear message.
+- Export Complete Road Design and Create 3D Road Centerlines reported a 3D centreline as partial when the profile ended
+  within a millimetre of the alignment end.
+
 ### Added (Profile Viewer: design a profile)
 - A **Design** tab in the Profile Viewer draws a new vertical profile on the long section: start from the existing
   ground (PVIs at the ends, or every chosen length, averaged) or copy an existing design; drag PVIs on the chart

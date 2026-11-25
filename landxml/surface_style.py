@@ -212,12 +212,37 @@ def _clip(polygon, values, level, keep_above):
     return out_p, out_v
 
 
-def band_pieces(xyz, faces, values, resolved):
+def band_areas(xyz, faces, values, resolved):
+    """Exact plan area of each class of a surface whose ``values`` vary linearly on each triangle, without building
+    pieces: a triangle within one class counts whole; one that crosses breaks is split by the closed-form area below
+    each break (as the depth bands of Grading Quantities)."""
+    from .grading import fraction_below
+
+    xyz = np.asarray(xyz, float)
+    faces = np.asarray(faces, np.int64)
+    count = len(resolved["classes"])
+    breaks = [item["high"] for item in resolved["classes"][:-1]]
+    tri_v = np.sort(np.asarray(values, float)[faces], axis=1)
+    a, b, c = xyz[faces[:, 0], :2], xyz[faces[:, 1], :2], xyz[faces[:, 2], :2]
+    area = 0.5 * np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1]))
+    lo, hi = classify(tri_v[:, 0], resolved), classify(tri_v[:, 2], resolved)
+    same = lo == hi
+    out = np.bincount(lo[same], weights=area[same], minlength=count).astype(float)
+    cross = ~same
+    if cross.any():
+        below = np.column_stack([np.zeros(cross.sum())] + [fraction_below(tri_v[cross], level) for level in breaks]
+                                + [np.ones(cross.sum())])
+        out += (area[cross][:, None] * np.diff(below, axis=1)).sum(axis=0)
+    return out
+
+
+def band_pieces(xyz, faces, values, resolved, merge=False):
     """Exact class pieces of a surface whose ``values`` vary linearly on each triangle (elevation, depth).
 
     Every triangle is cut at the class breaks, so class areas are exact, like the depth bands of
     Grading Quantities. Returns {class: [(n, 2) polygons]}; pieces meet at T-junctions, so merge
-    them with a geometry union where one outline per class is needed."""
+    them with a geometry union where one outline per class is needed. With ``merge`` the triangles wholly inside a
+    class come as merged outlines (outer, [holes]) and only the cut ones as pieces, which is far smaller."""
     xyz = np.asarray(xyz, float)
     faces = np.asarray(faces, np.int64)
     values = np.asarray(values, float)
@@ -229,7 +254,11 @@ def band_pieces(xyz, faces, values, resolved):
     same = lo_index == hi_index
     for k in np.unique(lo_index[same]):
         member = faces[same & (lo_index == k)]
-        pieces.setdefault(int(k), []).extend(list(xyz[member][:, :, :2]))
+        if merge:                                   # whole triangles as merged outlines [(outer, [holes])]
+            from .grading import outline_polygons
+            pieces.setdefault(int(k), []).extend(outline_polygons(xyz, member))
+        else:
+            pieces.setdefault(int(k), []).extend(list(xyz[member][:, :, :2]))
     for t in np.flatnonzero(~same):
         corners = list(xyz[faces[t], :2])
         vals = list(tri_v[t])

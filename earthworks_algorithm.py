@@ -82,7 +82,7 @@ from .processing_common import attach_post_processor, coordinate_choices
 from .processing_widgets import name_param
 from .road_features import _param_coordinates
 
-GROUP = "6. Earthworks and quantities"
+GROUP = "5. Earthworks and quantities"
 GROUP_ID = "earthworks_quantities"
 KIND_COLORS = {"cut": CUT_COLOR, "fill": FILL_COLOR, "grade": "#8a94a6", "mixed": "#b07cc6"}
 

@@ -25,8 +25,10 @@ from landxml_plugin.landxml.common import descendants
 from landxml_plugin.landxml.geometry import read_alignments
 from landxml_plugin.landxml.parser import load_document
 from landxml_plugin.landxml.profile import read_vertical_profile
+from landxml_plugin.landxml.features import read_line_features
 from landxml_plugin.landxml.writer import (
-    LEFT, RIGHT, Curve, HorizontalAlignment, Line, Spiral, VerticalProfile, landxml_text, write_landxml,
+    LEFT, RIGHT, Curve, FeatureLine, HorizontalAlignment, Line, PICurve, Spiral, Surface, VerticalProfile,
+    alignment_from_pis, landxml_text, write_landxml,
 )
 
 
@@ -127,6 +129,97 @@ class RoundTripTests(unittest.TestCase):
         self.assertIn('name="A &amp; &quot;B&quot; &lt;1&gt;"', text)
         self.assertEqual(read_alignments(written([(HorizontalAlignment("A & B", (0.0, 0.0), 0.0, [Line(10)]), [])]), 1.0)[0][0]["name"],
                          "A & B")
+
+
+class PITests(unittest.TestCase):
+    PIS = [(0.0, 0.0), (400.0, 0.0), (700.0, 300.0), (1000.0, 250.0)]
+
+    def test_curves_fitted_at_the_pis_end_at_the_last_pi_and_stay_tangent(self):
+        road = alignment_from_pis("PI road", self.PIS, [PICurve(250, 60, 60), PICurve(400, 40, 80)])
+        laid = road.layout()
+        self.assertEqual([item["kind"] for item in laid],
+                         ["line", "spiral", "curve", "spiral", "line", "spiral", "curve", "spiral", "line"])
+        self.assertAlmostEqual(laid[-1]["end"][0], 1000.0, places=4)
+        self.assertAlmostEqual(laid[-1]["end"][1], 250.0, places=4)
+        self.assertAlmostEqual(laid[4]["heading_start"], math.atan2(300, 300), places=7)    # on the PI2-PI3 tangent
+        self.assertAlmostEqual(laid[-1]["heading_end"], math.atan2(-50, 300), places=7)
+        mid = laid[4]["start"]                                                              # the tangent runs on the PI line
+        self.assertAlmostEqual(mid[1] - 0.0, (mid[0] - 400.0) * 1.0, places=5)
+
+    def test_a_plain_curve_and_a_straight_through_pi(self):
+        road = alignment_from_pis("Plain", [(0, 0), (100, 0), (200, 0), (300, 100)], [None, PICurve(80)])
+        self.assertEqual([item["kind"] for item in road.layout()], ["line", "curve", "line"])
+        with self.assertRaises(ValueError):
+            alignment_from_pis("Kink", [(0, 0), (100, 0), (200, 50)], [None])
+
+    def test_curves_that_do_not_fit_are_refused(self):
+        with self.assertRaises(ValueError) as error:
+            alignment_from_pis("Tight", self.PIS, [PICurve(2000), PICurve(2000)])
+        self.assertIn("overlap", str(error.exception))
+        with self.assertRaises(ValueError):
+            alignment_from_pis("Long spirals", [(0, 0), (500, 0), (1000, 40)], [PICurve(300, 200, 200)])
+
+    def test_the_plugin_reads_back_a_pi_alignment(self):
+        road = alignment_from_pis("PI road", self.PIS, [PICurve(250, 60, 60), PICurve(400, 40, 80)])
+        results, unsupported = read_alignments(written([(road, [])]), 1.0)
+        self.assertEqual(unsupported, [])
+        read = [(e, n) for n, e in results[0]["points"]]
+        self.assertLess(max(nearest(read, x, y) for x, y, _s in road.points(5.0)), 0.01)
+
+
+class SurfaceAndFeatureTests(unittest.TestCase):
+    def test_a_ground_profile_is_written_as_a_surface_profile(self):
+        from landxml_plugin.landxml.common import descendants
+        from landxml_plugin.landxml.longsection import read_alignment_profiles
+        from landxml_plugin.landxml.parser import load_document
+        from landxml_plugin.landxml.writer import GroundProfile, VerticalProfile, alignment_from_pis, landxml_text
+        alignment = alignment_from_pis("A", [(0.0, 0.0), (100.0, 0.0)], [])
+        ground = GroundProfile("Existing ground", [(0, 10.0), (50, 11.5), (100, 10.5)])
+        design = VerticalProfile("Design", [(0, 10.0, 0), (50, 12.0, 20), (100, 11.0, 0)])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "a.xml"
+            path.write_text(landxml_text([(alignment, [ground, design])]), encoding="utf-8")
+            node = next(descendants(load_document(str(path)).root, "Alignment"))
+            kinds = {p.name: p.kind for p in read_alignment_profiles(node)}
+        self.assertEqual(kinds, {"Existing ground": "surface", "Design": "design"})
+        with self.assertRaises(ValueError):
+            GroundProfile("bad", [(0, 1), (0, 2)])
+
+    def test_files_name_their_application_and_are_recognised(self):
+        import tempfile
+        from landxml_plugin.landxml.parser import load_document
+        from landxml_plugin.landxml.writer import landxml_text
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "a.xml"
+            path.write_text(landxml_text([]), encoding="utf-8")
+            report = load_document(str(path)).inspect()
+        self.assertEqual(report["vendor"], "LandXML Road & Terrain GIS Tools")
+        self.assertFalse(any("unidentified" in w for w in report["warnings"]))
+
+    def test_the_elevation_unit_is_written_only_when_given(self):
+        from landxml_plugin.landxml.writer import landxml_text
+        self.assertNotIn("elevationUnit", landxml_text([]))
+        self.assertIn('linearUnit="meter" elevationUnit="meter"', landxml_text([], vertical_unit="meter"))
+        self.assertIn('elevationUnit="USSurveyFoot"', landxml_text([], linear_unit="foot", vertical_unit="USSurveyFoot"))
+        with self.assertRaises(ValueError):
+            landxml_text([], vertical_unit="foot")             # an Imperial elevation in a Metric block
+
+    def test_tin_surfaces_and_feature_lines_read_back(self):
+        points = [(0.0, 0.0, 10.0), (10.0, 0.0, 11.0), (10.0, 10.0, 12.0), (0.0, 10.0, 11.0)]
+        surface = Surface("EG", points, [(0, 1, 2), (0, 2, 3)])
+        line = FeatureLine("Edge", [(0.0, 0.0, 10.0), (10.0, 0.0, 11.0), (10.0, 10.0, 12.0)])
+        path = written([], surfaces=[surface], feature_lines=[line])
+        self.assertEqual(read_catalog(path).surfaces, ["EG"])
+        from landxml_plugin.core import read_tin
+        tin = read_tin(path, "EG")
+        xyz = tin[0] if isinstance(tin, tuple) else tin.points
+        self.assertEqual(len(xyz), 4)
+        records, warnings = read_line_features(load_document(path).root)
+        self.assertEqual(warnings, [])
+        self.assertEqual([(r.name, r.kind, len(r.points)) for r in records], [("Edge", "FeatureLine", 3)])
+        self.assertEqual(tuple(records[0].points[1][:3]), (0.0, 10.0, 11.0))              # northing first, then the level
+        with self.assertRaises(ValueError):
+            landxml_text([], surfaces=[surface, surface])
 
 
 class ProfileChecks(unittest.TestCase):

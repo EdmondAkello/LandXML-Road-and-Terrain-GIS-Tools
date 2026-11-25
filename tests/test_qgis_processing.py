@@ -82,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 28)
+        self.assertEqual(len(self.algorithms), 30)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_every_tool_opens_its_section_of_the_bundled_guide(self):
@@ -176,13 +176,16 @@ class QgisProcessingTests(unittest.TestCase):
     def test_toolbox_groups_follow_workflow(self):
         groups = sorted({algorithm.group() for algorithm in self.algorithms.values()})
         self.assertEqual(groups, [
-            "1. Inspect and prepare", "2. Road design extraction",
-            "3. Vector extraction", "4. Terrain conversion", "5. Surface extraction",
-            "6. Earthworks and quantities", "7. Design review", "8. Reports and sheets",
-            "9. Site grading (land development)",
+            "1. Inspect and prepare", "2. Road design extraction", "3. Terrain conversion", "4. Surface extraction",
+            "5. Earthworks and quantities", "6. Design review", "7. Reports and sheets",
+            "8. Site grading (land development)",
         ])
         for name in ("inspect_landxml", "prepare_landxml"):
             self.assertEqual(self.algorithms[name].group(), groups[0])
+        for name in ("landxml_alignments_to_vector", "landxml_profiles_to_vector", "landxml_complete_road_design"):
+            self.assertEqual(self.algorithms[name].groupId(), "road_design_extraction")
+        self.assertEqual(self.algorithms["landxml_dem_to_tin"].groupId(), "terrain_conversion")
+        self.assertEqual(self.algorithms["landxml_design_shapes"].groupId(), "site_grading")
         for name in ("landxml_design_report", "landxml_cross_section_sheets"):
             self.assertEqual(self.algorithms[name].group(), groups[-2])
             self.assertEqual(self.algorithms[name].groupId(), "reports")
@@ -1035,6 +1038,111 @@ class QgisProcessingTests(unittest.TestCase):
             self.assertGreater(float(x.max() - x.min()), 40.0)         # follows the line over the ground
             self.assertGreaterEqual(float(x.min()), 10.0 - 8.0)        # and stays within the line and half a width
             self.assertLessEqual(float(x.max()), 90.0 + 8.0)
+
+    def test_dem_to_landxml_tin_adaptive_regular_and_masked(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer
+        from landxml_plugin.landxml.catalog import read_catalog
+        from landxml_plugin.core import read_tin
+
+        algorithm = self.algorithms["landxml_dem_to_tin"]
+        with tempfile.TemporaryDirectory() as directory:
+            _path, tif = self._road_scene_files(directory)
+            layer = QgsRasterLayer(tif, "DEM")
+            out = Path(directory) / "tin.xml"
+            result = algorithm.processAlgorithm(dict(DEM=layer, TRIANGULATION=0, TOLERANCE=0.05, MAX_TRIANGLES=0, OUTPUT=str(out),
+                                                     SURFACE_NAME="Ground"), self.context, self.feedback)
+            self.assertEqual(read_catalog(str(out)).surfaces, ["Ground"])
+            self.assertLessEqual(result["MAX_MISS"], 0.05 + 1e-6)
+            band = gdal.Open(tif)
+            full = 2 * (band.RasterXSize - 1) * (band.RasterYSize - 1)
+            self.assertLess(result["TRIANGLES"], full)                     # an even slope needs few triangles
+            _xyz, faces, _meta = read_tin(str(out), "Ground")
+            self.assertEqual(len(faces), result["TRIANGLES"])
+
+            grid = algorithm.processAlgorithm(dict(DEM=layer, TRIANGULATION=1, STEP=2, MAX_TRIANGLES=0,
+                                                   OUTPUT=str(Path(directory) / "grid.xml")), self.context, self.feedback)
+            self.assertGreater(grid["TRIANGLES"], result["TRIANGLES"])
+
+            mask = QgsVectorLayer(f"Polygon?crs={layer.crs().authid()}", "Mask", "memory")
+            extent = layer.extent()
+            x0, y0 = extent.xMinimum() + extent.width() / 4, extent.yMinimum() + extent.height() / 4
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(x0, y0), QgsPointXY(x0 + extent.width() / 2, y0),
+                                                            QgsPointXY(x0 + extent.width() / 2, y0 + extent.height() / 2),
+                                                            QgsPointXY(x0, y0 + extent.height() / 2)]]))
+            mask.dataProvider().addFeatures([feature])
+            masked = algorithm.processAlgorithm(dict(DEM=layer, MASK=mask, TRIANGULATION=1, STEP=1, MAX_TRIANGLES=0,
+                                                     OUTPUT=str(Path(directory) / "masked.xml")), self.context, self.feedback)
+            self.assertLess(masked["TRIANGLES"], 2 * 0.3 * full)
+            self.assertGreater(masked["TRIANGLES"], 0)
+
+    def test_design_surface_from_shapes_on_a_dem_and_on_a_landxml_tin(self):
+        from qgis.core import QgsFeature, QgsField, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer
+        from qgis.PyQt.QtCore import QVariant
+        from landxml_plugin.landxml.catalog import read_catalog
+        from landxml_plugin.landxml.common import descendants
+        from landxml_plugin.landxml.parser import load_document
+
+        algorithm = self.algorithms["landxml_design_shapes"]
+        with tempfile.TemporaryDirectory() as directory:
+            path, tif = self._road_scene_files(directory)              # a DEM rising 0.2 per metre eastwards, in metres
+            ds_ = gdal.Open(tif, gdal.GA_Update)
+            ds_.GetRasterBand(1).SetUnitType("m")
+            ds_ = None
+            shapes = QgsVectorLayer("Polygon?crs=EPSG:26915", "Shapes", "memory")
+            shapes.dataProvider().addAttributes([QgsField("shape", QVariant.String), QgsField("level", QVariant.Double),
+                                                 QgsField("floor", QVariant.Double), QgsField("volume", QVariant.Double),
+                                                 QgsField("name", QVariant.String)])
+            shapes.updateFields()
+
+            def square(x, y, size, values):
+                feature = QgsFeature(shapes.fields())
+                feature.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(x, y), QgsPointXY(x + size, y),
+                                                                QgsPointXY(x + size, y + size), QgsPointXY(x, y + size)]]))
+                feature.setAttributes(values)
+                return feature
+
+            shapes.dataProvider().addFeatures([
+                square(0, 0, 20, ["platform", 97.5, None, None, "Pad"]),
+                square(40, 0, 15, ["basin", None, 96.0, None, "Pond"]),
+                square(70, 20, 15, ["stockpile", None, None, 200.0, "Heap"]),
+            ])
+            out = Path(directory) / "design.xml"
+            result = algorithm.processAlgorithm(dict(GROUND=QgsRasterLayer(tif, "DEM"), SHAPES=shapes, MARGIN=15.0, CELL=1.0,
+                                                     OUTPUT_XML=str(out), REPORT=str(Path(directory) / "volumes.html"),
+                                                     OUTPUT_DEM=str(Path(directory) / "design.tif")), self.context, self.feedback)
+            self.assertEqual(read_catalog(str(out)).surfaces, ["Existing ground", "Design"])
+            names = [f.attrib.get("name") for f in descendants(load_document(str(out)).root, "PlanFeature")]
+            self.assertIn("Pad outline", names)
+            self.assertTrue(any(name.startswith("Daylight") for name in names))
+            self.assertGreater(result["CUT"], 0)
+            self.assertGreater(result["FILL"], 200.0 * 0.95)                # the heap and the pad's fill
+            report = (Path(directory) / "volumes.html").read_text(encoding="utf-8")
+            self.assertIn("Heap", report)
+            self.assertTrue((Path(directory) / "design.tif").exists())
+
+            # the pond's storage, from the whole site's design surface, inside a basin area drawn around it
+            area = QgsVectorLayer("Polygon?crs=EPSG:26915", "Area", "memory")
+            area.dataProvider().addFeatures([square(33, -7, 29, [])])
+            basin = self.algorithms["landxml_basin_storage"].processAlgorithm(dict(
+                INPUT=str(out), BASIN_SURFACE="Design", BASIN_AREA=area, FREEBOARD=0.0, STAGE_STEP=0.5, METHOD=1,
+                OUTPUT_CRS="EPSG:26915", VERTICAL_UNIT=1), self.context, self.feedback)
+            self.assertAlmostEqual(basin["FLOOR_LEVEL"], 96.0, places=2)
+            self.assertGreater(basin["RIM_VOLUME"], 15 * 15 * 0.5)       # at least half a metre over the floor
+            with self.assertRaisesRegex(QgsProcessingException, "draw a basin area"):   # the site spills at its low edge
+                self.algorithms["landxml_basin_storage"].processAlgorithm(dict(
+                    INPUT=str(out), BASIN_SURFACE="Design", FREEBOARD=0.0, STAGE_STEP=0.5, METHOD=1,
+                    OUTPUT_CRS="EPSG:26915", VERTICAL_UNIT=1), self.context, self.feedback)
+
+            # the same platform on a LandXML TIN ground (the scene's EG surface), in the file's coordinates
+            out2 = Path(directory) / "design_tin.xml"
+            pad = QgsVectorLayer("Polygon?crs=EPSG:26915&field=shape:string&field=level:double", "Pad", "memory")
+            pad.dataProvider().addFeatures([square(30, -20, 20, ["platform", 101.0])])
+            result = algorithm.processAlgorithm(dict(self._params(path, "EPSG:26915"), METHOD=1, GROUND_SURFACE="EG", SHAPES=pad,
+                                                     VERTICAL_UNIT=1, MARGIN=10.0, CELL=1.0, OUTPUT_XML=str(out2)),
+                                                self.context, self.feedback)
+            self.assertEqual(read_catalog(str(out2)).surfaces, ["Existing ground", "Design"])
+            self.assertGreater(result["CUT"] + result["FILL"], 0)
 
     def test_road_scene_with_surfaces_rasters_contours_and_linework(self):
         from qgis.core import QgsFeature, QgsGeometry, QgsPointXY, QgsRasterLayer, QgsVectorLayer

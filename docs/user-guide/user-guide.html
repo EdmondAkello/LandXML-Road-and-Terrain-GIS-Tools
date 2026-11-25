@@ -197,6 +197,7 @@ a { color: var(--accent); }
   <div class="card"><h4>1.7 · Reporting</h4><p>Name dropdowns and automatic surface choice, cross-section sheets (PDF/HTML/PNG), cross-sections in the viewer, and the Road Design Report.</p></div>
   <div class="card"><h4>1.8 · Design review</h4><p>Geometric Design Review against Kenya RDM 1.3 (2025) or AASHTO 2018: phasing, sight distance, curves, grades, superelevation, design speed changes and barrier warrants.</p></div>
   <div class="card"><h4>1.8 · Back to Civil 3D</h4><p>Recommended PVIs and curve lengths written as a Civil 3D "Create Profile from File" text file and as LandXML.</p></div>
+  <div class="card"><h4>Land development</h4><p>Design Surface from Shapes draws platforms, ponds, pits, stockpiles and mounds, terraces and golf features from polygons on a DEM or TIN; DEM to LandXML TIN converts any DEM to an adaptive TIN within a tolerance.</p></div>
   <div class="card"><h4>Fixes</h4><p>Correct placement of station-relative cross-sections, hidden TIN triangles excluded, true arc-length stationing on curves and spirals.</p></div>
 </div>
 
@@ -214,14 +215,13 @@ a { color: var(--accent); }
   <thead><tr><th style="width:24%">Toolbox group</th><th>Tools</th></tr></thead>
   <tbody>
     <tr><td>1. Inspect and prepare</td><td>Inspect LandXML · Prepare LandXML from Geometry and Terrains</td></tr>
-    <tr><td>2. Road design extraction</td><td>Extract LandXML Profiles · Create 3D Road Centerlines · Extract LandXML Cross-Sections · Create Alignment Station Points · Export Complete Road Design to GeoPackage</td></tr>
-    <tr><td>3. Vector extraction</td><td>Extract LandXML Alignments to Lines</td></tr>
-    <tr><td>4. Terrain conversion</td><td>LandXML TIN to GeoTIFF</td></tr>
-    <tr><td>5. Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
-    <tr><td>6. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference)</td></tr>
-    <tr><td>7. Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
-    <tr><td>8. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report</td></tr>
-    <tr><td>9. Site grading (land development)</td><td>Grading Quantities (Volume Surface) · Platform Levels and Falls · Basin Stage–Storage · Earthwork Balance (Volume Surfaces) · Grading Revision Comparison (Volume Surfaces)</td></tr>
+    <tr><td>2. Road design extraction</td><td>Extract LandXML Alignments to Lines · Extract LandXML Profiles · Create 3D Road Centerlines · Extract LandXML Cross-Sections · Create Alignment Station Points · Export Complete Road Design to GeoPackage</td></tr>
+    <tr><td>3. Terrain conversion</td><td>LandXML TIN to GeoTIFF · <a href="#dem-to-tin">DEM to LandXML TIN</a></td></tr>
+    <tr><td>4. Surface extraction</td><td>Extract TIN Surface Boundary · Extract LandXML Feature Lines · Extract LandXML Breaklines</td></tr>
+    <tr><td>5. Earthworks and quantities</td><td>Profile Cut/Fill Analysis · Corridor Section Quantities · Surface Cut/Fill (TIN Difference)</td></tr>
+    <tr><td>6. Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
+    <tr><td>7. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report · Export 3D Scene and Viewer (Roads and Terrain)</td></tr>
+    <tr><td>8. Site grading (land development)</td><td><a href="#design-shapes">Design Surface from Shapes</a> · Grading Quantities (Volume Surface) · Platform Levels and Falls · Basin Stage–Storage · Earthwork Balance (Volume Surfaces) · Grading Revision Comparison (Volume Surfaces) · Grading Edge Analysis · Surface Classes · Site Grading Report · Export 3D Scene and Viewer (Site Grading)</td></tr>
     <tr><td>Outside the Toolbox</td><td>LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
   </tbody>
 </table>
@@ -352,6 +352,15 @@ a { color: var(--accent); }
 <p><b>LandXML TIN to GeoTIFF</b> rasterizes one TIN surface by linear interpolation inside each triangle. Choose the surface, the pixel size and a NoData value outside the elevation range. Triangles flagged invisible (<code>i="1"</code>, written by Civil 3D for triangles hidden by a boundary) are left as NoData, so the raster follows the surface boundary instead of filling holes and outer concavities.</p>
 <p><b>Extract TIN Surface Boundary</b> writes the outer edges of the visible triangles as lines.</p>
 
+<h3 id="dem-to-tin">DEM to LandXML TIN</h3>
+<p><b>DEM to LandXML TIN</b> (Terrain conversion) turns a DEM into a TIN surface in a LandXML file, for Civil 3D and for the tools here that read LandXML surfaces. The DEM must be in a projected CRS in metres or feet; levels are written in the CRS's length unit and the file declares that elevation unit. When the DEM does not declare its own elevation unit (Google GEM, FABDEM and ALOS GeoTIFFs do not), choose it: it is never assumed.</p>
+<ul>
+  <li><b>Adaptive</b> (the default) uses large triangles on even ground and small ones where the ground bends, so that the TIN is within the <b>vertical tolerance</b> of every DEM cell centre. It is a restricted quadtree: neighbouring squares differ by at most one level and are joined without cracks, and every TIN point is a DEM cell centre with its own level (nothing is interpolated or smoothed). Cells without data are left out, so holes stay holes.</li>
+  <li><b>Regular grid</b> uses every n-th cell centre, two triangles a cell.</li>
+  <li>Give an <b>extent</b> or <b>mask polygons</b> to convert part of a large DEM (up to 40 million cells at once), and a <b>triangle limit</b> to cap the size: the worst-fitting areas keep their detail longest, and the log says when the tolerance could not be met within the limit.</li>
+</ul>
+<p>The log reports the points, triangles, their share of a full grid and the largest vertical miss at the cell centres. As a guide, on a hilly 15 × 15 km area the Google GEM 15 m DEM needed 38 % of a full grid's triangles at a 1 m tolerance and 90 % at 0.25 m. A DEM stored in whole metres (ALOS AW3D30, some SRTM products) is stepped, so a tolerance under half a metre keeps almost every cell; a DSM (ALOS) includes buildings and trees, so use a terrain model (FABDEM, a DTM) for ground.</p>
+
 <h2 id="alignments"><span class="sec">9</span>Alignments, stations and 3D centrelines</h2>
 <ul>
   <li><b>Extract LandXML Alignments to Lines</b> writes plan geometry. Lines, circular curves and explicitly declared clothoid spirals are supported; a segment that does not connect or does not match its declared length is reported and skipped rather than forced into place.</li>
@@ -466,8 +475,22 @@ a { color: var(--accent); }
 <h2 id="tin-diff"><span class="sec">15</span>Surface Cut/Fill and Grading Quantities</h2>
 <h3>Surface Cut/Fill (TIN difference)</h3>
 <p>Grids two TINs on a shared raster and writes compare − base as a GeoTIFF styled orange (cut) to green (fill), with cut, fill and net volumes. Leave both names blank to use a recorded Civil 3D volume-surface pair, or existing ground against the corridor datum surface. When the file contains a <code>SurfVolume</code> for the same pair, the Civil 3D volumes are printed beside the grid result for comparison.</p>
+<h3 id="design-shapes">Design Surface from Shapes</h3>
+<p><b>Design Surface from Shapes</b> (Site grading) draws a design surface from polygons on an existing ground, for feasibility studies and quick options before the detailed grading. The ground is a DEM (any raster GDAL reads, in a projected CRS) or a TIN surface in a LandXML file. Each polygon is one of these shapes:</p>
+<table>
+  <tr><th>Shape</th><th>What it makes</th><th>Main attributes</th></tr>
+  <tr><td>platform</td><td>A flat pad at a level, with cut and fill batters out to the ground</td><td>level, cut_slope, fill_slope</td></tr>
+  <tr><td>basin</td><td>A pond or detention basin: a flat floor with side slopes up to the ground</td><td>floor, slope</td></tr>
+  <tr><td>pit</td><td>An open pit or borrow pit: benches of a set height, berms and steep faces down to a floor</td><td>floor, bench, berm, face</td></tr>
+  <tr><td>stockpile</td><td>A stockpile, mound, waste dump or bund: side slopes up to a flat top, given as a level or as a volume (the top is found to hold it)</td><td>top or volume, slope</td></tr>
+  <tr><td>terraces</td><td>Level terraces stepping down the smoothed ground, with short risers</td><td>step, riser</td></tr>
+  <tr><td>fairway, green, bunker</td><td>Golf features: smoothed ground, a raised green, a sunken bunker</td><td>window; height, slope; depth, slope</td></tr>
+</table>
+<p>Attributes on the polygons (any case: <code>shape</code>, <code>level</code>, <code>floor</code>, <code>top</code>, <code>volume</code>, <code>cut_slope</code>, <code>fill_slope</code>, <code>slope</code>, <code>bench</code>, <code>berm</code>, <code>face</code>, <code>step</code>, <code>riser</code>, <code>height</code>, <code>depth</code>, <code>window</code>, <code>order</code>, <code>name</code>) override the tool's defaults, so one layer can hold a whole site. Slopes are horizontal to vertical (2 = 1V:2H). Shapes are applied in <code>order</code>, each on the result of those before it, so a stockpile can sit on a platform.</p>
+<p>The outputs are a LandXML file with the existing ground and the design surfaces, each shape's outline and daylight lines as feature lines, a design GeoTIFF and an HTML report of cut and fill per shape (bank volumes). The LandXML file goes straight into Grading Quantities, Platform Levels, Basin Stage–Storage, Grading Edge Analysis, the Site Grading Report and the 3D scene. The design is drawn on a grid (the cell size is chosen to keep it to about 250,000 cells unless you set it), so it is a concept, not a replacement for detailed grading.</p>
+
 <h3 id="grading">Grading Quantities (volume surface)</h3>
-<p>The site-grading tools are in their own toolbox group, <b>9. Site grading (land development)</b>, apart from the road-corridor earthworks. If the file does not declare its vertical unit (Civil 3D metric exports usually omit it), choose <b>Vertical unit</b> in the tool; it is never inferred, and a choice that contradicts a declared unit stops the run.</p>
+<p>The site-grading tools are in their own toolbox group, <b>8. Site grading (land development)</b>, apart from the road-corridor earthworks. If the file does not declare its vertical unit (Civil 3D metric exports usually omit it), choose <b>Vertical unit</b> in the tool; it is never inferred, and a choice that contradicts a declared unit stops the run.</p>
 <p>For site grading, export the Civil 3D <b>TIN volume surface</b> (design minus existing ground) with the other surfaces, and run <b>Grading Quantities (Volume Surface)</b> on it. Each triangle is integrated exactly as a linear prism and split at zero depth, so the result does not depend on a grid. The tool reports cut, fill and net volumes; plan, cut, fill and at-grade areas; maximum depths; and the exact plan area in each depth band (default limits −5, −3, −2, −1, −0.5, 0, 0.5, 1, 2, 3 and 5; a band includes its lower limit). Volumes are in place, with no shrinkage or bulking factors. Outputs are an HTML report and an optional depth-band CSV.</p>
 <p><b>Without a volume surface.</b> OpenRoads, and Civil 3D files exported without a volume surface, carry only the design and existing-ground surfaces. Enter the design surface and an <b>Existing-ground surface</b>: the tool builds the depth surface (design − existing) itself by clipping every design triangle against each existing triangle it overlaps. Both surfaces are linear on every piece, so the depth is linear too and the prism integration stays exact; the result is the TIN volume surface Civil 3D would build from the same two surfaces. Only the area both surfaces cover is counted, and any design area outside the existing ground is reported in the log. Earthwork Balance takes each site as <code>Design | Existing</code>, and Grading Revision Comparison takes an existing-ground surface for each revision.</p>
 <p><b>Existing ground in another file.</b> Grading Quantities, Earthwork Balance and Grading Revision Comparison accept an <b>Existing-ground LandXML file</b>, for example a survey surface exported on its own. Its declared vertical unit must match the design file's. Only the existing triangles that meet the design area are read, so a survey of several gigabytes costs memory in proportion to the site; a file that does not reach the design area is refused instead of reporting zero.</p>
@@ -511,6 +534,7 @@ a { color: var(--accent); }
 </figure>
 <h3 id="basins">Basin Stage–Storage</h3>
 <p>Export the pond or basin grading as its own TIN surface and run <b>Basin Stage–Storage</b> on it. The storage below each level is integrated exactly over the triangles, because water depth is linear on each one; the table lists level, depth, water area and storage from the floor to the rim in the chosen step (default 0.25), with the freeboard level and the rim always included. Leave the rim blank to use the <b>spill level</b>, the lowest point on the surface's outer edge, where water would overflow; a rim above the spill level is flagged, because storage above it exists only if the basin is closed beyond this surface. Enter the required volume in the reported units to check capacity with freeboard (rim minus freeboard, default 0.5): <b>PASS</b> when it fits with freeboard, <b>PASS TO RIM ONLY</b> when it fits only if filled to the rim, otherwise <b>FAIL</b>. Outputs are an HTML report and a CSV table.</p>
+<p>When the surface covers more than the pond (a whole site's design surface, as Design Surface from Shapes writes), draw a <b>basin area</b> polygon around the pond, a little beyond its top of bank: only the triangles inside it are used, and the spill level is the lowest point on the area's edge. Without one, a surface whose lowest point is on its edge holds no water, and the tool says so.</p>
 <p>The optional <b>Pond rim and design water level</b> output writes the rim line and the design water level line (rim minus freeboard) as Civil 3D feature lines at those levels, in the input file's stored coordinates.</p>
 <figure>
   <img src="figures/fig_grading_basin.png" alt="Stage–storage chart">
@@ -528,8 +552,8 @@ a { color: var(--accent); }
 <p><b>Export 3D Scene and Viewer (Site Grading)</b> writes a folder with <code>scene.json</code>, binary PLY meshes and <code>viewer.html</code>, the plugin's offline 3D viewer (platform labels appear as callouts beside the model). The design surface is coloured by its style (default <code>depth</code>) and the existing ground around it, to the <b>context margin</b>, by its own (default plain grey-green); ground under the design is left out. Daylight lines, platform outlines, retained edges and batters, road centrelines at their profile level (clipped to the scene area; roads are conceptual and are not cut into the terrain), platform labels with levels and your own labels (<code>text @ x, y [, lift]</code>) are added, with camera <b>views</b> written as <code>name: dx, dy, dz</code>, the direction from the site towards the camera. Coordinates are in the output CRS, relative to the scene <code>origin</code>; the vertical exaggeration is a suggestion for the renderer. Each PLY vertex holds x, y, z, depth and the style colour. <code>tools/render_scene.py</code> (developer tool, PyVista) renders a scene to PNG images.</p>
 
 
-<h3 id="scene-viewer">Export 3D Scene and Viewer</h3>
-<p><b>Export 3D Scene and Viewer</b> (Reports and sheets) renders an area in 3D for road or site work. Choose what to show:</p>
+<h3 id="scene-viewer">Export 3D Scene and Viewer (Roads and Terrain)</h3>
+<p><b>Export 3D Scene and Viewer (Roads and Terrain)</b> (Reports and sheets) renders an area in 3D for road or site work. Choose what to show:</p>
 <p><b>A3 sheets.</b> Set up the view you want in the viewer, then in the panel's <b>A3 sheet</b> section give a title, the project / drawing number / revision and any notes (one per line). <b>Save A3 PNG</b> writes the sheet at 200 dpi; <b>Print / PDF</b> opens the browser's print dialog set to A3 landscape without margins (choose <i>Save as PDF</i> for a PDF). The sheet has a single border, the title box bottom right, and a column with the north arrow, legend and notes beside the model, so they never cover it; the view is fitted to the design (or to everything shown when there is no design) inside its viewport, keeping your viewing direction.</p>
 <p><b>On a phone or tablet</b>, open the same <code>viewer.html</code> (send the scene folder, or put it on a shared drive): the model fills the screen and <b>☰ Layers and tools</b> opens the panel as a sheet from the bottom. One finger rotates, two fingers pinch to zoom and pan, and a tap reads the surface. For phones, keep scenes under about 1.5 million triangles (Triangle budget, under Advanced).</p>
 <ul>

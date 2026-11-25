@@ -340,13 +340,25 @@ def outline_polygons(xyz, faces, dims=2):
             vertex = nxt
         if len(ring) >= 3:
             rings.append(xyz[ring, :dims])
-    outers = [ring for ring in rings if _ring_area(ring[:, :2]) > 0]
-    holes = [ring for ring in rings if _ring_area(ring[:, :2]) < 0]
-    polygons = [(outer, []) for outer in sorted(outers, key=lambda r: _ring_area(r[:, :2]), reverse=True)]
-    for hole in holes:
-        for outer, inner in sorted(polygons, key=lambda item: _ring_area(item[0][:, :2])):
-            if _inside(hole[:, :2].mean(axis=0) if len(hole) < 3 else hole[0, :2], outer[:, :2]):
-                inner.append(hole)
+    areas = [_ring_area(ring[:, :2]) for ring in rings]
+    order = sorted((k for k, a in enumerate(areas) if a > 0), key=lambda k: areas[k], reverse=True)
+    polygons = [(rings[k], []) for k in order]
+    if len(polygons) == len(rings):
+        return polygons
+    # each hole goes to the smallest outer ring that contains it: test only the outers whose box holds the hole's
+    # point, smallest first (areas and boxes once, not per hole)
+    outer_area = np.array([areas[k] for k in order])
+    boxes = np.array([[r[:, 0].min(), r[:, 1].min(), r[:, 0].max(), r[:, 1].max()] for r in (rings[k] for k in order)])
+    for k, a in enumerate(areas):
+        if a >= 0:
+            continue
+        hole = rings[k]
+        x, y = hole[0, :2]
+        near = np.flatnonzero((boxes[:, 0] <= x) & (x <= boxes[:, 2]) & (boxes[:, 1] <= y) & (y <= boxes[:, 3])
+                              & (outer_area >= -a))
+        for i in near[np.argsort(outer_area[near])]:
+            if _inside((x, y), polygons[i][0][:, :2]):
+                polygons[i][1].append(hole)
                 break
     return polygons
 

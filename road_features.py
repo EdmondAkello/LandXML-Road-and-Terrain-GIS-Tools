@@ -50,6 +50,8 @@ from .params import number_param
 from .processing_widgets import name_param
 from .processing_common import resolve_name
 
+COVER_TOLERANCE = 0.01   # a profile ending this close to the alignment end covers it (plan sampling rounds)
+
 METHODS = [
     "Use stored coordinates",
     "Swap X / Y",
@@ -698,7 +700,7 @@ def centerlines_3d(path, seg, alignment_filter=None, warn=None, cancel=None, pro
         levels = np.interp(stations, [station for station, _z in prof], [z for _s, z in prof])
         stored = np.asarray([[*xy_at(station), level] for station, level in zip(stations, levels)], dtype=float)
         out.append((name, start, end, stored))
-        if start > s0 or end < s0 + cum[-1]:
+        if start > s0 + COVER_TOLERANCE or end < s0 + cum[-1] - COVER_TOLERANCE:
             warn(f"Created partial 3D centerline '{name}' from station {start:.3f} to {end:.3f}; "
                  "the profile does not cover the remaining alignment.")
         if progress:
@@ -790,7 +792,7 @@ class SurfaceBoundaryAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         return "Extract TIN Surface Boundary"
 
     def group(self):
-        return "5. Surface extraction"
+        return "4. Surface extraction"
 
     def groupId(self):
         return "surface_extraction"
@@ -1264,7 +1266,7 @@ class GenericLinesAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         )
 
     def group(self):
-        return "5. Surface extraction"
+        return "4. Surface extraction"
 
     def groupId(self):
         return "surface_extraction"

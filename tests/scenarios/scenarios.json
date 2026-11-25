@@ -1,0 +1,100 @@
+{
+  "about": "Test scenarios for the land development and road tools. Coordinates are metres from the site centre (east, north); levels are numbers or expressions on the ground inside the shape: 'median-60', 'min+2', 'max', 'mean+0.5'. A site is found on the DEM by its mean ground slope (terrain: [lowest, highest] as fractions) unless a centre is given with --centre name=E,N. Shapes: rect [cx, cy, width, height, rotation°], ellipse [cx, cy, semi-axis x, semi-axis y, rotation°] or polygon [[x, y], ...]; every other key is a Design Surface from Shapes attribute.",
+  "scenarios": [
+    {
+      "name": "mountain_road",
+      "kind": "road",
+      "terrain": [0.15, 0.35],
+      "window": 3200,
+      "pis": [[-1450, -100], [-870, 150], [-290, -150], [290, 150], [870, -150], [1450, 100]],
+      "route": "contour", "simplify": 40,
+      "radius": 80, "spiral": 25,
+      "profile_spacing": 200, "max_grade": 0.10, "k_value": 10,
+      "section": {"carriageway": 7.0, "shoulder": 1.5, "cut_slope": 1.5, "fill_slope": 2.0, "max_width": 40.0},
+      "design_speed": 50
+    },
+    {
+      "name": "plain_road",
+      "kind": "road",
+      "terrain": [0.01, 0.04],
+      "window": 4000,
+      "pis": [[-1800, -1600], [-400, -900], [600, 200], [1800, 700]],
+      "radius": 700, "spiral": 120,
+      "profile_spacing": 400, "max_grade": 0.04, "k_value": 60,
+      "section": {"carriageway": 7.3, "shoulder": 2.0, "cut_slope": 2.0, "fill_slope": 3.0, "max_width": 30.0},
+      "design_speed": 100
+    },
+    {
+      "name": "open_pit_and_stockpiles",
+      "kind": "shapes",
+      "terrain": [0.03, 0.10],
+      "window": 2600,
+      "margin": 60,
+      "shapes": [
+        {"name": "Pit", "shape": "pit", "ellipse": [-200, 0, 450, 320, 25], "floor": "min-60", "bench": 10, "berm": 8, "face": 0.5},
+        {"name": "Waste dump", "shape": "stockpile", "rect": [700, -500, 420, 300, 10], "volume": 600000, "slope": 1.8},
+        {"name": "ROM pad", "shape": "platform", "rect": [650, 450, 220, 160, 0], "level": "median", "cut_slope": 1.5, "fill_slope": 2.0},
+        {"name": "Ore stockpile", "shape": "stockpile", "ellipse": [650, 450, 60, 45, 0], "volume": 40000, "slope": 1.4}
+      ]
+    },
+    {
+      "name": "hillside_terraces",
+      "kind": "shapes",
+      "terrain": [0.12, 0.30],
+      "window": 1000,
+      "margin": 30,
+      "shapes": [
+        {"name": "Terraces", "shape": "terraces", "polygon": [[-300, -250], [280, -280], [320, 260], [-260, 300]], "step": 2.0, "riser": 0.3},
+        {"name": "Access platform", "shape": "platform", "rect": [0, -380, 120, 60, 0], "level": "median", "cut_slope": 1.0, "fill_slope": 1.5}
+      ]
+    },
+    {
+      "name": "golf_hole",
+      "kind": "shapes",
+      "terrain": [0.02, 0.06],
+      "window": 1100,
+      "margin": 30,
+      "shapes": [
+        {"name": "Fairway", "shape": "fairway", "polygon": [[-380, -60], [-120, -90], [150, -40], [300, 20], [310, 90], [140, 80], [-120, 40], [-380, 50]], "window": 40},
+        {"name": "Tee", "shape": "fairway", "rect": [-430, 0, 40, 25, 0], "window": 10},
+        {"name": "Green", "shape": "green", "ellipse": [360, 60, 22, 16, 20], "height": 0.6, "slope": 4},
+        {"name": "Bunker 1", "shape": "bunker", "ellipse": [330, 20, 10, 6, 30], "depth": 1.0},
+        {"name": "Bunker 2", "shape": "bunker", "ellipse": [120, -70, 14, 7, -10], "depth": 1.2},
+        {"name": "Pond", "shape": "basin", "ellipse": [0, 120, 45, 30, 0], "floor": "min-2.5", "slope": 3}
+      ]
+    },
+    {
+      "name": "industrial_estate",
+      "kind": "shapes",
+      "terrain": [0.02, 0.07],
+      "window": 1300,
+      "margin": 40,
+      "shapes": [
+        {"name": "Plot A", "shape": "platform", "rect": [-250, 150, 220, 150, 0], "level": "median", "order": 1},
+        {"name": "Plot B", "shape": "platform", "rect": [20, 150, 220, 150, 0], "level": "median", "order": 1},
+        {"name": "Plot C", "shape": "platform", "rect": [-120, -120, 320, 180, 0], "level": "median+0.5", "order": 1},
+        {"name": "Detention pond", "shape": "basin", "rect": [260, -200, 120, 90, 0], "floor": "min-2", "slope": 3, "order": 2},
+        {"name": "Noise bund", "shape": "stockpile", "rect": [0, 330, 520, 24, 0], "top": "max+3", "slope": 2, "order": 3}
+      ]
+    },
+    {
+      "name": "borrow_pit_and_mounds",
+      "kind": "shapes",
+      "terrain": [0.01, 0.05],
+      "window": 1200,
+      "margin": 40,
+      "shapes": [
+        {"name": "Borrow pit", "shape": "pit", "rect": [-150, 0, 300, 220, 15], "floor": "min-12", "bench": 4, "berm": 5, "face": 1.0},
+        {"name": "Topsoil mound", "shape": "stockpile", "ellipse": [250, 200, 70, 40, 0], "volume": 30000, "slope": 2.0},
+        {"name": "Spoil mound", "shape": "stockpile", "ellipse": [280, -180, 90, 60, 30], "top": "max+8", "slope": 2.5}
+      ]
+    },
+    {
+      "name": "dem_comparison",
+      "kind": "dem_tin",
+      "terrain": [0.10, 0.30],
+      "window": 6000,
+      "tolerances": [2.0, 1.0, 0.5]
+    }
+  ]
+}

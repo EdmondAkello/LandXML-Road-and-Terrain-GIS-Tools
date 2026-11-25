@@ -11,3 +11,6 @@ dist/
 qgis/
 # Local developer architecture graphs
 /graphify-out/
+
+# scenario outputs and DEM clips (local only)
+tests/scenarios/out/
