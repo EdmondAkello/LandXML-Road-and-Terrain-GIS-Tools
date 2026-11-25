@@ -57,6 +57,7 @@ SCHEMA = {
                    ("depth", 0.4, "length", "Depth"), ("depth_from", "edge", ["edge", "datum"], "Depth measured from"),
                    ("bottom", 0.0, "length", "Bottom width"), ("backslope", 0.0, "ratio", "Back slope (0 = cut slope)"),
                    ("where", "cut", ["cut", "always"], "Where"),
+                   ("invert_profile", "", "profile", "Invert follows profile (a profile on the alignment)"),
                    ("lining", "none", ["none", "concrete", "masonry", "grass"], "Lining"),
                    ("lining_thickness", 0.1, "length", "Lining thickness")],
     "daylight": [("name", "", "text", "Name"), ("material", "earth", "material", "Material (standard bands)"),
@@ -421,9 +422,15 @@ def daylight_side(hinge, datum_hinge, drain, day, ground, standard, options):
         depth = float(ditem["depth"])
         base_z = datum_hinge if ditem.get("depth_from") == "datum" and datum_hinge is not None else hinge.z
         z_inv = base_z - depth
+        followed = (options.get("profiles") or {}).get(ditem.get("invert_profile") or "")
+        if followed is not None and math.isfinite(followed):
+            z_inv = min(float(followed), hinge.z)
         run = max(hinge.z - z_inv, 0.0) * float(ditem["foreslope"])
         why = (f"{dlabel}: {ditem.get('drain_type') or ditem['shape']} drain, depth {_fmt(depth, unit)} below the "
                f"{'datum' if ditem.get('depth_from') == 'datum' else 'edge'}, foreslope 1:{float(ditem['foreslope']):g}")
+        if followed is not None and math.isfinite(followed):
+            why = (f"{dlabel}: invert on profile '{ditem['invert_profile']}' at {_fmt(z_inv, unit)}, "
+                   f"foreslope 1:{float(ditem['foreslope']):g}")
         inv = Point(hinge.d + run, z_inv, "DITCH_I", dlabel, why, "drain")
         out.append(inv)
         if float(ditem.get("bottom") or 0.0) > 0:

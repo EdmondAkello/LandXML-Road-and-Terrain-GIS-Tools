@@ -37,11 +37,12 @@ from .landxml.writer import FeatureLine, Surface, write_landxml
 from .params import number_param
 from .project_settings import ProjectSettingsAlgorithm
 
-SHAPES = ["platform", "basin", "pit", "stockpile", "terraces", "fairway", "green", "bunker"]
+SHAPES = ["platform", "basin", "pit", "stockpile", "terraces", "fairway", "green", "bunker", "pad", "line"]
 WRITER_UNITS = {"meter": "meter", "foot": "foot", "ussurveyfoot": "USSurveyFoot"}
 CELL_BUDGET = 250_000            # design grid cells; the cell grows on big sites so the output stays usable
 FIELDS = ("shape", "level", "floor", "top", "volume", "cut_slope", "fill_slope", "slope", "bench", "berm", "face",
-          "step", "riser", "height", "depth", "window", "order", "name")
+          "step", "riser", "height", "depth", "window", "order", "name", "width", "crossfall", "bench_height",
+          "bench_width", "benches_in", "max_width", "mode")
 
 
 class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
@@ -71,7 +72,13 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
             "with <i>berm</i> wide berms when both are given, as a waste dump), terraces (benches every "
             "<i>step</i> with risers taking <i>riser</i> of each step), fairway (ground eased over <i>window</i>), green "
             "(raised <i>height</i> and level, sides at <i>slope</i>) and bunker (<i>depth</i> below its rim, sides at "
-            "<i>slope</i>). Missing fields or values take the defaults below; slopes are horizontal per 1 vertical. "
+            "<i>slope</i>). <b>pad</b> is a polygon with a level at every vertex (its Z values, as a Civil 3D feature "
+            "line; a sloped or twisted platform) with <i>cut_slope</i> and <i>fill_slope</i> batters, benched every "
+            "<i>bench_height</i> with <i>bench_width</i> benches when both are given. <b>line</b> is a line with a level "
+            "at every vertex (a ramp, haul road, bund crest, swale or channel invert) with a top <i>width</i> (falling "
+            "<i>crossfall</i> % each side) and the same batters; <i>mode</i> cut only excavates, fill only builds. "
+            "The Grading Editor (toolbar) draws and edits pads and lines on the map with live cut and fill. "
+            "Missing fields or values take the defaults below; slopes are horizontal per 1 vertical. "
             "Shapes are applied in the <i>order</i> field's order (else the layer's), so a later shape works on the "
             "result of the earlier ones.\n\n"
             "Side slopes run out until they meet the ground. Outputs: a LandXML with 'Existing ground' and 'Design' TIN "
@@ -92,8 +99,12 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
         self.addParameter(QgsProcessingParameterEnum(
             "VERTICAL_UNIT", "Elevation unit — choose when the DEM or the file does not declare it",
             options=[name for name, _unit in VERTICAL_UNITS], defaultValue=0))
-        self.addParameter(QgsProcessingParameterFeatureSource("SHAPES", "Shapes (polygons with a 'shape' field)",
-                                                              [QgsProcessing.SourceType.TypeVectorPolygon]))
+        self.addParameter(QgsProcessingParameterFeatureSource("SHAPES", "Shapes (polygons, or lines for graded lines, "
+                                                              "with a 'shape' field)",
+                                                              [QgsProcessing.SourceType.TypeVectorPolygon,
+                                                               QgsProcessing.SourceType.TypeVectorLine], optional=True))
+        self.addParameter(QgsProcessingParameterFeatureSource("LINES", "Graded lines (lines with a level at every vertex)",
+                                                              [QgsProcessing.SourceType.TypeVectorLine], optional=True))
         self.addParameter(QgsProcessingParameterEnum("DEFAULT_SHAPE", "Shape where the 'shape' field is missing or blank",
                                                      options=SHAPES, defaultValue=0))
         self.addParameter(number_param("CUT_SLOPE", "Default cut slope (H per 1 V)", 1.5, 0.05, 50.0, decimals=2))
@@ -121,10 +132,11 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
         crs, unit, sample, native, ground_name = self._ground(p, c, fb)
         shapes = self._shapes(p, c, crs, fb)
         if not shapes:
-            raise QgsProcessingException("The shapes layer has no polygons.")
+            raise QgsProcessingException("The shapes layers have no polygons or lines.")
         margin = self.parameterAsDouble(p, "MARGIN", c)
         xs = np.concatenate([s["ring"][:, 0] for s in shapes])
         ys = np.concatenate([s["ring"][:, 1] for s in shapes])
+        margin = max(margin, max((float(s["values"].get("width", 0) or 0) / 2 for s in shapes), default=0.0))
         box = (xs.min() - margin, ys.min() - margin, xs.max() + margin, ys.max() + margin)
         cell = self.parameterAsDouble(p, "CELL", c) or max(min(native, 2.0 / LINEAR_UNITS[unit.lower()][0]),
                                                             float(np.sqrt((box[2] - box[0]) * (box[3] - box[1]) / CELL_BUDGET)))
@@ -152,13 +164,16 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
         total_cut, total_fill = ds.volumes(grid, design)
 
         # ---- outputs
-        eg_points, eg_faces = grid.tin()
-        fg_points, fg_faces = design.tin()
+        from .landxml.grading_objects import _tins
+        (eg_points, eg_faces), (fg_points, fg_faces) = _tins(grid, design, 0.02)    # one adaptive mesh for both
+        full_points, full_faces = design.tin()
         depth = design.z.ravel() - grid.z.ravel()
-        lines = [FeatureLine(f"{s['label']} outline", self._outline(s["ring"], design)) for s in shapes]
+        lines = [FeatureLine(f"{s['label']} {'line' if s['kind'] == 'line' else 'outline'}", self._outline(s, design))
+                 for s in shapes]
         changed = np.abs(depth) > 1e-6
         if changed.any():
-            for k, line in enumerate(footprint_lines(fg_points, fg_faces, depth[_used(design)], tolerance=0.01, min_length=cell * 2)):
+            for k, line in enumerate(footprint_lines(full_points, full_faces, depth[_used(design)], tolerance=0.01,
+                                                     min_length=cell * 2)):
                 lines.append(FeatureLine(f"Daylight {k + 1}", [tuple(v) for v in np.asarray(line)[:, :3]]))
         epsg = _epsg(crs)
         xml = self.parameterAsFileOutput(p, "OUTPUT_XML", c)
@@ -182,35 +197,55 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
 
     # ------------------------------------------------------------------ pieces
     def _shapes(self, p, c, crs, fb):
-        source = self.parameterAsSource(p, "SHAPES", c)
-        if source is None:
-            raise QgsProcessingException("Choose the shapes layer.")
+        sources = [self.parameterAsSource(p, key, c) for key in ("SHAPES", "LINES")]
+        sources = [s for s in sources if s is not None]
+        if not sources:
+            raise QgsProcessingException("Choose the shapes layer (or a graded lines layer).")
+        shapes = []
+        for number, source in enumerate(sources):
+            shapes += self._source_shapes(source, p, c, crs, fb, number * 1_000_000)
+        shapes.sort(key=lambda s: (s["order"], s["index"]))
+        return shapes
+
+    def _source_shapes(self, source, p, c, crs, fb, offset):
         transform = QgsCoordinateTransform(source.sourceCrs(), crs, QgsProject.instance())
         names = {name.lower(): name for name in source.fields().names()}
         default = SHAPES[self.parameterAsEnum(p, "DEFAULT_SHAPE", c)]
         shapes = []
         for index, feature in enumerate(source.getFeatures(QgsFeatureRequest())):
             geometry = feature.geometry()
-            if geometry.isEmpty() or QgsWkbTypes.geometryType(geometry.wkbType()) != QgsWkbTypes.GeometryType.PolygonGeometry:
+            gtype = QgsWkbTypes.geometryType(geometry.wkbType())
+            if geometry.isEmpty() or gtype not in (QgsWkbTypes.GeometryType.PolygonGeometry,
+                                                   QgsWkbTypes.GeometryType.LineGeometry):
                 continue
             geometry.transform(transform)
+            has_z = QgsWkbTypes.hasZ(geometry.wkbType())
             values = {}
             for key in FIELDS:
                 if key in names:
                     value = feature[names[key]]
                     if value not in (None, "") and str(value) != "NULL":
                         values[key] = value
-            kind = str(values.get("shape", default)).strip().lower()
+            is_line = gtype == QgsWkbTypes.GeometryType.LineGeometry
+            kind = str(values.get("shape", "line" if is_line else default)).strip().lower()
+            if is_line and kind != "line":
+                raise QgsProcessingException(f"Feature {feature.id()}: a line can only be a 'line' shape.")
             if kind not in SHAPES:
                 raise QgsProcessingException(f"Feature {feature.id()}: unknown shape '{kind}'. Use one of {', '.join(SHAPES)}.")
             for part_number, part in enumerate(geometry.constParts()):
-                ring = np.array([[v.x(), v.y()] for v in part.exteriorRing()], float)
-                if part.numInteriorRings():
+                curve = part if is_line else part.exteriorRing()
+                ring = np.array([[v.x(), v.y(), v.z() if has_z else np.nan] for v in curve.vertices()], float)
+                if kind in ("pad", "line") and not np.isfinite(ring[:, 2]).all():
+                    if "level" in values:
+                        ring[:, 2] = np.where(np.isfinite(ring[:, 2]), ring[:, 2], float(values["level"]))
+                    else:
+                        raise QgsProcessingException(f"Feature {feature.id()}: a {kind} needs a level (Z) at every vertex, "
+                                                     "or a 'level' value.")
+                if not is_line and part.numInteriorRings():
                     fb.pushWarning(f"Feature {feature.id()}: holes are not used; the outer ring is the shape.")
                 label = str(values.get("name") or f"{kind} {feature.id()}") + (f" ({part_number + 1})" if part_number else "")
                 shapes.append({"kind": kind, "ring": ring, "values": values, "label": label,
-                               "order": float(values.get("order", index)), "index": index})
-        shapes.sort(key=lambda s: (s["order"], s["index"]))
+                               "order": float(values.get("order", index + offset)), "index": index + offset})
         return shapes
 
     def _ground(self, p, c, fb):
@@ -308,7 +343,16 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
                 raise ValueError(f"a {shape['kind']} needs a '{key}' value.")
             return default
 
-        kind, ring = shape["kind"], shape["ring"]
+        kind, ring3 = shape["kind"], shape["ring"]
+        ring = ring3[:, :2]
+        if kind in ("pad", "line"):
+            common = dict(cut_slope=number("cut_slope", "CUT_SLOPE"), fill_slope=number("fill_slope", "FILL_SLOPE"),
+                          bench_height=number("bench_height", default=0.0), bench_width=number("bench_width", default=0.0),
+                          benches_in=str(v.get("benches_in", "both")), max_width=number("max_width", default=0.0) or None)
+            if kind == "pad":
+                return ds.graded_pad(grid, ring3, **common)
+            return ds.graded_line(grid, ring3, width=number("width", default=0.0), mode=str(v.get("mode", "both")),
+                                  crossfall=number("crossfall", default=0.0), **common)
         if kind == "platform":
             return ds.platform(grid, ring, number("level"), number("cut_slope", "CUT_SLOPE"), number("fill_slope", "FILL_SLOPE"))
         if kind == "basin":
@@ -331,8 +375,15 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
         return ds.bunker(grid, ring, number("depth", default=1.0), number("slope", default=2.0))
 
     @staticmethod
-    def _outline(ring, design):
-        ring = np.asarray(ring, float)
+    def _outline(shape, design):
+        """The outline (or line) as a feature line: the vertices' own levels for pads and lines, else the design."""
+        ring = np.asarray(shape["ring"], float)
+        if shape["kind"] in ("pad", "line"):
+            pts = ring
+            if shape["kind"] == "pad" and not np.allclose(pts[0, :2], pts[-1, :2]):
+                pts = np.vstack([pts, pts[:1]])
+            return [(float(x), float(y), float(z)) for x, y, z in pts[:, :3]]
+        ring = ring[:, :2]
         if not np.allclose(ring[0], ring[-1]):
             ring = np.vstack([ring, ring[:1]])
         z = design.sample(ring)
@@ -350,20 +401,20 @@ def _epsg(crs):
 
 
 def _report(rows, cut, fill, unit, cell, dem_name):
-    head = ("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Design Surface from Shapes</title><style>"
-            "body{font-family:system-ui,sans-serif;margin:24px;color:#1d2430}table{border-collapse:collapse}"
-            "td,th{border:1px solid #d5dbe3;padding:4px 10px;text-align:right}td:first-child,th:first-child,td:nth-child(2)"
-            "{text-align:left}th{background:#eef2f6}</style></head><body>")
-    body = [f"<h1>Design Surface from Shapes</h1><p>Ground: {html.escape(dem_name)}; design grid {cell:g} {unit}. "
-            f"Volumes are bank (in-place) volumes in cubic {unit}s, each shape's cut and fill on the result of the shapes "
-            "before it.</p><table><tr><th>Shape</th><th>Type</th><th>Parameters</th><th>Cut</th><th>Fill</th></tr>"]
-    for row in rows:
-        params = ", ".join(f"{k} {v}" for k, v in row["values"].items() if k not in ("shape", "name", "order"))
-        body.append(f"<tr><td>{html.escape(row['label'])}</td><td>{row['kind']}</td><td>{html.escape(params) or 'defaults'}</td>"
-                    f"<td>{row['cut']:,.0f}</td><td>{row['fill']:,.0f}</td></tr>")
-    body.append(f"<tr><th>Total</th><th></th><th></th><th>{cut:,.0f}</th><th>{fill:,.0f}</th></tr></table>"
-                f"<p>Net: {fill - cut:+,.0f} (fill − cut).</p></body></html>")
-    return head + "".join(body)
+    from .landxml.reports import _cards, _document, _table
+
+    body = [_cards([("Cut", f"{cut:,.0f} {unit}³"), ("Fill", f"{fill:,.0f} {unit}³"),
+                    ("Net (fill − cut)", f"{fill - cut:+,.0f} {unit}³"), ("Shapes", str(len(rows))),
+                    ("Grid", f"{cell:g} {unit}")])]
+    table = [(row["label"], row["kind"],
+              ", ".join(f"{k} {v}" for k, v in row["values"].items() if k not in ("shape", "name", "order")) or "defaults",
+              row["cut"], row["fill"], row["fill"] - row["cut"]) for row in rows]
+    table.append(("Total", "", "", cut, fill, fill - cut))
+    body.append("<h2>Volumes by shape</h2><p class='note'>Bank (in-place) volumes in cubic " + html.escape(unit)
+                + "s; each shape's cut and fill is measured on the result of the shapes before it.</p>"
+                + _table(["Shape", "Type", "Parameters", "Cut", "Fill", "Net"], table))
+    return _document("Design Surface from Shapes", "".join(body), meta=[("Ground", dem_name)],
+                     kicker="Site grading · Design Surface from Shapes")
 
 
 __all__ = ["DesignShapesAlgorithm", "SHAPES", "os"]

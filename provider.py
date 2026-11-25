@@ -22,13 +22,15 @@ from .grading_algorithm import (
 )
 from .dem_tin_algorithm import DemToTinAlgorithm
 from .design_shapes_algorithm import DesignShapesAlgorithm
-from .corridor_algorithm import BuildCorridorAlgorithm, CreateSectionProjectAlgorithm, ExportDesignStageAlgorithm, ExportRoadsAlgorithm
+from .corridor_algorithm import (BuildCorridorAlgorithm, CreateSectionProjectAlgorithm, ExportDesignStageAlgorithm,
+                                 ExportDxfAlgorithm, ExportRoadsAlgorithm)
 from .inspect_algorithm import InspectLandXMLAlgorithm
 from .scene_algorithm import Scene3DAlgorithm
 from .site_tools_algorithm import EdgeAnalysisAlgorithm, ExportSceneAlgorithm, GradingReportAlgorithm, SurfaceStyleAlgorithm
 from .prepare_algorithm import PrepareLandXMLAlgorithm
 from .sections_algorithm import CrossSectionSheetsAlgorithm
 from .design_report_algorithm import DesignReportAlgorithm
+from .setting_out_algorithm import SettingOutAlgorithm
 from .review_algorithm import DesignReviewAlgorithm
 from .earthworks_algorithm import (
     CorridorQuantitiesAlgorithm,
@@ -89,6 +91,7 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
         self.addAlgorithm(Scene3DAlgorithm())
         self.addAlgorithm(CrossSectionSheetsAlgorithm())
         self.addAlgorithm(DesignReportAlgorithm())
+        self.addAlgorithm(SettingOutAlgorithm())
         self.addAlgorithm(DesignReviewAlgorithm())
         self.addAlgorithm(DesignShapesAlgorithm())
         self.addAlgorithm(DemToTinAlgorithm())
@@ -96,3 +99,4 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
         self.addAlgorithm(BuildCorridorAlgorithm())
         self.addAlgorithm(ExportRoadsAlgorithm())
         self.addAlgorithm(ExportDesignStageAlgorithm())
+        self.addAlgorithm(ExportDxfAlgorithm())

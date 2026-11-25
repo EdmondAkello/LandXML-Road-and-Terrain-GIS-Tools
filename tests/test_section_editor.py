@@ -469,6 +469,11 @@ class InteropTests(unittest.TestCase):
                         etw = next(f for f in features if (f.name or "").startswith("ETW R"))
                         pts = np.array(etw.points)
                         self.assertGreater(len(pts), 10)
+                        if target == "civil3d":                   # imported as feature lines, not 3D polylines
+                            text = open(out, encoding="utf-8").read()
+                            self.assertIn('<Feature code="FeatureLine" source="Autodesk Civil 3D">', text)
+                            self.assertIn('<PlanFeatures name="Site -Corridor- FeatureLines">', text)
+                            self.assertIn('<Feature code="FeatureLines" source="Autodesk Civil 3D">', text)
                     names = [e.attrib.get("name") for e in root.iter() if e.tag.endswith("Surface")]
                     self.assertIn("EG", names)                        # the ground over the footprint
             self.assertLess(sizes[("alignment", "civil3d")], sizes[("corridor", "civil3d")])
@@ -491,3 +496,78 @@ class InteropTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DemCrsTests(unittest.TestCase):
+    """A DEM in another CRS (degrees) under a projected design: resampled into the design CRS, never assumed."""
+
+    def test_geographic_dem_under_a_utm_design(self):
+        from osgeo import gdal, osr
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = curved_road(os.path.join(directory, "road.xml"))
+            utm, wgs = osr.SpatialReference(), osr.SpatialReference()
+            utm.ImportFromEPSG(32737)
+            wgs.ImportFromEPSG(4326)
+            for ref in (utm, wgs):
+                ref.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+            to_utm = osr.CoordinateTransformation(wgs, utm)
+            lon0, lat0 = 38.995, -0.88
+            cell = 0.0001                                           # about 11 m
+            nx, ny = 300, 300
+            cols, rows = np.meshgrid(np.arange(nx), np.arange(ny))
+            lonlat = np.column_stack([(lon0 + (cols + 0.5) * cell).ravel(), (lat0 - (rows + 0.5) * cell).ravel()])
+            xy = np.array(to_utm.TransformPoints(lonlat.tolist()))[:, :2]
+            data = (1501.0 + 0.04 * (xy[:, 0] - 500100) + 3 * np.sin((xy[:, 1] - 9900000) / 60.0)).reshape(ny, nx)
+            dem = os.path.join(directory, "dem4326.tif")
+            ds = gdal.GetDriverByName("GTiff").Create(dem, nx, ny, 1, gdal.GDT_Float32)
+            ds.SetGeoTransform((lon0, cell, 0, lat0, 0, -cell))
+            ds.SetProjection(wgs.ExportToWkt())
+            ds.GetRasterBand(1).WriteArray(data)
+            ds = None
+            project = cb.new_project(path, "Curved", "FRL", "generic_sections", None, True, 60,
+                                     {"type": "dem", "path": dem, "crs": "EPSG:4326"})
+            project["crs"] = "EPSG:32737"
+            ctx = cb.prepare(project)
+            xy = ctx["frame"].xy[::20]
+            z = ctx["ground"].sample(xy)
+            expected = 1501.0 + 0.04 * (xy[:, 0] - 500100) + 3 * np.sin((xy[:, 1] - 9900000) / 60.0)
+            ok = np.isfinite(z)
+            self.assertGreater(ok.mean(), 0.9)
+            self.assertLess(np.abs(z[ok] - expected[ok]).max(), 0.6)
+            # without the design CRS the DEM is taken as given (degrees): it does not cover the road
+            project.pop("crs")
+            with self.assertRaises(ValueError):
+                cb.prepare(project)
+
+
+class ElementProfileTests(unittest.TestCase):
+    """A side drain whose invert follows its own profile on the alignment."""
+
+    def test_drain_invert_on_a_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "road.xml")
+            road = HorizontalAlignment("Straight", start=(1000.0, 5000.0), bearing=0.0, elements=[Line(200.0)])
+            frl = VerticalProfile("FRL", [(0, 102.0, 0), (200, 102.0, 0)])
+            ditch = VerticalProfile("Ditch", [(0, 100.8, 0), (200, 100.2, 0)])
+            eg = grid_surface("EG", 900, 4900, 1100, 5300, lambda X, Y: np.full_like(X, 104.0))
+            write_landxml(path, [(road, [frl, ditch])], northing_first=True, surfaces=[eg])
+            right = [asm.element("lane", width=3.5, crossfall=2.5),
+                     asm.element("side_drain", depth=0.5, invert_profile="Ditch", where="always"),
+                     asm.element("daylight")]
+            project = simple_project(path, right)
+            project["profile"] = "FRL"
+            ctx = cb.prepare(project)
+            for station, expected in ((0.0, 100.8), (100.0, 100.5), (200.0, 100.2)):
+                sec = cb.section_at(ctx, station)
+                inv = [p for p in sec["top"] if p.code == "DITCH_I"]
+                self.assertEqual(len(inv), 2)
+                for p in inv:
+                    self.assertAlmostEqual(p.z, expected, places=6)
+                    self.assertIn("profile 'Ditch'", p.why)
+            # without the profile: depth below the edge
+            ctx["project"]["assemblies"]["Test"]["right"][1]["invert_profile"] = ""
+            cb.refresh_context(ctx)
+            sec = cb.section_at(ctx, 100.0)
+            inv = [p for p in sec["top"] if p.code == "DITCH_I"][0]
+            self.assertAlmostEqual(inv.z, 102.0 - 3.5 * 0.025 - 0.5, places=6)

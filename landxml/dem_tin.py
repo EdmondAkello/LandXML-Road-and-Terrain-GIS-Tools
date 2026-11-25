@@ -217,7 +217,8 @@ def _level_map(pyramid, tolerance):
             fanned = flags.any(axis=1)
             if not fanned.any():
                 continue
-            miss = _fan_misses(pyramid.zp, level, bi[fanned], bj[fanned], flags[fanned])
+            miss = np.max([_fan_misses(member.zp, level, bi[fanned], bj[fanned], flags[fanned])
+                           for member in getattr(pyramid, "members", [pyramid])], axis=0)
             bad = miss > tolerance
             if bad.any():
                 _split(lev, level, bi[fanned][bad], bj[fanned][bad])
@@ -261,12 +262,28 @@ def _triangulate(lev, pyramid):
     return nodes, inverse.reshape(-1, 3).astype(int)
 
 
-def adaptive_tin(z, tolerance, max_triangles=None):
+class _SharedPyramid:
+    """Several grids on the same nodes, triangulated once: a square is split where any of them misses (so two
+    surfaces, a design and its existing ground, share one mesh and match exactly where they are equal)."""
+
+    def __init__(self, grids):
+        self.members = [_Pyramid(z) for z in grids]
+        first = self.members[0]
+        for key in ("rows", "cols", "top", "levels", "cell_rows", "cell_cols", "zp"):
+            setattr(self, key, getattr(first, key))
+        self.error = {level: np.fmax.reduce([m.error[level] for m in self.members]) for level in first.error}
+
+    leaves = _Pyramid.leaves
+    count = _Pyramid.count
+
+
+def adaptive_tin(z, tolerance, max_triangles=None, also=None):
     """(nodes (n, 2) as (row, col) ints, faces (m, 3)) of a crack-free TIN of grid ``z`` within ``tolerance``.
 
     With ``max_triangles`` the TIN has at most that many triangles: the tolerance is raised (the worst-fitting areas
-    keep their detail longest) until it fits, so it may not be met."""
-    pyramid = _Pyramid(z)
+    keep their detail longest) until it fits, so it may not be met. ``also``: other grids of the same shape that the
+    same mesh must fit within the tolerance too."""
+    pyramid = _SharedPyramid([z] + list(also)) if also else _Pyramid(z)
     tolerance = max(float(tolerance), 0.0)
     if max_triangles:
         target = max_triangles / 2.6

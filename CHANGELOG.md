@@ -31,9 +31,50 @@
 - Design Surface from Shapes: benched stockpiles (waste dumps) with `bench` and `berm`.
 - Test scenarios with finished road surfaces: an open pit with a haul ramp and a benched dump, a mountain highway with
   stabilisation benches and retaining walls, a rural road and an urban street.
-- User guide Part F (Corridor design).
+- **Grading Editor** dock: pads and graded lines (ramps, roads, bunds, swales) drawn and edited on the map with a level
+  at every vertex, batters with optional benches, live cut/fill preview, daylight line and totals, vertex table with
+  the ground and cut or fill at each vertex, level tools; Build writes LandXML (ground and design TINs on one adaptive
+  mesh within 2 cm), design GeoTIFF, DXF, quantities report and the objects (JSON).
+- Design Surface from Shapes: `pad` (PolygonZ, a level at every vertex) and `line` (LineStringZ, top width, crossfall,
+  cut-only or fill-only) shapes, from the shapes layer or a separate graded-lines layer; benched batters. Its LandXML
+  surfaces now share one adaptive mesh (much smaller files, no false cut or fill where nothing changed).
+- **Export LandXML to DXF** (Corridor design): alignments with station ticks and labels, feature lines and breaklines
+  as 3D polylines, TIN surfaces as 3D faces, ASCII DXF (AutoCAD 2018) without extra libraries.
+- **Workflow** panel with the road and site steps, each one click from the previous, following the files each editor
+  writes; one toolbar button with a menu of the tools, each with its own icon.
+- Large docks dock at the bottom with scrolling content and **Pop out** into their own window (second display).
+- Plan Editor: explicit design CRS (declared when it fits the coordinates, the projected project CRS, or chosen) with
+  the design drawn over a map in any CRS; the map tool switches on once a design exists; grouped, filterable list of
+  alignments and feature lines; the design kept as map layers (elements and PIs); *Design the profile* opens the
+  Profile Viewer's Design tab with a profile from the ground.
+- Section Editor: ground from raster layers already in the project, in any CRS (resampled into the design CRS);
+  stated elevation unit written into the corridor LandXML; *Edit profile*; the standard and elevation unit are
+  remembered; side drain inverts can follow another profile on the alignment.
+- **Setting-Out Data (Alignment and Feature Lines)** (Reports and sheets): horizontal geometry schedule, key points
+  (BP, TS, SC, CS, ST, PC, PT, PCC, PRC, EP) and PIs, centreline coordinates, whole-circle bearings, design and ground
+  levels at an interval, feature-line points with chainage and offset, and offsets and levels at every station; Excel
+  workbook, HTML report and a total-station CSV.
+- Reports restyled for presentation: a title band with the report facts, numbered sections with contents, summary
+  figures, consistent tables with totals, and an A4 print layout with page numbers; the corridor build, Grading Editor
+  and Design Surface from Shapes reports now use the same style.
+- User guide Part E (Corridor and site design); the technical reference is now Part F.
 
 ### Fixed (corridor design batch)
+- Civil 3D: feature lines are written with Civil 3D's FeatureLine features (source, site, layer), so they import as
+  feature lines, not 3D polylines whose arcs became chords; long daylight lines are thinned within 5 cm.
+- DXF export now writes AutoCAD 2018 files from a template drawing (the Road Furniture Designer's writer); the R12
+  files did not open in AutoCAD.
+- Cross-section sheets: the legend wraps onto more rows instead of running into the title block, which now has its
+  own box (chainage range, V:H, sheet, date).
+- Section Editor: moving the mouse over the empty chart raised an error.
+- The Workflow panel opens as a tab beside the Processing Toolbox, and the editors as tabs of one bottom panel,
+  instead of splitting the dock areas.
+- Crash (Windows, Qt 6) when closing a floating dock: the plugin's docks no longer use Qt's floating mode; Pop out
+  uses an ordinary window instead.
+- Plan Editor saved the project CRS (EPSG:4326 on a map in degrees) for coordinates in metres; it now writes the
+  design CRS.
+- Corridor LandXML: the ground surface is named by the project's ground name ("EG"), as the cross-sections refer to
+  it; writing the ground over the footprint took minutes on long roads (now about a second).
 - CI: the profile drag GUI test now sends real mouse-move events, which `QTest.mouseMove` does not deliver offscreen on
   Qt 5 (QGIS 3.44).
 - NumPy 2: 2D `np.cross` replaced in feature-line welding, the 3D scene and the grading tests.

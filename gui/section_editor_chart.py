@@ -84,7 +84,7 @@ class SectionEditorChart(QWidget):
     # ------------------------------------------------------------------ geometry
     def _frame(self):
         rect = QRectF(self.rect()).adjusted(46, 12, -12, -28)
-        x0, x1, z0, z1 = self.view
+        x0, x1, z0, z1 = self.view or (-10.0, 10.0, -5.0, 5.0)     # nothing loaded yet: any frame does
         sx = rect.width() / max(x1 - x0, 1e-6)
         sz = rect.height() / max(z1 - z0, 1e-6)
         # keep the vertical exaggeration: the smaller scale wins, centred
@@ -334,6 +334,8 @@ class SectionEditorChart(QWidget):
                 fall = round(fall, 2 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1)
                 self.fallDragged.emit(key[0], key[1], fall)
             return
+        if not self.section or self.view is None:
+            return                                          # nothing loaded: no hover read-out
         point = self._nearest_point(pos)
         d, z = self.to_world(pos)
         self._hover = (f"{point.code or 'point'}  offset {point.d:.3f}  level {point.z:.3f}" if point is not None

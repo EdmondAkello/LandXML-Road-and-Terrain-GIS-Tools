@@ -36,7 +36,6 @@ from qgis.PyQt.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSplitter,
     QTabWidget,
     QTableWidget,
@@ -70,6 +69,7 @@ from ..landxml.reports import (
 from .map_tool import SOURCE_PROPERTY, AlignmentPickTool, alignment_field
 from .profile_chart import EXTRA_COLORS, ProfileChart
 from .section_panel import SectionPanel
+from .dock_utils import setup_dock
 
 try:  # QtSvg is optional in some Qt builds.
     from qgis.PyQt.QtSvg import QSvgGenerator
@@ -243,11 +243,7 @@ class ProfileViewerDock(QgsDockWidget):
         layout.addWidget(splitter, 1)
         # A scroll area keeps the dock's minimum size small, so docking it never
         # squeezes the other panels (Processing Toolbox, Layers) out of view.
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll.setWidget(body)
-        self.setWidget(scroll)
+        setup_dock(self, body, "profile_viewer")
 
         self.alignment_combo.currentIndexChanged.connect(self.alignment_changed)
         self.design_combo.currentIndexChanged.connect(lambda *_args: self.refresh())
@@ -287,6 +283,27 @@ class ProfileViewerDock(QgsDockWidget):
         if path:
             settings.setValue(f"{SETTINGS}/last_dir", os.path.dirname(path))
             self.load(path)
+
+    def design(self, path, alignment=None):
+        """Open the alignment on the Design tab, ready to edit: its design profile copied, or a new one from the
+        ground profile when it has none."""
+        if not self.load(path, alignment):
+            return False
+        self.tabs.setCurrentWidget(self.design_panel)
+        panel = self.design_panel
+        if panel.design is None:
+            if panel.designs:
+                panel.copy_design()
+            else:
+                panel.new_from_ground()
+        if panel.design is not None:
+            panel.edit_button.setChecked(True)
+            panel.status.setText("Drag PVIs on the chart, click to add one, right-click for curve length, K or delete; "
+                                 "type values in the table. Save to LandXML when done: an open Section Editor on "
+                                 "this alignment takes the new profile.")
+        from .dock_utils import reveal
+        reveal(self)
+        return True
 
     def load(self, path, alignment=None):
         if path != self.path or self.document is None:
