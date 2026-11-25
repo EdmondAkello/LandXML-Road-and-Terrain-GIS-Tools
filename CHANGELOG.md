@@ -60,8 +60,12 @@
 - User guide Part E (Corridor and site design); the technical reference is now Part F.
 
 ### Fixed (corridor design batch)
-- Civil 3D: feature lines are written with Civil 3D's FeatureLine features (source, site, layer), so they import as
-  feature lines, not 3D polylines whose arcs became chords; long daylight lines are thinned within 5 cm.
+- Civil 3D: feature lines are written with Civil 3D's FeatureLine features (source, layer), so they import as
+  feature lines, not 3D polylines whose arcs became chords; long daylight lines are thinned within 5 cm. They are
+  siteless, so Civil 3D does not work out how a corridor's crossing edges interact (in one site the import hung),
+  and long corridor lines come in parts of at most 400 stations.
+- Tests: the GUI tests clear the QGIS project and delete their docks, so later tests (a Processing dialog run on
+  QGIS 4.2) no longer crash on layers whose files were deleted.
 - DXF export now writes AutoCAD 2018 files from a template drawing (the Road Furniture Designer's writer); the R12
   files did not open in AutoCAD.
 - Cross-section sheets: the legend wraps onto more rows instead of running into the title block, which now has its

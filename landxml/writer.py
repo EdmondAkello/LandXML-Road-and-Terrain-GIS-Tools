@@ -412,7 +412,8 @@ FEATURE_LAYER = "C-TOPO-FEAT"
 
 def civil3d_feature(site="", layer=FEATURE_LAYER, code=""):
     """The <Feature> Civil 3D needs to import a PlanFeature as a feature line (without it: a 3D polyline, whose arcs
-    become chords). ``site`` names the Civil 3D site (the import dialog can override it)."""
+    become chords). ``site`` names a Civil 3D site; left empty the lines are siteless, so Civil 3D does not work out
+    how they cross each other on import (in one site, a corridor's crossing edges made the import hang)."""
     props = (f'<Property label="site" value={quoteattr(site)}/>' if site else "") + \
         f'<Property label="layer" value={quoteattr(layer)}/>' + \
         (f'<Property label="code" value={quoteattr(code)}/>' if code else "")
@@ -439,7 +440,7 @@ def feature_line_xml(line, northing_first=True, site=""):
 
 def landxml_text(alignments, linear_unit="meter", epsg=None, northing_first=True, project="", group="Alignments",
                  surfaces=(), feature_lines=(), vertical_unit=None,
-                 application=APPLICATION, site="Design"):
+                 application=APPLICATION, site=""):
     """The LandXML document for [(HorizontalAlignment, [VerticalProfile, ...]), ...], TIN ``surfaces`` and
     ``feature_lines`` as text."""
     if linear_unit not in UNITS:

@@ -741,7 +741,7 @@ class GradingEditorDock(QgsDockWidget):
         self.redraw(preview=False)
 
     def _preview_layer(self, ground, design, cell):
-        if self.iface is None or not hasattr(self.iface, "mainWindow"):
+        if self.iface is None or not hasattr(self.iface, "mainWindow") or self.iface.mainWindow() is None:
             return
         from ..core import write_geotiff
         from qgis.core import QgsColorRampShader, QgsRasterShader, QgsSingleBandPseudoColorRenderer
@@ -829,7 +829,7 @@ class GradingEditorDock(QgsDockWidget):
         self.status.setText(f"Built {path}: cut {result['cut']:,.0f}, fill {result['fill']:,.0f} on a "
                             f"{result['cell']:.2f} grid. Design GeoTIFF, DXF, report and objects written beside it. "
                             "In Civil 3D: Insert > LandXML (northing first, the design CRS).")
-        if self.iface is not None and hasattr(self.iface, "mainWindow"):
+        if self.iface is not None and hasattr(self.iface, "mainWindow") and self.iface.mainWindow() is not None:
             layer = QgsRasterLayer(stem + "_design.tif", os.path.basename(stem) + " design")
             if layer.isValid():
                 QgsProject.instance().addMapLayer(layer)

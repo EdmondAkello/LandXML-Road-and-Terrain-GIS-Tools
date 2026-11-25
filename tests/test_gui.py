@@ -343,6 +343,10 @@ class ProfileViewerTests(unittest.TestCase):
 
 
 class PluginGuiTests(unittest.TestCase):
+    @classmethod
+    def tearDownClass(cls):
+        _flush()
+
     def test_plugin_actions_with_interface_stub(self):
         application()
         from landxml_plugin.landxml_tin_to_geotiff import LandXMLTinToGeoTIFFPlugin
@@ -447,6 +451,7 @@ class SectionEditorTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        _flush()
         cls.tmp.cleanup()
 
     def setUp(self):
@@ -492,7 +497,7 @@ class SectionEditorTests(unittest.TestCase):
             self.assertIn("design CRS", dock.status.text())
             dock.deleteLater()
         finally:
-            QgsProject.instance().removeMapLayer(layer.id())
+            QgsProject.instance().clear()
 
     def test_hover_on_an_empty_chart(self):
         """Moving the mouse over the chart before a file is loaded does nothing (no error)."""
@@ -613,6 +618,11 @@ class GradingEditorTests(unittest.TestCase):
     """The Grading Editor: draw a pad and a line on the map, set levels, preview, build (offscreen canvas)."""
 
     @classmethod
+    def tearDownClass(cls):
+        _flush()  # GradingEditorTests
+        super().tearDownClass()
+
+    @classmethod
     def setUpClass(cls):
         cls.app = application()
 
@@ -704,13 +714,30 @@ class GradingEditorTests(unittest.TestCase):
                 again.open_objects(os.path.join(directory, "site_objects.json"))
                 self.assertEqual(len(again.objects), 2)
                 again.cleanup()
+                again.deleteLater()
             finally:
                 dock.cleanup()
-                QgsProject.instance().removeMapLayer(layer.id())
+                dock.deleteLater()
+                QgsProject.instance().clear()               # nothing left for later tests (files are deleted)
+
+
+def _flush():
+    """Delete widgets scheduled with deleteLater and clear the shared project, so nothing from these tests is left
+    to paint or to be found by later tests (QGIS 4.2 crashed in a later Processing dialog test)."""
+    from qgis.core import QgsProject
+    from qgis.PyQt.QtCore import QCoreApplication, QEvent
+    QgsProject.instance().clear()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
 
 
 class PlanEditorTests(unittest.TestCase):
     """The plan editor dock and its map tool on an offscreen canvas."""
+
+    @classmethod
+    def tearDownClass(cls):
+        _flush()  # PlanEditorTests
+        super().tearDownClass()
 
     @classmethod
     def setUpClass(cls):
@@ -879,9 +906,9 @@ class PlanEditorTests(unittest.TestCase):
                 self.assertEqual(asked, [])                                 # a fitting declared CRS is used
         finally:
             plan_editor.ask_crs = original
-            for layer_id in dock.layers.values():
-                QgsProject.instance().removeMapLayer(layer_id)
             dock.cleanup()
+            dock.deleteLater()
+            QgsProject.instance().clear()                   # the layers and the "Plan Editor" group
 
 
 if __name__ == "__main__":
