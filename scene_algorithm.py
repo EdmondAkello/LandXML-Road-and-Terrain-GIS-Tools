@@ -544,8 +544,8 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
             for name, wrapper in wrappers.items():
                 try:
                     values[name] = wrapper.parameterValue()
-                except Exception:               # a widget part-way through an update has no value yet
-                    continue
+                except (RuntimeError, TypeError, ValueError):     # a widget part-way through an update has no value yet
+                    values[name] = None
             values["SYN_GENERATE"] = bool(values.get("SYN_GENERATE"))
             text = "\n".join(setup_summary(values, unit=getattr(dialog, "_length_unit", "m")))
             summary.setText(text or "Choose surfaces to render.")
