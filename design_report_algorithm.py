@@ -40,7 +40,7 @@ class DesignReportAlgorithm(ProjectSettingsAlgorithm):
         return "Road Design Report (Plan, Curvature, Grades, Superelevation)"
 
     def group(self):
-        return "8. Reports and sheets"
+        return "7. Reports and sheets"
 
     def groupId(self):
         return "reports"

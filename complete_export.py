@@ -34,6 +34,8 @@ from .processing_widgets import name_param
 from .styles import PRESETS, StyledAlgorithm, station_text
 from .processing_common import attach_post_processor, resolve_name
 
+COVER_TOLERANCE = 0.01   # a profile ending this close to the alignment end covers it (plan sampling rounds)
+
 
 # Drawing order when the package is loaded (higher is drawn on top): terrain
 # rasters at the bottom, then areas, contours, lines, the alignment, points.
@@ -604,7 +606,7 @@ class CompleteRoadDesignAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
                         ),
                     )
                     centerlines.CreateFeature(feature)
-                    if start > s0 or end < s0 + cum[-1]:
+                    if start > s0 + COVER_TOLERANCE or end < s0 + cum[-1] - COVER_TOLERANCE:
                         fb.pushWarning(
                             f"Created partial 3D centerline '{alignment['name']}' from station {start:.3f} to {end:.3f}; "
                             "the profile does not cover the remaining alignment."

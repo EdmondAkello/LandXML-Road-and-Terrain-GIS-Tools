@@ -192,7 +192,7 @@ class DesignReviewAlgorithm(ProjectSettingsAlgorithm):
         return "Geometric Design Review (Phasing, Sight Distance, Standards)"
 
     def group(self):
-        return "7. Design review"
+        return "6. Design review"
 
     def groupId(self):
         return "design_review"

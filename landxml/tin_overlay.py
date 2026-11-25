@@ -162,6 +162,16 @@ def depth_tin(design, existing, with_design=False):
     """
     dxyz, dfaces = (np.asarray(design[0], float), np.asarray(design[1], np.int64))
     exyz, efaces = (np.asarray(existing[0], float), np.asarray(existing[1], np.int64))
+    if dfaces.shape == efaces.shape and dxyz.shape == exyz.shape and np.array_equal(dfaces, efaces) \
+            and np.array_equal(dxyz[:, :2], exyz[:, :2]):
+        # the same triangles (a design drawn on the existing ground's grid): the depth is exact at the vertices
+        corners = dxyz[dfaces]
+        triangles = np.concatenate([corners[:, :, :2], (corners[:, :, 2] - exyz[dfaces][:, :, 2])[:, :, None]], axis=2)
+        area = float(_area(corners).sum())
+        stats = {"design_area": area, "overlay_area": area, "triangles": len(dfaces)}
+        if with_design:
+            stats["design_z"] = corners[:, :, 2].reshape(-1)
+        return triangles.reshape(-1, 3), np.arange(3 * len(dfaces), dtype=np.int64).reshape(-1, 3), stats
     dpx, dpy, dq, dbox, dcorner = _planes(dxyz, dfaces)
     epx, epy, eq, ebox, ecorner = _planes(exyz, efaces)
     design_area = float(_area(dcorner).sum()) if len(dcorner) else 0.0

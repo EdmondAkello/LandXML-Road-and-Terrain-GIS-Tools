@@ -112,7 +112,7 @@ class CrossSectionSheetsAlgorithm(ProjectSettingsAlgorithm):
         return "Cross-Section Sheets and Report"
 
     def group(self):
-        return "8. Reports and sheets"
+        return "7. Reports and sheets"
 
     def groupId(self):
         return "reports"

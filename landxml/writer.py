@@ -23,6 +23,7 @@ UNITS = {"meter": ("Metric", "meter", "squareMeter", "cubicMeter"),
          "foot": ("Imperial", "foot", "squareFoot", "cubicYard"),
          "USSurveyFoot": ("Imperial", "USSurveyFoot", "squareFoot", "cubicYard")}
 TOLERANCE = 1e-6
+APPLICATION = "LandXML Road & Terrain GIS Tools"
 
 
 @dataclass
@@ -117,6 +118,124 @@ class VerticalProfile:
         s0, z0 = p[i][:2]
         s1, z1 = p[i + 1][:2]
         return z0 + (z1 - z0) * (station - s0) / (s1 - s0)
+
+
+@dataclass
+class GroundProfile:
+    """A surface (existing-ground) profile along an alignment: (station, level) points, written as <ProfSurf>
+    the way Civil 3D writes them, so the tools read it as ground and not as a design."""
+    name: str
+    points: list
+    desc: str = ""
+    state: str = "existing"
+
+    def __post_init__(self):
+        self.points = [(float(s), float(z)) for s, z in self.points]
+        if len(self.points) < 2:
+            raise ValueError(f"Ground profile '{self.name}' needs at least two points.")
+        if any(b[0] <= a[0] for a, b in zip(self.points, self.points[1:])):
+            raise ValueError(f"Ground profile '{self.name}': stations must increase.")
+
+
+@dataclass
+class PICurve:
+    """The curve at an intersection point: ``radius`` with clothoid spirals of ``spiral_in`` and ``spiral_out`` (0 = none)."""
+    radius: float
+    spiral_in: float = 0.0
+    spiral_out: float = 0.0
+
+
+@dataclass
+class Surface:
+    """A TIN: ``points`` (n, 3) in map order (easting, northing, level) and ``faces`` (m, 3) of 0-based point indices."""
+    name: str
+    points: list
+    faces: list
+    desc: str = ""
+
+
+@dataclass
+class FeatureLine:
+    """A 3D polyline written as a Civil 3D feature line (PlanFeature with Feature code="FeatureLine")."""
+    name: str
+    points: list
+    desc: str = ""
+
+
+def spiral_shift(radius, length):
+    """(p, k, theta) of a clothoid from a tangent into ``radius`` over ``length``: the shift of the circle from the
+    tangent, the distance along the tangent to the shifted circle's start, and the spiral's turn (radians)."""
+    if length <= 0:
+        return 0.0, 0.0, 0.0
+    item = {"element": Spiral(length, None, radius, LEFT), "start": (0.0, 0.0), "heading_start": 0.0}
+    x, y, _h = _position(item, length)
+    theta = length / (2 * radius)
+    return y - radius * (1 - math.cos(theta)), x - radius * math.sin(theta), theta
+
+
+def alignment_from_pis(name, pis, curves, start_station=0.0, desc=""):
+    """A HorizontalAlignment through intersection points ``pis`` [(easting, northing), ...] with a PICurve (or None for
+    a straight run through) at every interior PI. Tangent lengths follow the clothoid shift formulas, unequal spirals
+    included; a curve that does not fit between its neighbours, or spirals longer than the deflection allows, is
+    refused with the PI named."""
+    pis = [(float(x), float(y)) for x, y in pis]
+    if len(pis) < 2:
+        raise ValueError("An alignment needs at least two points.")
+    if len(curves) != len(pis) - 2:
+        raise ValueError(f"Give a curve (or None) for each of the {len(pis) - 2} interior PIs.")
+    bearings, lengths = [], []
+    for (x0, y0), (x1, y1) in zip(pis, pis[1:]):
+        lengths.append(math.hypot(x1 - x0, y1 - y0))
+        if lengths[-1] <= TOLERANCE:
+            raise ValueError("Two consecutive PIs are at the same place.")
+        bearings.append(math.atan2(y1 - y0, x1 - x0))
+    plan = []                                         # per interior PI: (t_in, t_out, elements)
+    for i, curve in enumerate(curves, start=1):
+        deflection = math.atan2(math.sin(bearings[i] - bearings[i - 1]), math.cos(bearings[i] - bearings[i - 1]))
+        if abs(deflection) < 1e-9:                    # no turn: the PI is just a point on a straight
+            plan.append((0.0, 0.0, []))
+            continue
+        if curve is None:
+            raise ValueError(f"PI {i + 1} turns {math.degrees(abs(deflection)):.3f}°: give it a curve.")
+        turn = LEFT if deflection > 0 else RIGHT
+        delta = abs(deflection)
+        r = float(curve.radius)
+        p1, k1, th1 = spiral_shift(r, curve.spiral_in)
+        p2, k2, th2 = spiral_shift(r, curve.spiral_out)
+        arc = r * (delta - th1 - th2)
+        if arc < -TOLERANCE:
+            raise ValueError(f"PI {i + 1}: the spirals turn more than its {math.degrees(delta):.2f}° deflection; shorten them.")
+        t_in = k1 + (r + p1) * math.tan(delta / 2) + (p2 - p1) / math.sin(delta)
+        t_out = k2 + (r + p2) * math.tan(delta / 2) - (p2 - p1) / math.sin(delta)
+        elements = []
+        if curve.spiral_in > 0:
+            elements.append(Spiral(curve.spiral_in, None, r, turn))
+        if arc > TOLERANCE:
+            elements.append(Curve(arc, r, turn))
+        if curve.spiral_out > 0:
+            elements.append(Spiral(curve.spiral_out, r, None, turn))
+        plan.append((t_in, t_out, elements))
+    elements = []
+    for leg in range(len(pis) - 1):
+        used_start = plan[leg - 1][1] if leg > 0 else 0.0
+        used_end = plan[leg][0] if leg < len(plan) else 0.0
+        tangent = lengths[leg] - used_start - used_end
+        if tangent < -1e-6:
+            raise ValueError(f"The curves at PIs {leg + 1} and {leg + 2} overlap by {-tangent:.2f}: reduce the radius or "
+                             "the spirals, or move the PIs apart.")
+        if tangent > 1e-6:
+            if elements and isinstance(elements[-1], Line):      # a straight-through PI: one tangent, not two
+                elements[-1] = Line(elements[-1].length + tangent)
+            else:
+                elements.append(Line(tangent))
+        if leg < len(plan):
+            elements += plan[leg][2]
+    bearing = 90.0 - math.degrees(bearings[0])
+    alignment = HorizontalAlignment(name, pis[0], bearing, elements, start_station, desc)
+    end = alignment.layout()[-1]["end"]
+    if math.hypot(end[0] - pis[-1][0], end[1] - pis[-1][1]) > 1e-3 * max(sum(lengths), 1.0):
+        raise ValueError("The fitted alignment does not reach the last PI; check the curves.")   # a safeguard, not expected
+    return alignment
 
 
 # ------------------------------------------------------------------ geometry
@@ -255,8 +374,19 @@ def coord_geom(alignment, northing_first=True):
     return "".join(out)
 
 
+def prof_surf(profile):
+    """The <ProfSurf> of a ground profile."""
+    points = " ".join(f"{_fmt(s)} {_fmt(z)}" for s, z in profile.points)
+    desc = f" desc={quoteattr(profile.desc)}" if profile.desc else ""
+    return (f"<ProfSurf name={quoteattr(profile.name)}{desc} state={quoteattr(profile.state)}>"
+            f"<PntList2D>{points}</PntList2D></ProfSurf>")
+
+
 def prof_align(profile):
-    """The <ProfAlign> of a profile: PVIs, with ParaCurve where a vertical curve is set."""
+    """The <ProfAlign> of a profile: PVIs, with ParaCurve where a vertical curve is set (a GroundProfile is written
+    as <ProfSurf>)."""
+    if isinstance(profile, GroundProfile):
+        return prof_surf(profile)
     parts = []
     for s, z, length in profile.pvis:
         if length:
@@ -267,21 +397,57 @@ def prof_align(profile):
     return f"<ProfAlign name={quoteattr(profile.name)}{desc}>{''.join(parts)}</ProfAlign>"
 
 
-def landxml_text(alignments, linear_unit="meter", epsg=None, northing_first=True, project="", group="Alignments"):
-    """The LandXML document for [(HorizontalAlignment, [VerticalProfile, ...]), ...] as text."""
+def surface_xml(surface, northing_first=True):
+    """A <Surface> TIN; point ids start at 1 as LandXML requires."""
+    points = "".join(f'<P id="{k}">{_pt((x, y), northing_first)} {_fmt(z)}</P>' for k, (x, y, z) in enumerate(surface.points, 1))
+    faces = "".join(f"<F>{a + 1} {b + 1} {c + 1}</F>" for a, b, c in surface.faces)
+    desc = f" desc={quoteattr(surface.desc)}" if surface.desc else ""
+    return (f'<Surface name={quoteattr(surface.name)}{desc}><Definition surfType="TIN"><Pnts>{points}</Pnts>'
+            f"<Faces>{faces}</Faces></Definition></Surface>")
+
+
+def feature_line_xml(line, northing_first=True):
+    """A PlanFeature of 3D <Line> segments with Feature code="FeatureLine" (as Civil 3D exports and imports them)."""
+    def p3(point):
+        return f"{_pt(point[:2], northing_first)} {_fmt(point[2])}"
+    segments = "".join(f"<Line><Start>{p3(a)}</Start><End>{p3(b)}</End></Line>" for a, b in zip(line.points, line.points[1:]))
+    desc = f" desc={quoteattr(line.desc)}" if line.desc else ""
+    return (f"<PlanFeature name={quoteattr(line.name)}{desc}><CoordGeom>{segments}</CoordGeom>"
+            '<Feature code="FeatureLine"/></PlanFeature>')
+
+
+def landxml_text(alignments, linear_unit="meter", epsg=None, northing_first=True, project="", group="Alignments",
+                 surfaces=(), feature_lines=(), vertical_unit=None,
+                 application=APPLICATION):
+    """The LandXML document for [(HorizontalAlignment, [VerticalProfile, ...]), ...], TIN ``surfaces`` and
+    ``feature_lines`` as text."""
     if linear_unit not in UNITS:
         raise ValueError(f"Linear unit must be one of {', '.join(UNITS)}.")
     system, linear, area, volume = UNITS[linear_unit]
+    elevation = ""
+    if vertical_unit is not None:                      # only when the caller knows it; never assumed
+        if vertical_unit not in UNITS or UNITS[vertical_unit][0] != system:
+            raise ValueError(f"Elevation unit must be one of the {system} units: "
+                             f"{', '.join(k for k, v in UNITS.items() if v[0] == system)}.")
+        elevation = f' elevationUnit="{UNITS[vertical_unit][1]}"'
     now = datetime.now()
     head = (f'<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" version="1.2" date="{now:%Y-%m-%d}" time="{now:%H:%M:%S}">'
-            f'<Units><{system} linearUnit="{linear}" areaUnit="{area}" volumeUnit="{volume}" angularUnit="decimal degrees" '
+            f'<Units><{system} linearUnit="{linear}"{elevation} areaUnit="{area}" volumeUnit="{volume}" '
+            f'angularUnit="decimal degrees" '
             f'directionUnit="decimal degrees"/></Units>')
     if epsg is not None:
         head += f'<CoordinateSystem epsgCode="{int(epsg)}"/>'
+    if application:
+        head += f'<Application name={quoteattr(application)} manufacturer="QGIS plugin"/>'
     if project:
         head += f"<Project name={quoteattr(project)}/>"
     head += '<Application name="LandXML Road &amp; Terrain GIS Tools" desc="LandXML writer"/>'
+    if surfaces:
+        names = [surface.name for surface in surfaces]
+        if len(set(names)) != len(names):
+            raise ValueError("Two surfaces have the same name.")
+        head += "<Surfaces>" + "".join(surface_xml(surface, northing_first) for surface in surfaces) + "</Surfaces>"
     body = []
     names = set()
     for alignment, profiles in alignments:
@@ -294,12 +460,19 @@ def landxml_text(alignments, linear_unit="meter", epsg=None, northing_first=True
         if profiles:
             end = alignment.start_station + alignment.length
             for profile in profiles:
-                if profile.pvis[0][0] < alignment.start_station - TOLERANCE or profile.pvis[-1][0] > end + TOLERANCE:
+                ends = profile.points if isinstance(profile, GroundProfile) else profile.pvis
+                if ends[0][0] < alignment.start_station - TOLERANCE or ends[-1][0] > end + TOLERANCE:
                     raise ValueError(f"Profile '{profile.name}' runs beyond alignment '{alignment.name}' "
                                      f"({_fmt(alignment.start_station)} to {_fmt(end)}).")
             text += f"<Profile name={quoteattr(alignment.name)}>" + "".join(prof_align(p) for p in profiles) + "</Profile>"
         body.append(text + "</Alignment>")
-    return head + f"<Alignments name={quoteattr(group)}>" + "".join(body) + "</Alignments></LandXML>\n"
+    text = head + (f"<Alignments name={quoteattr(group)}>" + "".join(body) + "</Alignments>" if body else "")
+    for line in feature_lines:
+        if len(line.points) < 2:
+            raise ValueError(f"Feature line '{line.name}' needs at least two points.")
+    if feature_lines:
+        text += '<PlanFeatures name="Feature lines">' + "".join(feature_line_xml(line, northing_first) for line in feature_lines) + "</PlanFeatures>"
+    return text + "</LandXML>\n"
 
 
 def write_landxml(path, alignments, **options):
@@ -309,5 +482,6 @@ def write_landxml(path, alignments, **options):
     return path
 
 
-__all__ = ["RIGHT", "LEFT", "Line", "Curve", "Spiral", "HorizontalAlignment", "VerticalProfile", "coord_geom",
+__all__ = ["RIGHT", "LEFT", "Line", "Curve", "Spiral", "PICurve", "Surface", "FeatureLine", "HorizontalAlignment",
+           "VerticalProfile", "alignment_from_pis", "spiral_shift", "surface_xml", "feature_line_xml", "coord_geom",
            "prof_align", "landxml_text", "write_landxml"]

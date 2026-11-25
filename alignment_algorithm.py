@@ -76,10 +76,10 @@ class LandXMLAlignmentsAlgorithm(StyledAlgorithm, ProjectSettingsAlgorithm):
         return "Extract LandXML Alignments to Lines"
 
     def group(self):
-        return "3. Vector extraction"
+        return "2. Road design extraction"
 
     def groupId(self):
-        return "vector_extraction"
+        return "road_design_extraction"
 
     def shortHelpString(self):
         return (

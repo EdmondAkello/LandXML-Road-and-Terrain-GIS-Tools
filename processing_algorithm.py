@@ -68,7 +68,7 @@ class LandXMLTinToGeoTIFFAlgorithm(ProjectSettingsAlgorithm):
         return self.tr("LandXML TIN to GeoTIFF")
 
     def group(self):
-        return self.tr("4. Terrain conversion")
+        return self.tr("3. Terrain conversion")
 
     def groupId(self):
         return "terrain_conversion"

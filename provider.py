@@ -20,6 +20,8 @@ from .grading_algorithm import (
     PlatformLevelsAlgorithm,
     RevisionComparisonAlgorithm,
 )
+from .dem_tin_algorithm import DemToTinAlgorithm
+from .design_shapes_algorithm import DesignShapesAlgorithm
 from .inspect_algorithm import InspectLandXMLAlgorithm
 from .scene_algorithm import Scene3DAlgorithm
 from .site_tools_algorithm import EdgeAnalysisAlgorithm, ExportSceneAlgorithm, GradingReportAlgorithm, SurfaceStyleAlgorithm
@@ -87,3 +89,5 @@ class LandXMLTinToGeoTIFFProvider(QgsProcessingProvider):
         self.addAlgorithm(CrossSectionSheetsAlgorithm())
         self.addAlgorithm(DesignReportAlgorithm())
         self.addAlgorithm(DesignReviewAlgorithm())
+        self.addAlgorithm(DesignShapesAlgorithm())
+        self.addAlgorithm(DemToTinAlgorithm())

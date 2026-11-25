@@ -1,4 +1,4 @@
-"""Export 3D Scene and Viewer: any LandXML surfaces, DEM rasters, contours and linework in an area."""
+"""Export 3D Scene and Viewer (Roads and Terrain): any LandXML surfaces, DEM rasters, contours and linework in an area."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ from .processing_common import coordinate_choices
 from .project_settings import ProjectSettingsAlgorithm
 from .road_features import _alignment_parts, _param_coordinates, centerlines_3d, merge_parts
 
-GROUP = "8. Reports and sheets"
+GROUP = "7. Reports and sheets"
 AUTO_MARGIN = 20.0       # surrounding terrain beyond a generated road's batter search (output units)
 AUTO_CORRIDOR = 60.0     # Auto width either side of a scene-area alignment that is not a generated road
 DEFAULT_VIEWS = "sw: -0.6, -0.8, 0.55; se: 0.8, -0.5, 0.6"
@@ -289,7 +289,7 @@ class Scene3DAlgorithm(ProjectSettingsAlgorithm):
         return "landxml_3d_scene"
 
     def displayName(self):
-        return "Export 3D Scene and Viewer"
+        return "Export 3D Scene and Viewer (Roads and Terrain)"
 
     def group(self):
         return GROUP

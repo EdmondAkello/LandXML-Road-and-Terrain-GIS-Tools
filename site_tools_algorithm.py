@@ -417,13 +417,18 @@ class ExportSceneAlgorithm(ProjectSettingsAlgorithm):
         return {"OUTPUT_FOLDER": os.path.dirname(scene), "SCENE": scene, "VIEWER": viewer}
 
 
-def _classes(ss, xyz, faces, resolved, depth, vertical_factor):
-    """(regions, areas): exact bands for elevation and depth, merged triangle classes for slope and aspect."""
+def _classes(ss, xyz, faces, resolved, depth, vertical_factor, exact=True):
+    """(regions, areas): exact bands for elevation and depth, merged triangle classes for slope and aspect. Areas are
+    always exact; ``exact=False`` draws elevation and depth bands from whole triangles (for maps, where a triangle is
+    about a pixel) instead of cutting them at the breaks."""
     count = len(resolved["classes"])
     if ss.is_linear(resolved["attribute"]):
         values = xyz[:, 2] if resolved["attribute"] == "elevation" else depth
-        pieces = ss.band_pieces(xyz, faces, values, resolved)
-        return pieces, ss.piece_areas(pieces, count)
+        areas = ss.band_areas(xyz, faces, values, resolved)
+        if not exact:
+            index = ss.classify(np.asarray(values, float)[faces].mean(axis=1), resolved)
+            return ss.class_regions(xyz, faces, index, count), areas
+        return ss.band_pieces(xyz, faces, values, resolved, merge=True), areas
     index = ss.classify(ss.triangle_values(xyz, faces, resolved["attribute"], depth, vertical_factor), resolved)
     return ss.class_regions(xyz, faces, index, count), ss.class_areas(xyz, faces, index, count)
 
@@ -432,10 +437,11 @@ def _class_geometry(polygons):
     def ring(points):
         return [QgsPointXY(float(x), float(y)) for x, y in points[:, :2]] + [QgsPointXY(float(points[0][0]), float(points[0][1]))]
 
-    if polygons and isinstance(polygons[0], tuple):
+    if polygons and all(isinstance(item, tuple) for item in polygons):
         return QgsGeometry.fromMultiPolygonXY([[ring(r) for r in [outer, *holes]] for outer, holes in polygons])
-    merged = QgsGeometry.unaryUnion([QgsGeometry.fromPolygonXY([ring(piece)]) for piece in polygons])
-    return merged
+    parts = [QgsGeometry.fromPolygonXY([ring(item[0])] + [ring(h) for h in item[1]]) if isinstance(item, tuple)
+             else QgsGeometry.fromPolygonXY([ring(item)]) for item in polygons]
+    return QgsGeometry.unaryUnion(parts)
 
 
 def _class_fields():
@@ -663,7 +669,7 @@ class GradingReportAlgorithm(ProjectSettingsAlgorithm):
                 resolved = ss.resolve(style, values, units.depth)
             except ValueError as exc:
                 raise QgsProcessingException(str(exc)) from exc
-            regions, areas = _classes(ss, xyz, faces, resolved, depth, vertical_factor)
+            regions, areas = _classes(ss, xyz, faces, resolved, depth, vertical_factor, exact=False)
             titles = {"depth": "Cut and fill depth", "slope": "Slope classes", "elevation": "Design levels", "aspect": "Aspect"}
             body += [f"<h2>{titles[style['attribute']]}</h2>",
                      ss.plan_svg([(regions, resolved)], legend=resolved, lines=[(line, "#222", 1.2) for line in daylight],

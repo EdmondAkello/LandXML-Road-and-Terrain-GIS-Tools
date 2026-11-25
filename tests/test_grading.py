@@ -519,6 +519,15 @@ class DepthFromTwoSurfacesTests(unittest.TestCase):
         self.assertAlmostEqual(swapped["cut_volume"], summary["fill_volume"], places=6)
         self.assertAlmostEqual(swapped["fill_volume"], summary["cut_volume"], places=6)
 
+    def test_the_same_triangles_take_the_vertex_shortcut_with_the_same_result(self):
+        existing = grid_tin(25, lambda x, y: 5 + 0.8 * np.cos(y / 7), jitter=0.5, seed=3)
+        design = (np.c_[existing[0][:, :2], 5 + np.sin(existing[0][:, 0] / 9)], existing[1])
+        fast = volume_summary(*depth_tin(design, existing)[:2], ())
+        shuffled = (existing[0], existing[1][::-1].copy())             # same surface, other face order: full overlay
+        full = volume_summary(*depth_tin(design, shuffled)[:2], ())
+        for key in ("cut_volume", "fill_volume", "plan_area"):
+            self.assertAlmostEqual(fast[key], full[key], places=6)
+
     def test_partial_overlap_and_no_overlap(self):
         design = grid_tin(4, lambda x, y: 0 * x + 1.0)
         existing = (grid_tin(4, lambda x, y: 0 * x)[0] + [50.0, 0.0, 0.0], grid_tin(4, lambda x, y: 0 * x)[1])
@@ -711,6 +720,18 @@ class BandPieceTests(unittest.TestCase):
         resolved = ss.resolve(ss.parse_style("elevation: 2.5, 5"))
         pieces = ss.band_pieces(xyz, faces, xyz[:, 2], resolved)
         self.assertTrue(np.allclose(ss.piece_areas(pieces, 3), [25.0, 25.0, 50.0]))
+        self.assertTrue(np.allclose(ss.band_areas(xyz, faces, xyz[:, 2], resolved), [25.0, 25.0, 50.0]))
+        r, c = np.mgrid[0:11, 0:11].astype(float)                 # a finer plane: most triangles lie in one class
+        grid = np.column_stack([c.ravel(), r.ravel(), c.ravel()])
+        index = np.arange(121).reshape(11, 11)
+        a, b, d, e = index[:-1, :-1].ravel(), index[:-1, 1:].ravel(), index[1:, :-1].ravel(), index[1:, 1:].ravel()
+        fine = np.concatenate([np.column_stack([a, b, e]), np.column_stack([a, e, d])])
+        self.assertTrue(np.allclose(ss.band_areas(grid, fine, grid[:, 2], resolved), [25.0, 25.0, 50.0]))
+        merged = ss.band_pieces(grid, fine, grid[:, 2], resolved, merge=True)
+        self.assertEqual(sum(isinstance(item, tuple) for item in merged[2]), 1)   # x 5–10: one merged outline
+        outer, holes = next(item for item in merged[2] if isinstance(item, tuple))
+        x, y = outer[:, 0], outer[:, 1]
+        self.assertAlmostEqual(0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y)), 50.0)
         svg = ss.plan_svg([(pieces, resolved)], legend=resolved)
         self.assertIn("stroke-width='0.4'", svg)
 

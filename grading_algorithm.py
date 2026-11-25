@@ -29,6 +29,7 @@ from qgis.core import (
     QgsGeometry,
     QgsPointXY,
     QgsProcessing,
+    QgsProject,
     QgsProcessingException,
     QgsProcessingOutputNumber,
     QgsProcessingOutputString,
@@ -105,7 +106,7 @@ def _optional_number(parameters, name):
 
 
 # Site grading has its own group, apart from road corridors.
-GROUP = "9. Site grading (land development)"
+GROUP = "8. Site grading (land development)"
 GROUP_ID = "site_grading"
 
 
@@ -613,13 +614,19 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
             "Leave the rim blank to use the spill level: the lowest point on the surface's outer edge, where "
             "water would overflow. A rim above the spill level is flagged. With a required volume the tool checks "
             "the storage with freeboard (rim minus freeboard) and reports PASS, PASS TO RIM ONLY (enough only "
-            "when filled to the rim), FAIL or NOT CHECKED. Enter the required volume in the reported units."
+            "when filled to the rim), FAIL or NOT CHECKED. Enter the required volume in the reported units.\n\n"
+            "When the surface covers more than the basin (a whole site's design surface), draw a <b>basin area</b> "
+            "polygon around the pond, a little beyond its top of bank: only the triangles inside it are used, and the "
+            "spill level is the lowest point on the area's edge."
             + QUANTITY_HELP + FEATURE_LINES_HELP
         )
 
     def initAlgorithm(self, config=None):
         _input_param(self)
         self.addParameter(name_param("BASIN_SURFACE", "Basin (pond) surface", "surfaces"))
+        self.addParameter(QgsProcessingParameterFeatureSource(
+            "BASIN_AREA", "Basin area (optional: polygons around the pond, when the surface covers more)",
+            [QgsProcessing.SourceType.TypeVectorPolygon], optional=True))
         self.addParameter(
             QgsProcessingParameterNumber("RIM_LEVEL", "Rim level (source vertical units; blank = spill level)",
                                          type=QgsProcessingParameterNumber.Type.Double, optional=True)
@@ -670,9 +677,34 @@ class BasinStorageAlgorithm(ProjectSettingsAlgorithm):
         if meta["invisible_face_count"]:
             fb.pushInfo(f"{surface}: skipped {meta['invisible_face_count']:,} hidden triangles.")
         required = _optional_number(p, "REQUIRED_VOLUME")
+        xyz = transform_vertices(xyz, method=method, **params)
+        area = self.parameterAsSource(p, "BASIN_AREA", c) if p.get("BASIN_AREA") else None
+        if area is not None:
+            from .landxml.grading import _inside_many
+            transform = QgsCoordinateTransform(area.sourceCrs(), crs, QgsProject.instance())
+            centroids = xyz[faces, :2].mean(axis=1)
+            keep = np.zeros(len(faces), bool)
+            for feature in area.getFeatures():
+                geometry = feature.geometry()
+                if geometry.isEmpty():
+                    continue
+                geometry.transform(transform)
+                for part in geometry.constParts():
+                    ring = np.array([[v.x(), v.y()] for v in part.exteriorRing()], float)
+                    keep |= _inside_many(centroids, ring)
+            if not keep.any():
+                raise QgsProcessingException("The basin area does not overlap the basin surface.")
+            fb.pushInfo(f"Basin area: {int(keep.sum()):,} of {len(faces):,} triangles inside.")
+            faces = faces[keep]
+        if _optional_number(p, "RIM_LEVEL") is None and area is None:
+            from .landxml.grading import spill_level
+            if spill_level(xyz, faces) <= float(xyz[np.unique(faces), 2].min()) + 1e-9:
+                raise QgsProcessingException(
+                    f"The lowest point of '{surface}' is on its edge, so the surface holds no water there. If the "
+                    "surface covers more than the basin, draw a basin area around the pond; otherwise give the rim level.")
         try:
             summary = stage_storage(
-                transform_vertices(xyz, method=method, **params), faces, _optional_number(p, "RIM_LEVEL"),
+                xyz, faces, _optional_number(p, "RIM_LEVEL"),
                 self.parameterAsDouble(p, "FREEBOARD", c), self.parameterAsDouble(p, "STAGE_STEP", c),
                 None if required is None else required / units.volume_factor,
             )

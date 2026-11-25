@@ -7,6 +7,7 @@ or reprojected with a source/target CRS using GDAL/OSR.
 
 from __future__ import annotations
 
+import os
 import math
 import warnings
 
@@ -404,9 +405,21 @@ def write_geotiff(
         "BIGTIFF=IF_SAFER",
     ]
     drv = gdal.GetDriverByName("GTiff")
-    ds = drv.Create(path, cols, rows, 1, gdal.GDT_Float32, options=options)
+    if os.path.isfile(path):
+        # remove an earlier output first: GDAL opens an existing file to delete it, which fails on a broken one
+        # (from a run that was cancelled or crashed while writing)
+        try:
+            os.remove(path)
+        except OSError:
+            pass                                    # in use: Create reports it below
+    try:
+        ds = drv.Create(path, cols, rows, 1, gdal.GDT_Float32, options=options)
+    except RuntimeError as error:                   # GDAL with exceptions on
+        raise IOError(f"Could not write the GeoTIFF {path} ({error}). If it is open in QGIS or another program, "
+                      "remove it there or choose another file name.") from error
     if ds is None:
-        raise IOError(f"Could not create output GeoTIFF: {path}")
+        raise IOError(f"Could not write the GeoTIFF {path}. If it is open in QGIS or another program, remove it there "
+                      "or choose another file name.")
     ds.SetGeoTransform((xmin, resolution, 0.0, ymax, 0.0, -resolution))
     projection = wkt or _crs_from_epsg(epsg)
     if projection:
