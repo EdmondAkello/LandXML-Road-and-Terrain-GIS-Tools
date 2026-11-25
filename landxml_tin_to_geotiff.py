@@ -20,6 +20,8 @@ class LandXMLTinToGeoTIFFPlugin:
         self.provider = None
         self.viewer = None
         self.locator = None
+        self.section_editor = None
+        self.plan_editor = None
         self.actions = []
 
     def initGui(self):
@@ -39,14 +41,24 @@ class LandXMLTinToGeoTIFFPlugin:
         guide_action = QAction(icon, "User Guide", self.iface.mainWindow())
         guide_action.setToolTip("Open the user guide (installed with the plugin; works offline)")
         guide_action.triggered.connect(self.show_guide)
+        editor_action = QAction(icon, "Corridor Section Editor", self.iface.mainWindow())
+        editor_action.setToolTip("Design the road cross-section on the real ground (lanes, shoulders, kerbs, footways, "
+                                 "drains, medians, daylight) and build the corridor to LandXML with quantities")
+        editor_action.triggered.connect(self.show_section_editor)
+        plan_action = QAction(icon, "Plan Editor (Horizontal Alignment)", self.iface.mainWindow())
+        plan_action.setToolTip("Design a horizontal alignment on the map by its intersection points, with live curve "
+                               "fitting, and save it to LandXML")
+        plan_action.triggered.connect(self.show_plan_editor)
         locator_action = QAction(icon, "Station && Offset Locator", self.iface.mainWindow())
         locator_action.setToolTip("Locate map clicks or entered station/offset positions along a LandXML alignment")
         locator_action.triggered.connect(self.show_locator)
-        for action in (viewer_action, pick_action, locator_action, guide_action):
+        for action in (viewer_action, pick_action, plan_action, editor_action, locator_action, guide_action):
             self.iface.addPluginToMenu(MENU, action)
             self.actions.append(action)
         self.iface.addToolBarIcon(viewer_action)
         self.iface.addToolBarIcon(pick_action)
+        self.iface.addToolBarIcon(plan_action)
+        self.iface.addToolBarIcon(editor_action)
         self._welcome_once()
 
     def _welcome_once(self):
@@ -83,6 +95,7 @@ class LandXMLTinToGeoTIFFPlugin:
             from .gui.profile_viewer import ProfileViewerDock
 
             self.viewer = ProfileViewerDock(self.iface, self.iface.mainWindow())
+            self.viewer.design_panel.saved.connect(self._profile_saved)
             self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.viewer)
         self.viewer.show()
         self.viewer.raise_()
@@ -98,6 +111,34 @@ class LandXMLTinToGeoTIFFPlugin:
         from .project_settings import open_guide
 
         open_guide()
+
+    def show_section_editor(self):
+        if self.section_editor is None:
+            from .gui.section_editor import SectionEditorDock
+
+            self.section_editor = SectionEditorDock(self.iface, self.iface.mainWindow())
+            self.section_editor.built.connect(lambda path, alignment: self._ensure_viewer().load(path, alignment))
+            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.section_editor)
+        self.section_editor.show()
+        self.section_editor.raise_()
+        return self.section_editor
+
+    def _profile_saved(self, path, alignment, profile):
+        """A design profile saved in the Profile Viewer goes on into an open Section Editor on that alignment."""
+        if self.section_editor is not None and not sip.isdeleted(self.section_editor):
+            self.section_editor.adopt_profile(path, alignment, profile)
+
+    def show_plan_editor(self):
+        if self.plan_editor is None:
+            from .gui.plan_editor import PlanEditorDock
+
+            self.plan_editor = PlanEditorDock(self.iface, self.iface.mainWindow())
+            self.plan_editor.saved.connect(lambda path, name: self._ensure_viewer().load(path, name))
+            self.plan_editor.to_section_editor.connect(lambda path, _name: self.show_section_editor().set_file(path))
+            self.iface.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.plan_editor)
+        self.plan_editor.show()
+        self.plan_editor.raise_()
+        return self.plan_editor
 
     def show_locator(self):
         if self.locator is None:
@@ -120,6 +161,20 @@ class LandXMLTinToGeoTIFFPlugin:
                 self.iface.removeDockWidget(self.locator)
                 self.locator.deleteLater()
             self.locator = None
+        if self.plan_editor is not None:
+            if not sip.isdeleted(self.plan_editor):
+                self.plan_editor.cleanup()
+                if self.iface is not None:
+                    self.iface.removeDockWidget(self.plan_editor)
+                self.plan_editor.deleteLater()
+            self.plan_editor = None
+        if self.section_editor is not None:
+            if not sip.isdeleted(self.section_editor):
+                self.section_editor.cleanup()
+                if self.iface is not None:
+                    self.iface.removeDockWidget(self.section_editor)
+                self.section_editor.deleteLater()
+            self.section_editor = None
         if self.viewer is not None:
             if not sip.isdeleted(self.viewer):
                 self.viewer.cleanup()

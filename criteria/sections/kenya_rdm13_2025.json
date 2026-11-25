@@ -1,0 +1,752 @@
+{
+ "id": "kenya_rdm13_2025_sections",
+ "name": "Kenya RDM 1.3 (2025) - Cross-section elements",
+ "source": "Republic of Kenya, Road Design Manual Volume 1: Geometric Design, Part 3: Geometric Design of Highways, Rural Roads and Urban Roads (2025), Chapter 4 Cross Section, S5.9-S5.10 and S12.9; Volume 2 Part 2 Drainage Design (2025) for drains.",
+ "units": "metric",
+ "review_criteria": "kenya_rdm13_2025",
+ "advisory": "Values are defaults and advisory checks only. Any value can be used; a value outside a range is reported as a departure (RDM 1.3 S1 departures from standards), never blocked.",
+ "references": {
+  "lane_width": "Table 4.1",
+  "auxiliary_lane": "S4.3.3",
+  "lane_crossfall": "S4.3.4",
+  "shoulder_width": "Table 4.2",
+  "shoulder_crossfall": "S4.4.3, Table 4.3",
+  "walkway": "S4.5.4, Table 4.4, S4.5.5",
+  "walkway_crossfall": "S4.5.6",
+  "cycle": "S4.6.3, Table 4.6, S4.6.7",
+  "median": "S4.8.3, Table 4.10",
+  "median_slope": "Table 4.11",
+  "widening": "S4.16.1, Table 4.15 and notes i-viii",
+  "fill_widening": "Table 4.15 (fill widening), S4.16.2",
+  "vrs_setback": "Table 4.17",
+  "slopes": "S4.17, Table 4.19, Table 4.20",
+  "side_ditch": "S4.18, Figure 4.15, Table 4.21",
+  "cut_slope_by_height": "Figure 4.15 (table of cut slope against height of cut)",
+  "kerbs": "S12.9.1, S12.9.3",
+  "superelevation": "S5.9.2-S5.9.4, Table 5.7, S5.10; rates from the design review criteria (Tables 5.9-5.11)",
+  "templates": "S4.20, Table 4.23, Table 4.24",
+  "drains": "RDM 2.2 S6 (catch-water drains, mitre drains), S7.4.5.2 (150 mm freeboard)"
+ },
+ "limits": {
+  "lane.width": {
+   "min": 3.0,
+   "max": 3.75,
+   "ref": "Table 4.1",
+   "note": "3.65 m classes A, B; 3.50 m C, D; 3.25-3.50 m E; 3.00-3.50 m local roads; 3.75 m UA, UC; 3.00-3.50 m UL."
+  },
+  "lane.crossfall": {
+   "min": 2.5,
+   "ref": "S4.3.4",
+   "note": "Bituminous rural roads 2.5 % minimum; gravel 4 %; earth 5 %."
+  },
+  "lane.crossfall@gravel": {
+   "min": 4.0,
+   "ref": "S4.3.4"
+  },
+  "lane.crossfall@earth": {
+   "min": 5.0,
+   "ref": "S4.3.4"
+  },
+  "auxiliary_lane.width": {
+   "min": 3.0,
+   "ref": "S4.3.3"
+  },
+  "shoulder.width": {
+   "min": 1.0,
+   "max": 2.7,
+   "ref": "Table 4.2",
+   "note": "2.7 m A, B; 2.0 m C; 1.5 m D; 1.0 m E and local; 1.0-1.5 m urban."
+  },
+  "shoulder.crossfall": {
+   "min": 4.0,
+   "max": 4.0,
+   "ref": "S4.4.3, Table 4.3",
+   "note": "4 % recommended; a sealed full-depth shoulder may follow the pavement with Chief Engineer approval; on superelevated sections both shoulders keep 4 %."
+  },
+  "sidewalk.width": {
+   "min": 1.5,
+   "ref": "Table 4.4",
+   "note": "1.5 m general low volume; 3.0 m or more for high pedestrian volumes; add 0.6 m when immediately next to the kerb (S4.5.1)."
+  },
+  "sidewalk.crossfall": {
+   "min": 0.0,
+   "max": 2.5,
+   "ref": "S4.5.6",
+   "note": "Up to 5 % across accesses and driveways."
+  },
+  "cycle_track.width": {
+   "min": 1.2,
+   "ref": "Table 4.6",
+   "note": "2.0 m or more for high cyclist volumes."
+  },
+  "cycle_track.crossfall": {
+   "min": 2.5,
+   "ref": "S4.6.7",
+   "note": "4 % on unsealed surfaces."
+  },
+  "median.width@raised": {
+   "min": 2.5,
+   "ref": "Table 4.10",
+   "note": "2.5 m for a two-stage pedestrian refuge; 6.0 m for vehicle storage at crossings; 20 m recovery area."
+  },
+  "median.width@flush": {
+   "min": 1.0,
+   "ref": "Table 4.10, Table 4.9",
+   "note": "Non-restrictive: minimum 1 m (0.75 m at low flows and speeds)."
+  },
+  "median.slope@depressed": {
+   "min": 10.0,
+   "max": 16.7,
+   "ref": "Table 4.11",
+   "note": "1:10 to 1:6."
+  },
+  "median.slope@raised": {
+   "min": 2.5,
+   "max": 16.7,
+   "ref": "Table 4.11",
+   "note": "1:40 to 1:6."
+  },
+  "kerb.height@barrier": {
+   "min": 0.125,
+   "max": 0.15,
+   "ref": "S12.9.3.1",
+   "note": "Barrier kerbs should not normally be used above 70 km/h."
+  },
+  "kerb.height@mountable": {
+   "max": 0.1,
+   "ref": "S12.9.3.3",
+   "note": "300 mm wide strip rising 100 mm."
+  },
+  "kerb.speed@barrier": {
+   "max": 70,
+   "ref": "S12.9.3.1"
+  },
+  "fill.slope": {
+   "min": 4.0,
+   "ref": "S4.17, Table 4.19",
+   "note": "1:4 or flatter is recoverable; 1:3-1:4 non-recoverable; steeper than 1:3 critical (consider a restraint system). Ratios here are horizontal per 1 vertical."
+  },
+  "cut.backslope": {
+   "min": 3.0,
+   "ref": "Table 4.19",
+   "note": "Back slopes of 1:3 or flatter recommended within the clear zone."
+  },
+  "side_drain.depth": {
+   "min": 0.4,
+   "ref": "Figure 4.15",
+   "note": "0.40 m minimum below formation for types A1-B3."
+  },
+  "side_drain.freeboard": {
+   "min": 0.15,
+   "ref": "RDM 2.2 S7.4.5.2"
+  },
+  "barrier.setback": {
+   "min": 0.6,
+   "ref": "Table 4.17",
+   "note": "1.2 m verges without a sealed shoulder and medians; 0.6 m with a sealed shoulder; 0.6 m at 80 km/h and below."
+  }
+ },
+ "slope_bands": {
+  "ref": "Table 4.20 (heights of slope in m; ratios horizontal per 1 vertical)",
+  "earth": {
+   "fill": [
+    [
+     1.0,
+     4.0
+    ],
+    [
+     2.0,
+     3.0
+    ],
+    [
+     null,
+     1.5
+    ]
+   ],
+   "cut": [
+    [
+     1.0,
+     3.0
+    ],
+    [
+     2.0,
+     2.0
+    ],
+    [
+     null,
+     1.5
+    ]
+   ]
+  },
+  "laterite": {
+   "fill": [
+    [
+     1.0,
+     3.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     null,
+     1.5
+    ]
+   ],
+   "cut": [
+    [
+     1.0,
+     2.0
+    ],
+    [
+     3.0,
+     1.5
+    ],
+    [
+     null,
+     1.0
+    ]
+   ]
+  },
+  "decomposed_rock": {
+   "fill": [
+    [
+     1.0,
+     3.0
+    ],
+    [
+     2.0,
+     2.0
+    ],
+    [
+     null,
+     1.5
+    ]
+   ],
+   "cut": [
+    [
+     1.0,
+     3.0
+    ],
+    [
+     2.0,
+     2.0
+    ],
+    [
+     null,
+     1.5
+    ]
+   ]
+  },
+  "black_cotton": {
+   "fill": [
+    [
+     2.0,
+     6.0
+    ],
+    [
+     null,
+     4.0
+    ]
+   ]
+  },
+  "cut_by_height_fig_4_15": {
+   "cut": [
+    [
+     1.0,
+     3.0
+    ],
+    [
+     3.0,
+     2.0
+    ],
+    [
+     null,
+     1.5
+    ]
+   ],
+   "ref": "Figure 4.15 (earth; 1:2 where earth is not stable at 1:1.5; rock 1:0.33 to 1:0.10)"
+  }
+ },
+ "side_drains": {
+  "ref": "Figure 4.15, Table 4.21",
+  "A1": {
+   "shape": "v",
+   "foreslope": 2.0,
+   "depth": 0.4,
+   "bottom": 0.0,
+   "use": "Hilly to mountainous terrain with heavy earthwork."
+  },
+  "A2": {
+   "shape": "v",
+   "foreslope": 4.0,
+   "depth": 0.4,
+   "bottom": 0.0,
+   "use": "Rolling terrain with moderate earthwork; flatter than A1 for capacity or velocity."
+  },
+  "B1": {
+   "shape": "trapezoidal",
+   "foreslope": 2.0,
+   "depth": 0.4,
+   "bottom": 1.0,
+   "use": "Hilly terrain where a flatter ditch than A1 is needed."
+  },
+  "B2": {
+   "shape": "trapezoidal",
+   "foreslope": 4.0,
+   "depth": 0.4,
+   "bottom": 1.0,
+   "use": "Rolling terrain where a flatter ditch than A2 is needed."
+  },
+  "B3": {
+   "shape": "trapezoidal",
+   "foreslope": 4.0,
+   "depth": 0.4,
+   "bottom": 2.5,
+   "use": "Flat terrain with little earthwork."
+  },
+  "cutoff_1": {
+   "shape": "v",
+   "foreslope": 2.0,
+   "depth": 0.6,
+   "bottom": 0.0,
+   "backslope": 2.0,
+   "use": "Cut-off ditch type 1 (Figure 4.15)."
+  },
+  "cutoff_2": {
+   "shape": "trapezoidal",
+   "foreslope": 2.0,
+   "depth": 0.6,
+   "bottom": 2.5,
+   "backslope": 2.0,
+   "use": "Cut-off ditch type 2: large catchments, silting (Table 4.22)."
+  }
+ },
+ "cutoff_offset": {
+  "ref": "Figure 4.15",
+  "rows": [
+   [
+    1.0,
+    1.0
+   ],
+   [
+    3.0,
+    4.0
+   ],
+   [
+    null,
+    5.0
+   ]
+  ],
+  "note": "Distance d from the edge of cutting to the cut-off ditch against height of cut."
+ },
+ "widening": {
+  "ref": "Table 4.15",
+  "two_lanes": [
+   [
+    20,
+    1.5
+   ],
+   [
+    40,
+    1.2
+   ],
+   [
+    60,
+    0.9
+   ],
+   [
+    120,
+    0.6
+   ],
+   [
+    250,
+    0.0
+   ]
+  ],
+  "single_lane": [
+   [
+    20,
+    0.6
+   ],
+   [
+    60,
+    0.0
+   ]
+  ],
+  "rule": "Rows are [lowest radius, widening]: R >= 250 none; 120-250: 0.6; 60-120: 0.9; 40-60: 1.2; 20-40: 1.5 (two lanes). Below 20 m see S5.12 (hairpins).",
+  "placement": "inside",
+  "placement_ref": "Table 4.15 note viii (inside of the curve)",
+  "development": "runoff",
+  "development_ref": "Table 4.15 notes i, vi, vii (from the start of the transition, or over the runoff preceding the curve, to full width at the start of the circular curve)",
+  "fill": [
+   [
+    3.0,
+    0.0
+   ],
+   [
+    6.0,
+    0.3
+   ],
+   [
+    9.0,
+    0.6
+   ],
+   [
+    null,
+    0.9
+   ]
+  ],
+  "fill_ref": "Table 4.15 fill widening, height measured from shoulder edge to toe; classes A to C",
+  "mode": "bands"
+ },
+ "superelevation": {
+  "normal_crown": 2.5,
+  "rotation": "centreline",
+  "rotation_ref": "S5.9.2 (two-lane: centreline; dual carriageways often about the median edge)",
+  "runoff_on_tangent": 0.5,
+  "runoff_on_tangent_ref": "S5.10: without transitions half the runoff on the straight; with a transition the runoff takes place within it",
+  "runout_rate": "same as runoff",
+  "runout_ref": "S5.9.3",
+  "shoulder_rule": "own",
+  "shoulder_rule_ref": "S4.4.3: on superelevated sections both shoulders keep 4 %",
+  "shoulder_crossfall": 4.0
+ },
+ "buildups": {
+  "Carriageway": {
+   "ref": "Example only - enter the pavement design (RDM 3.4)",
+   "courses": [
+    {
+     "name": "Asphalt concrete wearing course",
+     "material": "AC",
+     "thickness": 0.05,
+     "unit": "m2"
+    },
+    {
+     "name": "Dense bitumen macadam base",
+     "material": "DBM",
+     "thickness": 0.1,
+     "unit": "m3"
+    },
+    {
+     "name": "Crushed stone base",
+     "material": "CRR",
+     "thickness": 0.15,
+     "unit": "m3"
+    },
+    {
+     "name": "Cement-improved subbase",
+     "material": "CIS",
+     "thickness": 0.15,
+     "unit": "m3"
+    }
+   ]
+  },
+  "Gravel shoulder": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Gravel wearing course",
+     "material": "G",
+     "thickness": 0.15,
+     "unit": "m3"
+    }
+   ]
+  },
+  "Footway": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Concrete paving blocks",
+     "material": "CPB",
+     "thickness": 0.08,
+     "unit": "m2"
+    },
+    {
+     "name": "Sand bedding",
+     "material": "SAND",
+     "thickness": 0.03,
+     "unit": "m3"
+    },
+    {
+     "name": "Gravel base",
+     "material": "G",
+     "thickness": 0.15,
+     "unit": "m3"
+    }
+   ]
+  },
+  "Median": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Topsoil and grass",
+     "material": "TS",
+     "thickness": 0.15,
+     "unit": "m2"
+    }
+   ]
+  }
+ },
+ "templates": {
+  "R4 single carriageway": {
+   "ref": "Table 4.23 R4: 1 x 3.65 m lane and 2.50 m shoulders each direction",
+   "class": "B, C",
+   "speed": 100,
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.65
+    },
+    {
+     "type": "shoulder",
+     "width": 2.5
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "A2"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "R5 single carriageway": {
+   "ref": "Table 4.23 R5: 1 x 3.50 m lane and 2.00 m shoulders",
+   "class": "C, D",
+   "speed": 80,
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.5
+    },
+    {
+     "type": "shoulder",
+     "width": 2.0
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "A1"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "R6 single carriageway": {
+   "ref": "Table 4.23 R6: 1 x 3.25 m lane and 1.50 m shoulders",
+   "class": "D, E",
+   "speed": 70,
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.25
+    },
+    {
+     "type": "shoulder",
+     "width": 1.5,
+     "buildup": "Gravel shoulder",
+     "paved": false
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "A1"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "R7 single carriageway": {
+   "ref": "Table 4.23 R7: 1 x 3.00 m lane and 1.00 m shoulders",
+   "class": "E, local",
+   "speed": 60,
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.0
+    },
+    {
+     "type": "shoulder",
+     "width": 1.0,
+     "buildup": "Gravel shoulder",
+     "paved": false
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "A1"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "R3 dual carriageway": {
+   "ref": "Table 4.23 R3: 2 x 3.65 m lanes, 2.70 m outer and 1.00 m inner shoulders, 2.00 m median each way",
+   "class": "A, B",
+   "speed": 100,
+   "median": {
+    "type": "median",
+    "kind": "raised",
+    "width": 4.0
+   },
+   "right": [
+    {
+     "type": "shoulder",
+     "width": 1.0,
+     "name": "Inner shoulder"
+    },
+    {
+     "type": "lane",
+     "width": 3.65
+    },
+    {
+     "type": "lane",
+     "width": 3.65
+    },
+    {
+     "type": "shoulder",
+     "width": 2.7
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "B1"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "U5 urban single carriageway": {
+   "ref": "Table 4.24 U5: 1 x 3.50 m lane, 1.50 m shoulder, 2.00 m cycle track, 3.00 m walkway",
+   "class": "UC",
+   "speed": 50,
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.5
+    },
+    {
+     "type": "shoulder",
+     "width": 1.5
+    },
+    {
+     "type": "kerb",
+     "kind": "barrier",
+     "channel": 0.15
+    },
+    {
+     "type": "verge",
+     "width": 0.6,
+     "slope": 2.5
+    },
+    {
+     "type": "cycle_track",
+     "width": 2.0
+    },
+    {
+     "type": "sidewalk",
+     "width": 3.0
+    },
+    {
+     "type": "verge",
+     "width": 0.5
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "U6 urban street": {
+   "ref": "Table 4.24 U6: 1 x 3.65 m lane, 3.50 m parking bay, 3.00 m raised walkway both sides",
+   "class": "UL",
+   "speed": 50,
+   "right": [
+    {
+     "type": "lane",
+     "width": 3.65
+    },
+    {
+     "type": "lane",
+     "width": 3.5,
+     "kind": "parking"
+    },
+    {
+     "type": "kerb",
+     "kind": "barrier",
+     "channel": 0.15
+    },
+    {
+     "type": "sidewalk",
+     "width": 3.0
+    },
+    {
+     "type": "verge",
+     "width": 0.5
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "U4 urban dual carriageway": {
+   "ref": "Table 4.24 U4: 2 x 3.65 m lanes, 1.00 m inner and 2.00 m outer shoulder, 2.00 m median each way, raised walkway and cycle track",
+   "class": "UA",
+   "speed": 80,
+   "median": {
+    "type": "median",
+    "kind": "raised",
+    "width": 4.0,
+    "kerb_height": 0.15
+   },
+   "right": [
+    {
+     "type": "shoulder",
+     "width": 1.0,
+     "name": "Inner shoulder"
+    },
+    {
+     "type": "lane",
+     "width": 3.65
+    },
+    {
+     "type": "lane",
+     "width": 3.65
+    },
+    {
+     "type": "shoulder",
+     "width": 2.0
+    },
+    {
+     "type": "kerb",
+     "kind": "semi_mountable"
+    },
+    {
+     "type": "verge",
+     "width": 1.0
+    },
+    {
+     "type": "cycle_track",
+     "width": 1.5
+    },
+    {
+     "type": "sidewalk",
+     "width": 2.0
+    },
+    {
+     "type": "verge",
+     "width": 0.5
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  }
+ },
+ "unsourced": [
+  "Table 4.20 strong and weathered rock rows: the text layout does not show which value is fill, cut and back slope - confirm before adding.",
+  "Semi-mountable kerb dimensions: only in Figure 12.15 (SABS 927 types); defaults use 0.15 m high with a 1:1 face - confirm.",
+  "Relative gradient (Delta S max) for runoff: only in Figure 5.6; runoff uses Table 5.7, the 2-second rule and the spiral length.",
+  "Build-ups: the course stacks are examples; take the design from RDM 3.4 for the traffic class and subgrade."
+ ]
+}

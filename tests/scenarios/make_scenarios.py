@@ -286,7 +286,8 @@ def build_contour_road(spec, centre, grid, folder, epsg, unit):
                 continue
             fitted = dict(spec, pis=[(x - centre[0], y - centre[1]) for x, y in pis], radius=radius, spiral=spiral,
                           route="pis")
-            out = build_road(fitted, centre, grid, folder, epsg, unit)
+            out = (build_corridor_road if spec.get("kind") == "corridor" else build_road)(fitted, centre, grid, folder,
+                                                                                            epsg, unit)
             out.update(route=f"contour at {level:.1f}, simplified {simplify:g} m, radius {radius:g}")
             return out
     raise ValueError("The contour's PIs leave no room for the curves; raise 'simplify' or lower 'radius'.")
@@ -332,6 +333,7 @@ def build_road(spec, centre, grid, folder, epsg, unit):
     where.append(stations[-1])
     z = [float(levels[np.abs(stations - s) <= spacing / 2].mean()) for s in where]
     z[0], z[-1] = float(levels[0]), float(levels[-1])
+    z = [v + float(spec.get("profile_offset", 0.0)) for v in z]
     limit = float(spec.get("max_grade", 0.08))
     for k in range(1, len(z)):                       # from the start, follow the ground where the grade allows
         run = where[k] - where[k - 1]
@@ -363,6 +365,179 @@ def build_road(spec, centre, grid, folder, epsg, unit):
             "pis": [[round(x, 3), round(y, 3)] for x, y in pis], "profiles": ["Design FRL"], "ground_profiles": ["Existing ground"],
             "surfaces": ["Existing ground", "Corridor"], "max_grade_pct": round(100 * max(grades), 2),
             "corridor_triangles": len(faces), "widest_daylight": round(float(daylight.max()), 1)}
+
+
+def corridor_project(road_xml, alignment, cfg, folder, label="corridor", profile="Design FRL", ground="Existing ground"):
+    """Build a finished corridor with the Corridor Section Editor engine on a road LandXML: a section project from a
+    standard's template (or a given assembly), with element overrides, features and regions; writes the project,
+    the corridor LandXML, the report and the bill of quantities."""
+    from landxml_plugin.landxml import corridor_build as cb
+    from landxml_plugin.landxml import corridor_features as cf
+    from landxml_plugin.landxml import corridor_quantities as cq
+
+    project = cb.new_project(str(road_xml), alignment, profile, cfg.get("standard", "generic_sections"),
+                             cfg.get("template"), True, float(cfg.get("speed", 60)),
+                             {"type": "tin", "path": str(road_xml), "surface": ground})
+    if cfg.get("assembly"):
+        project["assemblies"] = {"Custom": cfg["assembly"]}
+        project["regions"] = [{"start": None, "end": None, "assembly": "Custom", "transition": 0}]
+    for name, assembly in project["assemblies"].items():
+        for element in assembly["right"]:
+            element.update(cfg.get("overrides", {}).get(element["type"], {}))
+        if cfg.get("median") is not None:
+            assembly["median"] = cfg["median"]
+    if cfg.get("buildups"):
+        project["buildups"].update(cfg["buildups"])
+    for key in ("superelevation", "widening", "earthworks", "stations"):
+        project[key].update(cfg.get(key, {}))
+    if cfg.get("regions"):
+        from landxml_plugin.landxml.section_standards import load_section_standard
+        std = load_section_standard(project["standard"])
+        for r in cfg["regions"]:
+            if r["assembly"] not in project["assemblies"]:
+                cb.add_template(project, std, r["assembly"])
+                for element in project["assemblies"][r["assembly"]]["right"]:
+                    element.update(cfg.get("overrides", {}).get(element["type"], {}))
+        project["regions"] = cfg["regions"]
+    for f in cfg.get("features", []):
+        f = dict(f)
+        kind, at = f.pop("type"), f.pop("at")
+        project["features"].append(cf.new_feature(kind, at, f.pop("side", None), **f))
+    started = time.time()
+    result = cb.build_corridor(project)
+    built = time.time() - started
+    out = folder / f"{label}.xml"
+    cb.write_corridor_landxml(result, str(out))
+    q = cq.quantities(result)
+    cb.save_project(project, str(folder / f"{label}_project.json"))
+    (folder / f"{label}_report.html").write_text(cq.report_html(result, q, label.replace("_", " ")), encoding="utf-8")
+    cq.write_boq(str(folder / f"{label}_quantities.xlsx"), q)
+    return result, q, {f"{label}_xml": str(out), f"{label}_sections": len(result.sections),
+                       f"{label}_cut": round(q["totals"]["cut"], 1), f"{label}_fill": round(q["totals"]["fill"], 1),
+                       f"{label}_build_s": round(built, 2), f"{label}_departures": len(result.checks),
+                       f"{label}_warnings": result.warnings[:6], f"{label}_features": len(result.context["features"])}
+
+
+def build_corridor_road(spec, centre, grid, folder, epsg, unit):
+    """A road (as build_road) and then its finished corridor from the section engine."""
+    if spec.get("route") == "contour":
+        return build_contour_road(spec, centre, grid, folder, epsg, unit)
+    record = build_road(spec, centre, grid, folder, epsg, unit)
+    for k, cfg in enumerate(spec.get("corridors", [spec.get("corridor", {})])):
+        label = cfg.get("label", "corridor" if k == 0 else f"corridor_{k + 1}")
+        _result, _q, info = corridor_project(folder / "road.xml", record["alignment"], cfg, folder, label)
+        record.update(info)
+    return record
+
+
+def _ellipse_point(cx, cy, a, b, rot, t):
+    ca, sa = math.cos(rot), math.sin(rot)
+    x, y = a * math.cos(t), b * math.sin(t)
+    return cx + x * ca - y * sa, cy + x * sa + y * ca
+
+
+def haul_ramp_pis(centre, pit, rim, floor, grade, width, step=25.0):
+    """PIs of a spiral haul ramp down the walls of an elliptical benched pit: it starts on the rim and descends at
+    ``grade`` while moving inwards as fast as the benches do (inward run per bench height), so it cuts across the
+    benches and reaches the floor (it starts just outside the rim). Returns (pis, levels)."""
+    cx, cy, a, b, rot = pit["ellipse"]
+    cx, cy, rot = centre[0] + cx, centre[1] + cy, math.radians(rot)
+    period = float(pit["bench"]) * float(pit["face"]) + float(pit["berm"])
+    pis, levels = [], []
+    t, depth = 0.0, 0.0
+    total = rim - floor
+    while depth <= total + 1e-6:
+        # on the wall where the benches are as deep as the ramp, its inner edge at the bench crest: cut into the wall
+        inset = depth / float(pit["bench"]) * period - width / 2
+        aa, bb = a - inset, b - inset
+        if min(aa, bb) < 3 * width:
+            break
+        pis.append(_ellipse_point(cx, cy, aa, bb, rot, t))
+        levels.append(rim - depth)
+        speed = math.hypot(aa * math.sin(t), bb * math.cos(t))
+        t += step / max(speed, 1e-6)
+        depth += step * grade
+    return pis, levels
+
+
+def build_mine(spec, centre, grid, folder, epsg, unit, clip):
+    """An open-pit mine: a benched pit, a benched waste dump and a ROM pad (Design Surface from Shapes), a spiral haul
+    ramp down the pit walls and a haul road from the pit rim to the dump, both built as corridors with the section
+    engine on the benched design, then one finished surface (the design with the corridors cut and filled in)."""
+    from landxml_plugin.landxml.design_shapes import Grid, volumes
+    from landxml_plugin.landxml.tin_overlay import TinIndex
+    from landxml_plugin.landxml.writer import PICurve, Surface, VerticalProfile, alignment_from_pis, write_landxml
+    from osgeo import gdal
+
+    record = build_shapes(spec, centre, grid, folder, epsg, clip)
+    design_xml = folder / "design.xml"
+    ds = gdal.Open(record["design_tif"])
+    x0, cx, _r, y0, _r2, cy = ds.GetGeoTransform()
+    dz = ds.GetRasterBand(1).ReadAsArray().astype(float)
+    dz[dz <= -9000] = np.nan
+    design = Grid(dz, x0, y0, cx)
+    eg_ds = gdal.Open(clip)
+    ex0, ecx, _a, ey0, _b, ecy = eg_ds.GetGeoTransform()
+    eg = Grid(eg_ds.GetRasterBand(1).ReadAsArray().astype(float), ex0, ey0, ecx).resampled(cx, (
+        x0, y0 - dz.shape[0] * cx, x0 + dz.shape[1] * cx, y0))
+    eg.z = eg.sample(design.xy).reshape(dz.shape)
+    pit = next(s for s in spec["shapes"] if s.get("shape") == "pit")
+    pit_built = next(b for b in record["shapes"] if b.get("shape") == "pit")
+    rim = float(np.nanmin(design.sample(np.array(ring(pit, centre))[:, :2])))
+    floor = float(pit_built["floor"])
+    haul = spec["haul"]
+    pis, levels = haul_ramp_pis(centre, pit, rim, floor, haul["grade"], haul["width"])
+    ramp = alignment_from_pis("Haul ramp", pis, [PICurve(haul["radius"])] * (len(pis) - 2))
+    ramp_profile = VerticalProfile("Ramp FRL", [(0.0, rim, 0.0), (ramp.length, rim - haul["grade"] * ramp.length, 0.0)])
+    # the haul road: from the ramp's top on the rim out to the dump, on the ground with grades held to the limit
+    dump = next(s for s in spec["shapes"] if s.get("name") == spec.get("dump", "Waste dump"))
+    dcx, dcy = centre[0] + dump["rect"][0], centre[1] + dump["rect"][1]
+    sx, sy = pis[0]
+    mid = ((sx + dcx) / 2 + haul.get("bend", 0.0), (sy + dcy) / 2 - haul.get("bend", 0.0))
+    road = alignment_from_pis("Haul road", [(sx, sy), mid, (dcx, dcy)], [PICurve(haul["radius"] * 2)])
+    pts = np.array(road.points(20.0))
+    ground = design.sample(pts[:, :2])
+    ground = np.where(np.isfinite(ground), ground, eg.sample(pts[:, :2]))
+    zz = [rim]
+    for k in range(1, len(pts)):
+        run = pts[k, 2] - pts[k - 1, 2]
+        zz.append(min(max(ground[k], zz[-1] - haul["grade"] * run), zz[-1] + haul["grade"] * run))
+    stations = list(pts[::5, 2]) + ([pts[-1, 2]] if (len(pts) - 1) % 5 else [])
+    road_profile = VerticalProfile("Haul FRL", [(s, round(float(np.interp(s, pts[:, 2], zz)), 3), 0.0) for s in stations])
+    d_pts, d_faces = design.tin()
+    e_pts, e_faces = eg.tin()
+    mine_xml = folder / "mine.xml"
+    units = {"m": "meter", "ft": "foot", "US survey foot": "USSurveyFoot"}[unit]
+    write_landxml(str(mine_xml), [(ramp, [ramp_profile]), (road, [road_profile])], linear_unit=units, vertical_unit=units,
+                  epsg=epsg, surfaces=[Surface("Existing ground", e_pts.tolist(), e_faces.tolist()),
+                                       Surface("Benched design", d_pts.tolist(), d_faces.tolist())])
+    cfg = dict(spec["corridor"])
+    finished = design.z.copy()
+    for alignment, profile, label in ((ramp.name, "Ramp FRL", "haul_ramp"), (road.name, "Haul FRL", "haul_road")):
+        result, _q, info = corridor_project(mine_xml, alignment, cfg, folder, label, profile, "Benched design")
+        record.update(info)
+        from landxml_plugin.landxml.corridor_build import corridor_surface
+        xyz, faces = corridor_surface(result, "top")
+        index = TinIndex(xyz, faces)
+        top = index.sample(design.xy).reshape(dz.shape)
+        finished = np.where(np.isfinite(top), top, finished)
+    final = design.like(finished)
+    cut, fill = volumes(eg, final)
+    f_pts, f_faces = final.tin()
+    write_landxml(str(folder / "mine_finished.xml"), [(ramp, [ramp_profile]), (road, [road_profile])], linear_unit=units,
+                  vertical_unit=units, epsg=epsg,
+                  surfaces=[Surface("Existing ground", e_pts.tolist(), e_faces.tolist()),
+                            Surface("Finished", f_pts.tolist(), f_faces.tolist(), "Benched pit, dump and pad with the haul ramp and road")])
+    from landxml_plugin.core import write_geotiff
+    from osgeo import osr
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(epsg)
+    write_geotiff(str(folder / "mine_finished.tif"), np.where(np.isfinite(finished), finished, -9999.0), x0, y0, cx,
+                  wkt=srs.ExportToWkt())
+    record.update(ramp_length=round(ramp.length, 1), ramp_drop=round(haul["grade"] * ramp.length, 1),
+                  haul_road_length=round(road.length, 1), finished_cut=round(cut, 1), finished_fill=round(fill, 1),
+                  landxml=str(folder / "mine_finished.xml"), surfaces=["Existing ground", "Finished"])
+    return record
 
 
 def build_shapes(spec, centre, grid, folder, epsg, clip):
@@ -461,6 +636,10 @@ def main(argv=None):
                 record.update(build_road(spec, (e, n), grid, folder, dem.epsg, dem.unit))
             elif spec["kind"] == "shapes":
                 record.update(build_shapes(spec, (e, n), grid, folder, dem.epsg, clip))
+            elif spec["kind"] == "corridor":
+                record.update(build_corridor_road(spec, (e, n), grid, folder, dem.epsg, dem.unit))
+            elif spec["kind"] == "mine":
+                record.update(build_mine(spec, (e, n), grid, folder, dem.epsg, dem.unit, clip))
             elif spec["kind"] == "dem_tin":
                 clips = {"primary": clip}
                 for k, other in enumerate(args.compare, 1):

@@ -67,7 +67,8 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
             "Each polygon's <b>shape</b> field is one of: platform (a pad at <i>level</i> with <i>cut_slope</i> and "
             "<i>fill_slope</i> batters), basin (an excavation to <i>floor</i> with side <i>slope</i>), pit (benches "
             "<i>bench</i> high with <i>berm</i> wide berms and faces at <i>face</i> H:V, down to <i>floor</i>), stockpile "
-            "(a pile or mound to <i>top</i>, or holding <i>volume</i>, sides at <i>slope</i>), terraces (benches every "
+            "(a pile or mound to <i>top</i>, or holding <i>volume</i>, sides at <i>slope</i>, built in lifts of <i>bench</i> "
+            "with <i>berm</i> wide berms when both are given, as a waste dump), terraces (benches every "
             "<i>step</i> with risers taking <i>riser</i> of each step), fairway (ground eased over <i>window</i>), green "
             "(raised <i>height</i> and level, sides at <i>slope</i>) and bunker (<i>depth</i> below its rim, sides at "
             "<i>slope</i>). Missing fields or values take the defaults below; slopes are horizontal per 1 vertical. "
@@ -319,7 +320,8 @@ class DesignShapesAlgorithm(ProjectSettingsAlgorithm):
             volume = float(v["volume"]) if "volume" in v else None
             if top is None and volume is None:
                 raise ValueError("a stockpile needs a 'top' level or a 'volume'.")
-            return ds.stockpile(grid, ring, top, number("slope", "SLOPE"), volume)
+            return ds.stockpile(grid, ring, top, number("slope", "SLOPE"), volume,
+                                bench=float(v.get("bench", 0) or 0), berm=float(v.get("berm", 0) or 0))
         if kind == "terraces":
             return ds.terraces(grid, ring, number("step", "STEP"), number("riser", default=0.3))
         if kind == "fairway":

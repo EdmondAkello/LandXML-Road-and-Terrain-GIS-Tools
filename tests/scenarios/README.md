@@ -12,6 +12,10 @@ is tied to them: they are inputs, defined in `scenarios.json`, that exercise the
 | `golf_hole` | shapes | Fairway, tee, raised green, two bunkers and a pond |
 | `industrial_estate` | shapes | Three plot platforms, a detention pond and a noise bund |
 | `borrow_pit_and_mounds` | shapes | A benched borrow pit, a topsoil mound to a volume and a spoil mound to a level |
+| `mine_pit_ramp_dump` | mine | An open pit (12 m benches, 10 m berms) with an 8 % haul ramp down the benches built as a finished corridor (crushed-rock wearing course, safety berms, V drain), a benched waste dump to a volume and a ROM pad |
+| `mountain_highway_benched` | corridor | A contour-following mountain road (RDM R3, 60 km/h) with computed superelevation, 8 m cut benches, a cut-off drain, a brake check area, a climbing lane and an escape ramp; a second build replaces high cut and fill with retaining walls |
+| `rural_road_finished` | corridor | A rural road (RDM R5, 80 km/h) with spiralled curves, computed superelevation, bus bays both sides, a junction mouth, an access and a ghost island, topsoil and unsuitable; the same road to AASHTO for comparison |
+| `urban_street_finished` | corridor | An urban dual carriageway (RDM U4) transitioning to a single carriageway (U5) over 60 m, with kerbs, footways, a bus bay and an access |
 | `dem_comparison` | dem_tin | DEM to LandXML TIN at several tolerances on the main DEM and on the comparison DEMs |
 
 ## Running

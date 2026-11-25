@@ -1,0 +1,321 @@
+{
+ "id": "aashto_2018_us_customary_sections",
+ "name": "AASHTO Green Book 2018 (US customary) - Cross-section elements",
+ "source": "AASHTO, A Policy on Geometric Design of Highways and Streets, 7th ed. (2018), Chapter 3 (superelevation, widening) and Chapter 4 (cross-section elements). Values were checked against the Green Book text available to the author (2001 edition, same values); 2018 table numbers are cited by section.",
+ "units": "us_customary",
+ "review_criteria": "aashto_2018_us_customary",
+ "advisory": "Defaults and advisory checks only; any value can be used and a value outside a range is reported, never blocked.",
+ "references": {
+  "lane_width": "Section 4.3 (2.7-3.6 m; 3.6 m predominant on high-type highways)",
+  "lane_crossfall": "Section 4.2.2 (1.5-2 % high-type surfaces; Exhibit 4-4 in 2001)",
+  "shoulder_width": "Section 4.4.2 (0.6-3.6 m; 3.0 m normal on high-type facilities)",
+  "shoulder_crossfall": "Section 4.4.3 (paved 2-6 %, gravel 4-6 %, turf 6-8 %; max 8 % algebraic difference at the high side)",
+  "curbs": "Section 4.7 (vertical 150-200 mm; sloping max 150 mm with a 1V:1H to 1V:2H face)",
+  "sidewalk": "Section 4.17 (minimum 1.2 m; 1.2-2.4 m residential)",
+  "relative_gradient": "Table 3-15 (2001: Exhibit 3-27)",
+  "lanes_rotated": "Table 3-16 adjustment factor bw = (1 + 0.5 (n1 - 1)) / n1 (2001: Exhibit 3-28)",
+  "widening": "Section 3.3.10, Table 3-26 (2001: Exhibit 3-51), WB-15 design vehicle; minimum 0.6 m, smaller values disregarded",
+  "slopes": "Section 4.8 and Roadside Design Guide: 1V:4H or flatter recoverable, 1V:3H traversable"
+ },
+ "limits": {
+  "lane.width": {
+   "min": 9,
+   "max": 12,
+   "ref": "Section 4.3",
+   "note": "12 ft desirable; 11 ft acceptable in urban areas; 10 ft low-speed; 9 ft low-volume."
+  },
+  "lane.crossfall": {
+   "min": 1.5,
+   "max": 2.0,
+   "ref": "Section 4.2.2",
+   "note": "High-type surfaces; up to 2.5 % with three or more lanes in one direction; 4 % maximum."
+  },
+  "shoulder.width": {
+   "min": 2,
+   "max": 12,
+   "ref": "Section 4.4.2"
+  },
+  "shoulder.crossfall": {
+   "min": 2.0,
+   "max": 6.0,
+   "ref": "Section 4.4.3",
+   "note": "Paved 2-6 %; gravel or crushed rock 4-6 %; turf 6-8 %."
+  },
+  "shoulder.crossfall@gravel": {
+   "min": 4.0,
+   "max": 6.0,
+   "ref": "Section 4.4.3"
+  },
+  "shoulder.breakover": {
+   "max": 8.0,
+   "ref": "Section 4.4.3",
+   "note": "Algebraic difference between travelled way and shoulder at the high side."
+  },
+  "kerb.height@barrier": {
+   "min": 0.5,
+   "max": 0.67,
+   "ref": "Section 4.7"
+  },
+  "kerb.height@semi_mountable": {
+   "max": 0.5,
+   "ref": "Section 4.7"
+  },
+  "kerb.height@mountable": {
+   "max": 0.33,
+   "ref": "Section 4.7"
+  },
+  "sidewalk.width": {
+   "min": 4,
+   "ref": "Section 4.17"
+  },
+  "fill.slope": {
+   "min": 4.0,
+   "ref": "Section 4.8",
+   "note": "1V:4H or flatter recoverable; 1V:3H traversable but non-recoverable."
+  },
+  "cut.backslope": {
+   "min": 3.0,
+   "ref": "Section 4.8"
+  }
+ },
+ "relative_gradient": {
+  "ref": "Table 3-15",
+  "values": {
+   "15": 0.78,
+   "20": 0.74,
+   "25": 0.7,
+   "30": 0.66,
+   "35": 0.62,
+   "40": 0.58,
+   "45": 0.54,
+   "50": 0.5,
+   "55": 0.47,
+   "60": 0.45,
+   "65": 0.43,
+   "70": 0.4,
+   "75": 0.38,
+   "80": 0.35
+  }
+ },
+ "widening": {
+  "ref": "Table 3-26 (US customary not transcribed)",
+  "minimum": 2.0,
+  "placement": "inside",
+  "development": "runoff",
+  "by_speed": {},
+  "mode": "interpolate"
+ },
+ "superelevation": {
+  "normal_crown": 2.0,
+  "rotation": "centreline",
+  "runoff_on_tangent": 0.67,
+  "runoff_on_tangent_ref": "Section 3.3.8: 60-80 % of the runoff on the tangent without spirals (two-thirds used)",
+  "runout_rate": "same as runoff",
+  "shoulder_rule": "breakover",
+  "breakover_max": 8.0,
+  "shoulder_rule_ref": "Section 4.4.3 (8 % maximum algebraic difference at the high side)"
+ },
+ "slope_bands": {
+  "ref": "Section 4.8 (single slope; use the editor's bands for height-dependent slopes)",
+  "earth": {
+   "fill": [
+    [
+     null,
+     4.0
+    ]
+   ],
+   "cut": [
+    [
+     null,
+     3.0
+    ]
+   ]
+  }
+ },
+ "side_drains": {
+  "ref": "Section 4.8 roadside channels (shapes; size from hydraulics)",
+  "V": {
+   "shape": "v",
+   "foreslope": 4.0,
+   "depth": 2.0,
+   "bottom": 0.0
+  },
+  "Trapezoidal": {
+   "shape": "trapezoidal",
+   "foreslope": 4.0,
+   "depth": 2.0,
+   "bottom": 3.9
+  }
+ },
+ "buildups": {
+  "Carriageway": {
+   "ref": "Example only - enter the pavement design",
+   "courses": [
+    {
+     "name": "HMA surface course",
+     "material": "HMA",
+     "thickness": 0.16,
+     "unit": "ft2"
+    },
+    {
+     "name": "HMA base course",
+     "material": "HMA",
+     "thickness": 0.33,
+     "unit": "yd3"
+    },
+    {
+     "name": "Aggregate base",
+     "material": "AB",
+     "thickness": 0.66,
+     "unit": "yd3"
+    },
+    {
+     "name": "Granular subbase",
+     "material": "GSB",
+     "thickness": 0.66,
+     "unit": "yd3"
+    }
+   ]
+  },
+  "Gravel shoulder": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Aggregate shoulder",
+     "material": "AB",
+     "thickness": 0.49,
+     "unit": "yd3"
+    }
+   ]
+  },
+  "Footway": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Concrete sidewalk",
+     "material": "PCC",
+     "thickness": 0.33,
+     "unit": "ft2"
+    },
+    {
+     "name": "Aggregate base",
+     "material": "AB",
+     "thickness": 0.33,
+     "unit": "yd3"
+    }
+   ]
+  },
+  "Median": {
+   "ref": "Example only",
+   "courses": [
+    {
+     "name": "Topsoil and turf",
+     "material": "TS",
+     "thickness": 0.33,
+     "unit": "ft2"
+    }
+   ]
+  }
+ },
+ "templates": {
+  "Two-lane rural highway": {
+   "ref": "Sections 4.3, 4.4: 3.6 m lanes, 2.4 m shoulders",
+   "speed": 60,
+   "right": [
+    {
+     "type": "lane",
+     "width": 12,
+     "crossfall": 2.0
+    },
+    {
+     "type": "shoulder",
+     "width": 8
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "V"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "Urban street with curbs": {
+   "ref": "Sections 4.3, 4.7, 4.17: 3.3 m lanes, vertical curb, 1.5 m sidewalk",
+   "speed": 30,
+   "right": [
+    {
+     "type": "lane",
+     "width": 11,
+     "crossfall": 2.0
+    },
+    {
+     "type": "kerb",
+     "kind": "barrier",
+     "height": 0.5,
+     "channel": 2
+    },
+    {
+     "type": "verge",
+     "width": 4,
+     "slope": 2.0
+    },
+    {
+     "type": "sidewalk",
+     "width": 5
+    },
+    {
+     "type": "verge",
+     "width": 2
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  },
+  "Four-lane divided highway": {
+   "ref": "Sections 4.3, 4.4, 4.11: 3.6 m lanes, 3.0 m outside and 1.2 m inside shoulders",
+   "speed": 70,
+   "median": {
+    "type": "median",
+    "kind": "depressed",
+    "width": 40,
+    "slope": 16.7
+   },
+   "right": [
+    {
+     "type": "shoulder",
+     "width": 4,
+     "name": "Inside shoulder"
+    },
+    {
+     "type": "lane",
+     "width": 12,
+     "crossfall": 2.0
+    },
+    {
+     "type": "lane",
+     "width": 12,
+     "crossfall": 2.0
+    },
+    {
+     "type": "shoulder",
+     "width": 10
+    },
+    {
+     "type": "side_drain",
+     "drain_type": "V"
+    },
+    {
+     "type": "daylight"
+    }
+   ]
+  }
+ },
+ "unsourced": [
+  "2018 table numbers (3-15, 3-16, 3-26) are cited from the 2018 edition's arrangement; the values were checked in the 2001 text (Exhibits 3-27, 3-28, 3-51). Confirm against the 2018 book.",
+  "Widening for radii below 150 m (7.2 m roadway) is not included: the scanned table layout is ambiguous.",
+  "Build-ups are examples.",
+  "US customary widening table not transcribed: widening is off unless entered by the user."
+ ]
+}

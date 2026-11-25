@@ -82,7 +82,7 @@ class QgisProcessingTests(unittest.TestCase):
         }
 
     def test_provider_registers_all_algorithms(self):
-        self.assertEqual(len(self.algorithms), 30)
+        self.assertEqual(len(self.algorithms), 34)
         self.assertIn("inspect_landxml", self.algorithms)
 
     def test_every_tool_opens_its_section_of_the_bundled_guide(self):
@@ -99,6 +99,69 @@ class QgisProcessingTests(unittest.TestCase):
         advanced = [d.name() for d in scene.parameterDefinitions() if int(d.flags()) & 2]
         self.assertIn("SYN_CAMBER", advanced)
         self.assertNotIn("SYNTHETIC", advanced)
+
+    def test_section_project_and_corridor_build(self):
+        from tests.test_section_editor import curved_road
+
+        with tempfile.TemporaryDirectory() as directory:
+            road = curved_road(os.path.join(directory, "road.xml"))
+            create = self.algorithms["landxml_section_project"]
+            with self.assertRaises(QgsProcessingException):          # the axis order is never guessed
+                create.processAlgorithm({"INPUT": road, "AXIS": 0, "STANDARD": 0, "SPEED": 80, "SUPERELEVATION": 1,
+                                         "INTERVAL": 20, "OUTPUT": os.path.join(directory, "x.json")},
+                                        self.context, self.feedback)
+            ids = [a[0] for a in __import__("landxml_plugin.landxml.section_standards", fromlist=["x"]).list_section_standards()]
+            base = {"INPUT": road, "AXIS": 1, "STANDARD": ids.index("kenya_rdm13_2025_sections"), "SPEED": 80,
+                    "SUPERELEVATION": 1, "GROUND_SURFACE": "EG", "INTERVAL": 20}
+            a = create.processAlgorithm(dict(base, TEMPLATE="R5 single carriageway",
+                                             OUTPUT=os.path.join(directory, "r5.json")), self.context, self.feedback)
+            b = create.processAlgorithm(dict(base, TEMPLATE="R4 single carriageway",
+                                             OUTPUT=os.path.join(directory, "r4.json")), self.context, self.feedback)
+            items = os.path.join(directory, "items.csv")
+            Path(items).write_text("item,description,unit,rate,quantity\n1,Excavation,m3,3.5,earthworks/cut\n"
+                                   "2,Surfacing,m2,,area/Carriageway|Asphalt*\n", encoding="utf-8")
+            build = self.algorithms["landxml_build_corridor"]
+            out = build.processAlgorithm({"PROJECT": a["OUTPUT"], "VARIANT": b["OUTPUT"], "ITEMS": items,
+                                          "FEATURE_LINES": True, "OUTPUT": os.path.join(directory, "corridor.xml"),
+                                          "REPORT": os.path.join(directory, "report.html"),
+                                          "BOQ": os.path.join(directory, "boq.xlsx")}, self.context, self.feedback)
+            self.assertGreater(out["CUT"], 0)
+            self.assertTrue(os.path.isfile(out["BOQ"]))
+            self.assertIn("Variant comparison", Path(out["REPORT"]).read_text(encoding="utf-8"))
+            quantities = self.algorithms["landxml_corridor_quantities"]
+            self.assertIsNotNone(quantities)
+            with self.assertRaises(QgsProcessingException):          # never over the source
+                build.processAlgorithm({"PROJECT": a["OUTPUT"], "FEATURE_LINES": True, "OUTPUT": road},
+                                       self.context, self.feedback)
+
+    def test_export_roads_to_landxml(self):
+        from qgis.core import QgsFeature, QgsGeometry, QgsVectorLayer
+        from landxml_plugin.landxml.geometry import read_alignments
+        from landxml_plugin.landxml.parser import load_document
+
+        layer = QgsVectorLayer("LineStringZ?crs=EPSG:32737&field=name:string&field=radius:double", "roads", "memory")
+        f = QgsFeature(layer.fields())
+        f.setGeometry(QgsGeometry.fromWkt("LineStringZ (500000 9900000 1500, 500300 9900000 1506, 500500 9900250 1502, "
+                                          "500800 9900250 1504)"))
+        f.setAttributes(["Access road", 150.0])
+        layer.dataProvider().addFeatures([f])
+        algorithm = self.algorithms["landxml_export_roads"]
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "roads.xml")
+            with self.assertRaises(QgsProcessingException):
+                algorithm.processAlgorithm({"INPUT": layer, "RADIUS": 300, "VC_LENGTH": 60, "STEP": 10, "AXIS": 0,
+                                            "OUTPUT": out}, self.context, self.feedback)
+            result = algorithm.processAlgorithm({"INPUT": layer, "RADIUS": 300, "VC_LENGTH": 60, "STEP": 10, "AXIS": 1,
+                                                 "OUTPUT": out}, self.context, self.feedback)
+            self.assertEqual(result["COUNT"], 1)
+            records, _bad = read_alignments(out, 1.0)
+            self.assertEqual(records[0]["name"], "Access road")
+            self.assertAlmostEqual(records[0]["points"][0][0], 9900000.0, places=3)     # northing first
+            text = Path(out).read_text(encoding="utf-8")
+            self.assertIn('radius="150"', text)
+            self.assertIn("Access road FRL", text)
+            self.assertIn('epsgCode="32737"', text)
+            self.assertIsNotNone(load_document(out))
 
     def test_invalid_equations_warn_without_changing_surface_outputs(self):
         fixtures = ROOT / "tests/fixtures/generic"
@@ -178,7 +241,7 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(groups, [
             "1. Inspect and prepare", "2. Road design extraction", "3. Terrain conversion", "4. Surface extraction",
             "5. Earthworks and quantities", "6. Design review", "7. Reports and sheets",
-            "8. Site grading (land development)",
+            "8. Site grading (land development)", "9. Corridor design",
         ])
         for name in ("inspect_landxml", "prepare_landxml"):
             self.assertEqual(self.algorithms[name].group(), groups[0])
@@ -187,12 +250,15 @@ class QgisProcessingTests(unittest.TestCase):
         self.assertEqual(self.algorithms["landxml_dem_to_tin"].groupId(), "terrain_conversion")
         self.assertEqual(self.algorithms["landxml_design_shapes"].groupId(), "site_grading")
         for name in ("landxml_design_report", "landxml_cross_section_sheets"):
-            self.assertEqual(self.algorithms[name].group(), groups[-2])
+            self.assertEqual(self.algorithms[name].group(), groups[-3])
             self.assertEqual(self.algorithms[name].groupId(), "reports")
         for name in ("landxml_grading_quantities", "landxml_platform_levels", "landxml_basin_storage",
                      "landxml_earthwork_balance", "landxml_grading_revision_comparison"):
-            self.assertEqual(self.algorithms[name].group(), groups[-1])
+            self.assertEqual(self.algorithms[name].group(), groups[-2])
             self.assertEqual(self.algorithms[name].groupId(), "site_grading")
+        for name in ("landxml_section_project", "landxml_build_corridor", "landxml_export_roads",
+                     "landxml_export_design_stage"):
+            self.assertEqual(self.algorithms[name].groupId(), "corridor_design")
 
     def test_coordinate_selectors_explain_landxml_axis_order(self):
         checked = []

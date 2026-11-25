@@ -1,0 +1,173 @@
+{
+ "id": "corridor_features",
+ "name": "Corridor features (parametric insertions)",
+ "source": "Ported from the Road Furniture Designer plugin's feature definitions (same author, GPL): RDM 1.3 (2025) standard drawings RDM/1/3/3/01-03, S6.6, S12.5, S12.7, Table 12.7, Equation 12.1, S4.3.3. Values are defaults; every parameter is editable.",
+ "traffic_keeps_left_ref": "Kenya drives on the left: traffic on the left of the chainage direction travels with it.",
+ "types": {
+  "bus_bay": {
+   "label": "Bus bay",
+   "ref": "RDM/1/3/3/01",
+   "insert": "bay",
+   "params": {
+    "bay": 25.0,
+    "entry": 30.0,
+    "exit": 18.0,
+    "depth": 4.0,
+    "platform": 1.0,
+    "kerb_height": 0.15,
+    "kerb_ramp": 2.0
+   },
+   "remark": "Entry taper 30 m (25 m at 50 km/h or less), bay 25 m (more for more than one bus), exit taper 18 m, 4.0 m deep; flush kerb on the tapers, raised along the bay with 2 m ramped kerbs; 1.0 m platform. Bays serving opposite directions at least 60 m apart, centre to centre."
+  },
+  "truck_bay": {
+   "label": "Truck parking bay / lay-by",
+   "ref": "RDM/1/3/3/03, RDM 1.3 13.2",
+   "insert": "bay",
+   "params": {
+    "bay": 70.0,
+    "entry": 15.0,
+    "exit": 10.0,
+    "depth": 3.5,
+    "platform": 0.0,
+    "kerb_height": 0.0
+   },
+   "remark": "Entry taper 15 m, bay 70 m (varies), exit taper 10 m, straight tapers, 3.5 m deep; room for four to five heavy vehicles."
+  },
+  "brake_check": {
+   "label": "Brake check area",
+   "ref": "RDM 1.3 12.5 (indicative)",
+   "insert": "bay",
+   "params": {
+    "bay": 100.0,
+    "entry": 60.0,
+    "exit": 60.0,
+    "depth": 3.5,
+    "platform": 0.0,
+    "kerb_height": 0.0
+   },
+   "remark": "Indicative: 100 m holds four to five semi-trailers, 60 m tapers, 3.5 m deep, at the top of a long steep descent."
+  },
+  "climbing_lane": {
+   "label": "Climbing lane",
+   "ref": "RDM 1.3 6.6, RDM/1/3/3/02",
+   "insert": "lane",
+   "params": {
+    "bay": 300.0,
+    "entry": 100.0,
+    "exit": 100.0,
+    "width": 0.0,
+    "reduce_through": 0.25,
+    "side": "uphill"
+   },
+   "remark": "100 m tapers; full width to where trucks are back within 15 km/h of their level speed, at least 200 m past the crest; as wide as the adjacent through lane (width 0 = the same), which is reduced by 0.25 m where 3.25 m or more (RDM 1.3 6.6.3)."
+  },
+  "descending_lane": {
+   "label": "Descending lane",
+   "ref": "RDM 1.3 6.6.4",
+   "insert": "lane",
+   "params": {
+    "bay": 300.0,
+    "entry": 100.0,
+    "exit": 100.0,
+    "width": 0.0,
+    "reduce_through": 0.25,
+    "side": "downhill"
+   },
+   "remark": "Laid out as a climbing lane for the downhill traffic."
+  },
+  "auxiliary_lane": {
+   "label": "Auxiliary / turning lane",
+   "ref": "RDM 1.3 S4.3.3, S9.11.11-9.11.13",
+   "insert": "lane",
+   "params": {
+    "bay": 60.0,
+    "entry": 30.0,
+    "exit": 0.0,
+    "width": 3.0,
+    "reduce_through": 0.0,
+    "side": "left"
+   },
+   "remark": "3.0 m wide (S4.3.3); storage and taper lengths from Tables 9.14-9.17 for the design speed and turning flow (set them here)."
+  },
+  "widening": {
+   "label": "Widening",
+   "ref": "user",
+   "insert": "lane",
+   "params": {
+    "bay": 50.0,
+    "entry": 20.0,
+    "exit": 20.0,
+    "width": 1.0,
+    "reduce_through": 0.0,
+    "side": "left"
+   },
+   "remark": "A paved widening of the given width with tapers, for any purpose (passing place, access, school drop-off)."
+  },
+  "escape_ramp": {
+   "label": "Truck escape ramp",
+   "ref": "RDM 1.3 12.7, Table 12.7, Equation 12.1",
+   "insert": "ramp",
+   "params": {
+    "entry": 30.0,
+    "taper": 50.0,
+    "width": 8.0,
+    "angle": 4.0,
+    "grade": 10.0,
+    "material": "Gravel, loose",
+    "speed": 130.0,
+    "bed_depth": 1.0,
+    "mound": 1.0,
+    "side": "downhill"
+   },
+   "remark": "Departs tangentially on the downhill traffic's near side at a small angle; the road edge widens to the ramp over a 50 m taper; 30 m paved entry, then the arrester bed (length from Equation 12.1 for the runaway speed and the bed's rolling resistance, Table 12.7) and a last-chance mound."
+  },
+  "ghost_island": {
+   "label": "Ghost-island widening (right-turn lane)",
+   "ref": "RDM/1/3/2/01, RDM 1.3 Fig 9.37",
+   "insert": "centre",
+   "params": {
+    "bay": 90.0,
+    "entry": 60.0,
+    "exit": 63.0,
+    "width": 3.0,
+    "side": "both"
+   },
+   "remark": "Both edges move out by half the ghost island's width over the right-turn lane and the island, tapering back (lanes keep their width). Lengths indicative (RDM/1/3/2/01: 106 m approach taper); set them from the junction design."
+  },
+  "junction_mouth": {
+   "label": "Junction mouth (side road)",
+   "ref": "RDM 1.3 S9",
+   "insert": "gap",
+   "params": {
+    "bay": 20.0,
+    "entry": 0.0,
+    "exit": 0.0,
+    "culvert": true,
+    "side": "left"
+   },
+   "remark": "The side drain stops across the mouth (a culvert carries it under the side road) and the corridor keeps its daylight; the side road itself is designed as its own alignment."
+  },
+  "access": {
+   "label": "Private access",
+   "ref": "RDM 1.3 9.11.16, Figure 9.33",
+   "insert": "gap",
+   "params": {
+    "bay": 15.0,
+    "entry": 0.0,
+    "exit": 0.0,
+    "width": 3.0,
+    "radius": 6.0,
+    "culvert": true,
+    "side": "left"
+   },
+   "remark": "At least 3 m wide with 6 m radii (the mouth here spans width + 2 radii); a traversable drainage pipe under the access where the side drain passes."
+  }
+ },
+ "materials": {
+  "ref": "RDM 1.3 Table 12.7 (rolling resistance as an equivalent grade, %)",
+  "Crushed aggregate, loose": 5.0,
+  "Gravel, loose": 10.0,
+  "Sand": 15.0,
+  "Pea gravel": 25.0
+ }
+}

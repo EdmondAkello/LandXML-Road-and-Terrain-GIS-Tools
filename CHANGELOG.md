@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Added (corridor design)
+- **Corridor Section Editor** dock: designs the cross-section by station on the real ground (TIN in the file, a surface
+  in another LandXML, or a DEM) with a live section, drag handles for widths and crossfalls, *Why this point*, regions
+  with transitions, build-ups, undo/redo and advisory checks. Elements: lane, shoulder, kerb and channel, sidewalk,
+  cycle track, verge, side drain (RDM 1.3 Figure 4.15 types or custom), daylight (slopes by height, benches, retaining
+  walls in cut or fill, fill widening, toe and cut-off drains), median, barrier and custom steps; every parameter is
+  editable.
+- Superelevation from the LandXML or computed from the standard (runoff over the spiral or from the tables, relative
+  gradient, rotation about the centreline or an edge, reverse curves) and curve widening from the standard's table.
+- **Section standards** as data files in `criteria/sections`: Kenya RDM 1.3 (2025), AASHTO 2018 (metric and US
+  customary) and Generic, with templates, build-ups, drain types, slope tables and limits with their clauses. Checks
+  are advisory only; nothing is locked to a standard. *Save as standard* writes a user standard.
+- **Corridor features** (`criteria/features`): bus bay, truck lay-by, brake check area, climbing lane, descending lane,
+  auxiliary lane, widening, ghost-island widening, junction mouth, private access and truck escape ramp (bed length
+  from RDM 1.3 Equation 12.1), built into the sections by chainage; definitions ported from the Road Furniture
+  Designer RDM data.
+- **Plan Editor** dock: PIs on the map with live curve fitting (add, insert, drag, delete, radius handles, spirals),
+  refusal of unfittable edits with the reason, criteria checks, start from a line, an alignment or a feature line or
+  breakline (levels become the profile), and LandXML output in an explicit axis order.
+- The plan, profile and section editors hand results to each other: a profile saved in the Profile Viewer is adopted
+  by an open Section Editor for the same alignment.
+- Toolbox group **9. Corridor design**: Create Corridor Section Project, Build Corridor from Section Project (LandXML
+  with CrossSects, finished and datum TINs and coded feature lines; HTML report; quantities by average end area equal
+  to Corridor Section Quantities; Excel bill of quantities from an item list; variant comparison), Export Design for
+  Civil 3D or OpenRoads (by Stage: alignment, profiles, surfaces and feature lines, complete) and Export Roads to
+  LandXML (lines to alignments and profiles).
+- Design Surface from Shapes: benched stockpiles (waste dumps) with `bench` and `berm`.
+- Test scenarios with finished road surfaces: an open pit with a haul ramp and a benched dump, a mountain highway with
+  stabilisation benches and retaining walls, a rural road and an urban street.
+- User guide Part F (Corridor design).
+
+### Fixed (corridor design batch)
+- CI: the profile drag GUI test now sends real mouse-move events, which `QTest.mouseMove` does not deliver offscreen on
+  Qt 5 (QGIS 3.44).
+- NumPy 2: 2D `np.cross` replaced in feature-line welding, the 3D scene and the grading tests.
+
 ### Added (land development: design surfaces and DEM to TIN)
 - **Design Surface from Shapes** (Site grading): draws design surfaces from polygons on a DEM or a LandXML TIN —
   platforms at a level with cut and fill batters, basins and ponds, open pits with benches and berms, stockpiles and

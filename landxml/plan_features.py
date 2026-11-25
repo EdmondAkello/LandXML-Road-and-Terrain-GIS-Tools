@@ -106,8 +106,9 @@ def weld(xyz, faces, decimals=6):
     remap = np.empty(int(used.max()) + 1, np.int64)
     remap[used] = inverse.reshape(-1)
     welded_faces = remap[faces]
-    area2 = np.cross(welded[welded_faces[:, 1], :2] - welded[welded_faces[:, 0], :2],
-                     welded[welded_faces[:, 2], :2] - welded[welded_faces[:, 0], :2])
+    u = welded[welded_faces[:, 1], :2] - welded[welded_faces[:, 0], :2]
+    v = welded[welded_faces[:, 2], :2] - welded[welded_faces[:, 0], :2]
+    area2 = u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0]        # 2-D cross product (np.cross refuses 2-D vectors in NumPy 2)
     return welded, welded_faces[np.abs(area2) > 0], used[first]
 
 

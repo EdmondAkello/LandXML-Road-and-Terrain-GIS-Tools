@@ -1,100 +1,922 @@
 {
-  "about": "Test scenarios for the land development and road tools. Coordinates are metres from the site centre (east, north); levels are numbers or expressions on the ground inside the shape: 'median-60', 'min+2', 'max', 'mean+0.5'. A site is found on the DEM by its mean ground slope (terrain: [lowest, highest] as fractions) unless a centre is given with --centre name=E,N. Shapes: rect [cx, cy, width, height, rotation°], ellipse [cx, cy, semi-axis x, semi-axis y, rotation°] or polygon [[x, y], ...]; every other key is a Design Surface from Shapes attribute.",
+  "about": "Test scenarios for the land development and road tools. Coordinates are metres from the site centre (east, north); levels are numbers or expressions on the ground inside the shape: 'median-60', 'min+2', 'max', 'mean+0.5'. A site is found on the DEM by its mean ground slope (terrain: [lowest, highest] as fractions) unless a centre is given with --centre name=E,N. Shapes: rect [cx, cy, width, height, rotation\u00b0], ellipse [cx, cy, semi-axis x, semi-axis y, rotation\u00b0] or polygon [[x, y], ...]; every other key is a Design Surface from Shapes attribute. Corridor scenarios ('kind': 'corridor') build the road and then its finished corridor with the Corridor Section Editor engine: a standard's template with element overrides, regions and features; 'mine' builds a benched pit, dump and pad, a spiral haul ramp and a haul road as corridors on the benched design, and one finished surface.",
   "scenarios": [
     {
       "name": "mountain_road",
       "kind": "road",
-      "terrain": [0.15, 0.35],
+      "terrain": [
+        0.15,
+        0.35
+      ],
       "window": 3200,
-      "pis": [[-1450, -100], [-870, 150], [-290, -150], [290, 150], [870, -150], [1450, 100]],
-      "route": "contour", "simplify": 40,
-      "radius": 80, "spiral": 25,
-      "profile_spacing": 200, "max_grade": 0.10, "k_value": 10,
-      "section": {"carriageway": 7.0, "shoulder": 1.5, "cut_slope": 1.5, "fill_slope": 2.0, "max_width": 40.0},
+      "pis": [
+        [
+          -1450,
+          -100
+        ],
+        [
+          -870,
+          150
+        ],
+        [
+          -290,
+          -150
+        ],
+        [
+          290,
+          150
+        ],
+        [
+          870,
+          -150
+        ],
+        [
+          1450,
+          100
+        ]
+      ],
+      "route": "contour",
+      "simplify": 40,
+      "radius": 80,
+      "spiral": 25,
+      "profile_spacing": 200,
+      "max_grade": 0.1,
+      "k_value": 10,
+      "section": {
+        "carriageway": 7.0,
+        "shoulder": 1.5,
+        "cut_slope": 1.5,
+        "fill_slope": 2.0,
+        "max_width": 40.0
+      },
       "design_speed": 50
     },
     {
       "name": "plain_road",
       "kind": "road",
-      "terrain": [0.01, 0.04],
+      "terrain": [
+        0.01,
+        0.04
+      ],
       "window": 4000,
-      "pis": [[-1800, -1600], [-400, -900], [600, 200], [1800, 700]],
-      "radius": 700, "spiral": 120,
-      "profile_spacing": 400, "max_grade": 0.04, "k_value": 60,
-      "section": {"carriageway": 7.3, "shoulder": 2.0, "cut_slope": 2.0, "fill_slope": 3.0, "max_width": 30.0},
+      "pis": [
+        [
+          -1800,
+          -1600
+        ],
+        [
+          -400,
+          -900
+        ],
+        [
+          600,
+          200
+        ],
+        [
+          1800,
+          700
+        ]
+      ],
+      "radius": 700,
+      "spiral": 120,
+      "profile_spacing": 400,
+      "max_grade": 0.04,
+      "k_value": 60,
+      "section": {
+        "carriageway": 7.3,
+        "shoulder": 2.0,
+        "cut_slope": 2.0,
+        "fill_slope": 3.0,
+        "max_width": 30.0
+      },
       "design_speed": 100
     },
     {
       "name": "open_pit_and_stockpiles",
       "kind": "shapes",
-      "terrain": [0.03, 0.10],
+      "terrain": [
+        0.03,
+        0.1
+      ],
       "window": 2600,
       "margin": 60,
       "shapes": [
-        {"name": "Pit", "shape": "pit", "ellipse": [-200, 0, 450, 320, 25], "floor": "min-60", "bench": 10, "berm": 8, "face": 0.5},
-        {"name": "Waste dump", "shape": "stockpile", "rect": [700, -500, 420, 300, 10], "volume": 600000, "slope": 1.8},
-        {"name": "ROM pad", "shape": "platform", "rect": [650, 450, 220, 160, 0], "level": "median", "cut_slope": 1.5, "fill_slope": 2.0},
-        {"name": "Ore stockpile", "shape": "stockpile", "ellipse": [650, 450, 60, 45, 0], "volume": 40000, "slope": 1.4}
+        {
+          "name": "Pit",
+          "shape": "pit",
+          "ellipse": [
+            -200,
+            0,
+            450,
+            320,
+            25
+          ],
+          "floor": "min-60",
+          "bench": 10,
+          "berm": 8,
+          "face": 0.5
+        },
+        {
+          "name": "Waste dump",
+          "shape": "stockpile",
+          "rect": [
+            700,
+            -500,
+            420,
+            300,
+            10
+          ],
+          "volume": 600000,
+          "slope": 1.8
+        },
+        {
+          "name": "ROM pad",
+          "shape": "platform",
+          "rect": [
+            650,
+            450,
+            220,
+            160,
+            0
+          ],
+          "level": "median",
+          "cut_slope": 1.5,
+          "fill_slope": 2.0
+        },
+        {
+          "name": "Ore stockpile",
+          "shape": "stockpile",
+          "ellipse": [
+            650,
+            450,
+            60,
+            45,
+            0
+          ],
+          "volume": 40000,
+          "slope": 1.4
+        }
       ]
     },
     {
       "name": "hillside_terraces",
       "kind": "shapes",
-      "terrain": [0.12, 0.30],
+      "terrain": [
+        0.12,
+        0.3
+      ],
       "window": 1000,
       "margin": 30,
       "shapes": [
-        {"name": "Terraces", "shape": "terraces", "polygon": [[-300, -250], [280, -280], [320, 260], [-260, 300]], "step": 2.0, "riser": 0.3},
-        {"name": "Access platform", "shape": "platform", "rect": [0, -380, 120, 60, 0], "level": "median", "cut_slope": 1.0, "fill_slope": 1.5}
+        {
+          "name": "Terraces",
+          "shape": "terraces",
+          "polygon": [
+            [
+              -300,
+              -250
+            ],
+            [
+              280,
+              -280
+            ],
+            [
+              320,
+              260
+            ],
+            [
+              -260,
+              300
+            ]
+          ],
+          "step": 2.0,
+          "riser": 0.3
+        },
+        {
+          "name": "Access platform",
+          "shape": "platform",
+          "rect": [
+            0,
+            -380,
+            120,
+            60,
+            0
+          ],
+          "level": "median",
+          "cut_slope": 1.0,
+          "fill_slope": 1.5
+        }
       ]
     },
     {
       "name": "golf_hole",
       "kind": "shapes",
-      "terrain": [0.02, 0.06],
+      "terrain": [
+        0.02,
+        0.06
+      ],
       "window": 1100,
       "margin": 30,
       "shapes": [
-        {"name": "Fairway", "shape": "fairway", "polygon": [[-380, -60], [-120, -90], [150, -40], [300, 20], [310, 90], [140, 80], [-120, 40], [-380, 50]], "window": 40},
-        {"name": "Tee", "shape": "fairway", "rect": [-430, 0, 40, 25, 0], "window": 10},
-        {"name": "Green", "shape": "green", "ellipse": [360, 60, 22, 16, 20], "height": 0.6, "slope": 4},
-        {"name": "Bunker 1", "shape": "bunker", "ellipse": [330, 20, 10, 6, 30], "depth": 1.0},
-        {"name": "Bunker 2", "shape": "bunker", "ellipse": [120, -70, 14, 7, -10], "depth": 1.2},
-        {"name": "Pond", "shape": "basin", "ellipse": [0, 120, 45, 30, 0], "floor": "min-2.5", "slope": 3}
+        {
+          "name": "Fairway",
+          "shape": "fairway",
+          "polygon": [
+            [
+              -380,
+              -60
+            ],
+            [
+              -120,
+              -90
+            ],
+            [
+              150,
+              -40
+            ],
+            [
+              300,
+              20
+            ],
+            [
+              310,
+              90
+            ],
+            [
+              140,
+              80
+            ],
+            [
+              -120,
+              40
+            ],
+            [
+              -380,
+              50
+            ]
+          ],
+          "window": 40
+        },
+        {
+          "name": "Tee",
+          "shape": "fairway",
+          "rect": [
+            -430,
+            0,
+            40,
+            25,
+            0
+          ],
+          "window": 10
+        },
+        {
+          "name": "Green",
+          "shape": "green",
+          "ellipse": [
+            360,
+            60,
+            22,
+            16,
+            20
+          ],
+          "height": 0.6,
+          "slope": 4
+        },
+        {
+          "name": "Bunker 1",
+          "shape": "bunker",
+          "ellipse": [
+            330,
+            20,
+            10,
+            6,
+            30
+          ],
+          "depth": 1.0
+        },
+        {
+          "name": "Bunker 2",
+          "shape": "bunker",
+          "ellipse": [
+            120,
+            -70,
+            14,
+            7,
+            -10
+          ],
+          "depth": 1.2
+        },
+        {
+          "name": "Pond",
+          "shape": "basin",
+          "ellipse": [
+            0,
+            120,
+            45,
+            30,
+            0
+          ],
+          "floor": "min-2.5",
+          "slope": 3
+        }
       ]
     },
     {
       "name": "industrial_estate",
       "kind": "shapes",
-      "terrain": [0.02, 0.07],
+      "terrain": [
+        0.02,
+        0.07
+      ],
       "window": 1300,
       "margin": 40,
       "shapes": [
-        {"name": "Plot A", "shape": "platform", "rect": [-250, 150, 220, 150, 0], "level": "median", "order": 1},
-        {"name": "Plot B", "shape": "platform", "rect": [20, 150, 220, 150, 0], "level": "median", "order": 1},
-        {"name": "Plot C", "shape": "platform", "rect": [-120, -120, 320, 180, 0], "level": "median+0.5", "order": 1},
-        {"name": "Detention pond", "shape": "basin", "rect": [260, -200, 120, 90, 0], "floor": "min-2", "slope": 3, "order": 2},
-        {"name": "Noise bund", "shape": "stockpile", "rect": [0, 330, 520, 24, 0], "top": "max+3", "slope": 2, "order": 3}
+        {
+          "name": "Plot A",
+          "shape": "platform",
+          "rect": [
+            -250,
+            150,
+            220,
+            150,
+            0
+          ],
+          "level": "median",
+          "order": 1
+        },
+        {
+          "name": "Plot B",
+          "shape": "platform",
+          "rect": [
+            20,
+            150,
+            220,
+            150,
+            0
+          ],
+          "level": "median",
+          "order": 1
+        },
+        {
+          "name": "Plot C",
+          "shape": "platform",
+          "rect": [
+            -120,
+            -120,
+            320,
+            180,
+            0
+          ],
+          "level": "median+0.5",
+          "order": 1
+        },
+        {
+          "name": "Detention pond",
+          "shape": "basin",
+          "rect": [
+            260,
+            -200,
+            120,
+            90,
+            0
+          ],
+          "floor": "min-2",
+          "slope": 3,
+          "order": 2
+        },
+        {
+          "name": "Noise bund",
+          "shape": "stockpile",
+          "rect": [
+            0,
+            330,
+            520,
+            24,
+            0
+          ],
+          "top": "max+3",
+          "slope": 2,
+          "order": 3
+        }
       ]
     },
     {
       "name": "borrow_pit_and_mounds",
       "kind": "shapes",
-      "terrain": [0.01, 0.05],
+      "terrain": [
+        0.01,
+        0.05
+      ],
       "window": 1200,
       "margin": 40,
       "shapes": [
-        {"name": "Borrow pit", "shape": "pit", "rect": [-150, 0, 300, 220, 15], "floor": "min-12", "bench": 4, "berm": 5, "face": 1.0},
-        {"name": "Topsoil mound", "shape": "stockpile", "ellipse": [250, 200, 70, 40, 0], "volume": 30000, "slope": 2.0},
-        {"name": "Spoil mound", "shape": "stockpile", "ellipse": [280, -180, 90, 60, 30], "top": "max+8", "slope": 2.5}
+        {
+          "name": "Borrow pit",
+          "shape": "pit",
+          "rect": [
+            -150,
+            0,
+            300,
+            220,
+            15
+          ],
+          "floor": "min-12",
+          "bench": 4,
+          "berm": 5,
+          "face": 1.0
+        },
+        {
+          "name": "Topsoil mound",
+          "shape": "stockpile",
+          "ellipse": [
+            250,
+            200,
+            70,
+            40,
+            0
+          ],
+          "volume": 30000,
+          "slope": 2.0
+        },
+        {
+          "name": "Spoil mound",
+          "shape": "stockpile",
+          "ellipse": [
+            280,
+            -180,
+            90,
+            60,
+            30
+          ],
+          "top": "max+8",
+          "slope": 2.5
+        }
       ]
     },
     {
       "name": "dem_comparison",
       "kind": "dem_tin",
-      "terrain": [0.10, 0.30],
+      "terrain": [
+        0.1,
+        0.3
+      ],
       "window": 6000,
-      "tolerances": [2.0, 1.0, 0.5]
+      "tolerances": [
+        2.0,
+        1.0,
+        0.5
+      ]
+    },
+    {
+      "name": "mine_pit_ramp_dump",
+      "kind": "mine",
+      "terrain": [
+        0.03,
+        0.1
+      ],
+      "window": 3000,
+      "margin": 80,
+      "shapes": [
+        {
+          "name": "Pit",
+          "shape": "pit",
+          "ellipse": [
+            -350,
+            0,
+            560,
+            420,
+            20
+          ],
+          "floor": "min-150",
+          "bench": 12,
+          "berm": 10,
+          "face": 0.6
+        },
+        {
+          "name": "Waste dump",
+          "shape": "stockpile",
+          "rect": [
+            950,
+            -450,
+            620,
+            460,
+            15
+          ],
+          "volume": 6000000,
+          "slope": 2.0,
+          "bench": 15,
+          "berm": 12
+        },
+        {
+          "name": "ROM pad",
+          "shape": "platform",
+          "rect": [
+            850,
+            550,
+            240,
+            170,
+            0
+          ],
+          "level": "median",
+          "cut_slope": 1.5,
+          "fill_slope": 2.0
+        }
+      ],
+      "haul": {
+        "grade": 0.08,
+        "width": 25.0,
+        "radius": 60.0,
+        "bend": 150.0
+      },
+      "corridor": {
+        "standard": "generic_sections",
+        "speed": 40,
+        "buildups": {
+          "Haul wearing course": {
+            "ref": "Example only",
+            "courses": [
+              {
+                "name": "Crushed rock wearing course",
+                "material": "CR",
+                "thickness": 0.3,
+                "unit": "m3"
+              },
+              {
+                "name": "Selected fill sub-base",
+                "material": "SF",
+                "thickness": 0.5,
+                "unit": "m3"
+              }
+            ]
+          }
+        },
+        "superelevation": {
+          "source": "none"
+        },
+        "widening": {
+          "source": "none"
+        },
+        "stations": {
+          "interval": 10.0
+        },
+        "assembly": {
+          "left": "mirror",
+          "right": [
+            {
+              "type": "lane",
+              "width": 12.5,
+              "crossfall": 2.0,
+              "buildup": "Haul wearing course",
+              "name": "Haul lane"
+            },
+            {
+              "type": "custom",
+              "name": "Safety berm",
+              "steps": [
+                [
+                  1.8,
+                  null,
+                  1.5,
+                  "BERM_T"
+                ],
+                [
+                  1.8,
+                  null,
+                  -1.5,
+                  "BERM_O"
+                ]
+              ]
+            },
+            {
+              "type": "side_drain",
+              "shape": "v",
+              "foreslope": 2.0,
+              "depth": 0.6,
+              "bottom": 0.0,
+              "_set_shape": true,
+              "_set_foreslope": true,
+              "_set_depth": true,
+              "_set_bottom": true
+            },
+            {
+              "type": "daylight",
+              "cut_bands": [
+                [
+                  null,
+                  0.6
+                ]
+              ],
+              "fill_bands": [
+                [
+                  null,
+                  0.6
+                ]
+              ],
+              "bench_height": 12.0,
+              "bench_width": 10.0,
+              "bench_fall": 2.0,
+              "max_width": 250.0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "mountain_highway_benched",
+      "kind": "corridor",
+      "terrain": [
+        0.18,
+        0.45
+      ],
+      "window": 3000,
+      "pis": [
+        [
+          -1400,
+          -80
+        ],
+        [
+          -700,
+          120
+        ],
+        [
+          0,
+          -120
+        ],
+        [
+          700,
+          120
+        ],
+        [
+          1400,
+          -80
+        ]
+      ],
+      "route": "contour",
+      "simplify": 35,
+      "radius": 90,
+      "spiral": 25,
+      "profile_spacing": 220,
+      "max_grade": 0.07,
+      "k_value": 15,
+      "section": {
+        "carriageway": 7.3,
+        "shoulder": 2.0,
+        "cut_slope": 1.0,
+        "fill_slope": 1.5,
+        "max_width": 60.0
+      },
+      "design_speed": 60,
+      "corridors": [
+        {
+          "label": "corridor",
+          "standard": "kenya_rdm13_2025_sections",
+          "template": "R3 dual carriageway",
+          "speed": 60,
+          "superelevation": {
+            "source": "standard"
+          },
+          "overrides": {
+            "daylight": {
+              "cut_bands": [
+                [
+                  null,
+                  0.75
+                ]
+              ],
+              "fill_bands": [
+                [
+                  null,
+                  1.5
+                ]
+              ],
+              "bench_height": 8.0,
+              "bench_width": 4.0,
+              "bench_fall": 4.0,
+              "max_width": 150.0,
+              "cutoff_drain": true
+            },
+            "side_drain": {
+              "drain_type": "A1"
+            }
+          },
+          "features": [
+            {
+              "type": "brake_check",
+              "at": 250,
+              "side": "downhill"
+            },
+            {
+              "type": "climbing_lane",
+              "at": 700,
+              "side": "uphill",
+              "bay": 500
+            },
+            {
+              "type": "escape_ramp",
+              "at": 1900,
+              "side": "downhill"
+            }
+          ]
+        },
+        {
+          "label": "corridor_walls",
+          "standard": "kenya_rdm13_2025_sections",
+          "template": "R3 dual carriageway",
+          "speed": 60,
+          "superelevation": {
+            "source": "standard"
+          },
+          "overrides": {
+            "daylight": {
+              "cut_bands": [
+                [
+                  null,
+                  0.75
+                ]
+              ],
+              "fill_bands": [
+                [
+                  null,
+                  1.5
+                ]
+              ],
+              "bench_height": 8.0,
+              "bench_width": 4.0,
+              "bench_fall": 4.0,
+              "max_width": 150.0,
+              "wall_cut": 6.0,
+              "wall_fill": 4.0,
+              "wall_batter": 0.1
+            },
+            "side_drain": {
+              "drain_type": "A1"
+            }
+          }
+        }
+      ],
+      "profile_offset": -4.0
+    },
+    {
+      "name": "rural_road_finished",
+      "kind": "corridor",
+      "terrain": [
+        0.03,
+        0.08
+      ],
+      "window": 3200,
+      "pis": [
+        [
+          -1400,
+          -500
+        ],
+        [
+          -500,
+          -100
+        ],
+        [
+          300,
+          -300
+        ],
+        [
+          1400,
+          400
+        ]
+      ],
+      "radius": 350,
+      "spiral": 70,
+      "profile_spacing": 300,
+      "max_grade": 0.08,
+      "k_value": 40,
+      "section": {
+        "carriageway": 7.0,
+        "shoulder": 2.0,
+        "cut_slope": 2.0,
+        "fill_slope": 3.0,
+        "max_width": 40.0
+      },
+      "design_speed": 80,
+      "corridors": [
+        {
+          "label": "corridor",
+          "standard": "kenya_rdm13_2025_sections",
+          "template": "R5 single carriageway",
+          "speed": 80,
+          "superelevation": {
+            "source": "standard"
+          },
+          "earthworks": {
+            "topsoil": 0.15,
+            "unsuitable": 0.3
+          },
+          "features": [
+            {
+              "type": "bus_bay",
+              "at": 400,
+              "side": "left"
+            },
+            {
+              "type": "bus_bay",
+              "at": 560,
+              "side": "right"
+            },
+            {
+              "type": "junction_mouth",
+              "at": 900,
+              "side": "right"
+            },
+            {
+              "type": "access",
+              "at": 1300,
+              "side": "left"
+            },
+            {
+              "type": "ghost_island",
+              "at": 1600
+            }
+          ]
+        },
+        {
+          "label": "corridor_aashto",
+          "standard": "aashto_2018_sections",
+          "template": "Two-lane rural highway",
+          "speed": 80,
+          "superelevation": {
+            "source": "standard"
+          }
+        }
+      ]
+    },
+    {
+      "name": "urban_street_finished",
+      "kind": "corridor",
+      "terrain": [
+        0.01,
+        0.04
+      ],
+      "window": 1600,
+      "pis": [
+        [
+          -650,
+          -150
+        ],
+        [
+          0,
+          60
+        ],
+        [
+          650,
+          -60
+        ]
+      ],
+      "radius": 180,
+      "spiral": 0,
+      "profile_spacing": 150,
+      "max_grade": 0.05,
+      "k_value": 15,
+      "section": {
+        "carriageway": 7.0,
+        "shoulder": 1.0,
+        "cut_slope": 2.0,
+        "fill_slope": 2.0,
+        "max_width": 20.0
+      },
+      "design_speed": 50,
+      "corridor": {
+        "standard": "kenya_rdm13_2025_sections",
+        "template": "U4 urban dual carriageway",
+        "speed": 50,
+        "superelevation": {
+          "source": "standard",
+          "emax": 4.0
+        },
+        "regions": [
+          {
+            "start": null,
+            "end": 600,
+            "assembly": "U4 urban dual carriageway",
+            "transition": 0
+          },
+          {
+            "start": 600,
+            "end": null,
+            "assembly": "U5 urban single carriageway",
+            "transition": 60
+          }
+        ],
+        "features": [
+          {
+            "type": "bus_bay",
+            "at": 250,
+            "side": "left",
+            "bay": 30
+          },
+          {
+            "type": "access",
+            "at": 900,
+            "side": "right"
+          }
+        ]
+      }
     }
   ]
 }
