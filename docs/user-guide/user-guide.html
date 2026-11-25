@@ -179,13 +179,16 @@ a { color: var(--accent); }
   <a href="#barriers"><span>23</span>Safety barriers and sight on curves</a>
   <a href="#roundtrip"><span>24</span>Taking recommendations back to Civil 3D</a>
   <a href="#criteria"><span>25</span>Design standards and custom criteria</a>
-  <div class="part-title">Part F — Corridor design</div>
-  <a href="#plan-editor"><span>F1</span>Plan Editor (horizontal alignment)</a>
-  <a href="#section-editor"><span>F2</span>Corridor Section Editor</a>
-  <a href="#corridor-build"><span>F3</span>Building the corridor and the bill of quantities</a>
-  <a href="#export-stage"><span>F4</span>Civil 3D and OpenRoads: export by stage, start from theirs</a>
-  <a href="#export-roads"><span>F5</span>Export Roads to LandXML</a>
-  <div class="part-title">Part E — Technical reference</div>
+  <div class="part-title">Part E — Corridor and site design</div>
+  <a href="#plan-editor"><span>E1</span>Plan Editor (horizontal alignment)</a>
+  <a href="#section-editor"><span>E2</span>Corridor Section Editor</a>
+  <a href="#corridor-build"><span>E3</span>Building the corridor and the bill of quantities</a>
+  <a href="#export-stage"><span>E4</span>Civil 3D and OpenRoads: export by stage, start from theirs</a>
+  <a href="#export-roads"><span>E5</span>Export Roads to LandXML</a>
+  <a href="#export-dxf"><span>E6</span>Export LandXML to DXF</a>
+  <a href="#grading-editor"><span>E7</span>Grading Editor (pads and graded lines)</a>
+  <a href="#workflow"><span>E8</span>The Workflow panel, docks and coordinate systems</a>
+  <div class="part-title">Part F — Technical reference</div>
   <a href="#methods"><span>26</span>Computation methods</a>
   <a href="#fields"><span>27</span>Output layers and fields</a>
   <a href="#supported"><span>28</span>Supported LandXML content and limits</a>
@@ -205,6 +208,7 @@ a { color: var(--accent); }
   <div class="card"><h4>1.8 · Back to Civil 3D</h4><p>Recommended PVIs and curve lengths written as a Civil 3D "Create Profile from File" text file and as LandXML.</p></div>
   <div class="card"><h4>Land development</h4><p>Design Surface from Shapes draws platforms, ponds, pits, stockpiles and mounds, terraces and golf features from polygons on a DEM or TIN; DEM to LandXML TIN converts any DEM to an adaptive TIN within a tolerance.</p></div>
   <div class="card"><h4>Corridor design</h4><p>Plan Editor (PIs on the map, live curve fitting), Corridor Section Editor (lanes, shoulders, kerbs, footways, drains, medians, daylight with benches and walls, on the real ground), features (bus bays, climbing lanes, escape ramps, junction mouths), superelevation and widening from the standard, corridor LandXML, quantities and bill of quantities; export by stage for Civil 3D or OpenRoads.</p></div>
+  <div class="card"><h4>Site design</h4><p>Grading Editor: pads and graded lines (ramps, roads, bunds, swales) drawn on the map with a level at every vertex, benched batters, live cut and fill; built to LandXML for Civil 3D, GeoTIFF, DXF and a quantities report. A Workflow panel, DXF export and DEMs in any CRS.</p></div>
   <div class="card"><h4>Fixes</h4><p>Correct placement of station-relative cross-sections, hidden TIN triangles excluded, true arc-length stationing on curves and spirals.</p></div>
 </div>
 
@@ -229,8 +233,8 @@ a { color: var(--accent); }
     <tr><td>6. Design review</td><td>Geometric Design Review (Phasing, Sight Distance, Standards)</td></tr>
     <tr><td>7. Reports and sheets</td><td>Cross-Section Sheets and Report · Road Design Report · Export 3D Scene and Viewer (Roads and Terrain)</td></tr>
     <tr><td>8. Site grading (land development)</td><td><a href="#design-shapes">Design Surface from Shapes</a> · Grading Quantities (Volume Surface) · Platform Levels and Falls · Basin Stage–Storage · Earthwork Balance (Volume Surfaces) · Grading Revision Comparison (Volume Surfaces) · Grading Edge Analysis · Surface Classes · Site Grading Report · Export 3D Scene and Viewer (Site Grading)</td></tr>
-    <tr><td>9. Corridor design</td><td><a href="#section-editor">Create Corridor Section Project</a> · <a href="#corridor-build">Build Corridor from Section Project</a> · <a href="#export-stage">Export Design for Civil 3D or OpenRoads (by Stage)</a> · <a href="#export-roads">Export Roads to LandXML</a></td></tr>
-    <tr><td>Outside the Toolbox</td><td><a href="#plan-editor">Plan Editor</a> and <a href="#section-editor">Corridor Section Editor</a> docks, the LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
+    <tr><td>9. Corridor design</td><td><a href="#section-editor">Create Corridor Section Project</a> · <a href="#corridor-build">Build Corridor from Section Project</a> · <a href="#export-stage">Export Design for Civil 3D or OpenRoads (by Stage)</a> · <a href="#export-roads">Export Roads to LandXML</a> · <a href="#export-dxf">Export LandXML to DXF</a></td></tr>
+    <tr><td>Outside the Toolbox</td><td><a href="#workflow">Workflow</a> panel, <a href="#plan-editor">Plan Editor</a>, <a href="#section-editor">Corridor Section Editor</a> and <a href="#grading-editor">Grading Editor</a> docks, the LandXML Profile Viewer dock and the <span class="kbd">Pick Alignment Profile on Map</span> button (menu <span class="kbd">Plugins → LandXML Road &amp; Terrain</span>)</td></tr>
   </tbody>
 </table>
 <h3>A typical workflow</h3>
@@ -835,22 +839,22 @@ a { color: var(--accent); }
   </tbody>
 </table>
 
-<!-- ============================== PART F ============================== -->
-<h1 class="part"><span class="num">Part F</span>Corridor design</h1>
-<p class="part-intro">Design the road on the map, in profile and in section, and build the finished corridor: surfaces, cross-sections, feature lines and quantities, for QGIS and for Civil 3D or OpenRoads Designer. The editors hand their results to each other, and none of them edits a source file: each step writes a new LandXML.</p>
+<!-- ============================== PART E (design) ============================== -->
+<h1 class="part"><span class="num">Part E</span>Corridor and site design</h1>
+<p class="part-intro">Design the road on the map, in profile and in section, and grade sites with pads and graded lines; build the finished corridor: surfaces, cross-sections, feature lines and quantities, for QGIS and for Civil 3D or OpenRoads Designer. The editors hand their results to each other, and none of them edits a source file: each step writes a new LandXML.</p>
 
-<h2 id="plan-editor"><span class="sec">F1</span>Plan Editor (horizontal alignment)</h2>
-<p>Open it from the toolbar or <span class="kbd">Plugins → LandXML Road &amp; Terrain → Plan Editor</span>. Set the project to a projected CRS in metres or feet. With <b>Draw / edit on map</b> on:</p>
+<h2 id="plan-editor"><span class="sec">E1</span>Plan Editor (horizontal alignment)</h2>
+<p>Open it from the toolbar or <span class="kbd">Plugins → LandXML Road &amp; Terrain → Plan Editor</span>. The design is in a projected <b>design CRS</b> (section E8): the projected project CRS, the CRS a file declares, or one you choose; the map may be in degrees. With <b>Draw / edit on map</b> on (it switches on by itself once a design is started or loaded, and turns green):</p>
 <ul>
   <li><b>Click</b> to add a PI at the end; <b>Ctrl or Shift + click</b> inserts one into the nearest leg; <b>drag</b> a PI to move it; <b>right-click</b> a PI to delete it.</li>
   <li><b>Drag the square handle</b> on a curve to change its radius; type radii and clothoid spiral lengths in the table.</li>
   <li>Each change refits the alignment at once. A change that cannot be fitted (curves that overlap, spirals longer than the deflection allows) is refused, with the reason in the status line, and the design stays as it was. Every edit and every drag is one undo step.</li>
 </ul>
-<p>Start from a <b>line feature</b> (every vertex becomes a PI, curves of the default radius, reduced where they do not fit), or <b>From LandXML…</b>: an alignment from Civil 3D or OpenRoads (its PIs, radii and spirals are recovered from the tangents) or a <b>feature line or breakline</b>, whose levels become the design profile when you save. The checks list compares the fit with the chosen design criteria: minimum radius, curves that need transitions, spiral parameter A, short and long tangents. They are advisory.</p>
-<p><b>Save LandXML…</b> writes the alignment in the axis order you choose (Civil 3D writes northing first), with the EPSG code of the project CRS. A DEM chosen as <b>Ground</b> adds a ground profile. <b>Open in Profile Viewer</b> then takes you to the Design tab to draw the vertical profile, and <b>Open in Section Editor</b> loads the file there.</p>
+<p>Start from a <b>line feature</b> (every vertex becomes a PI, curves of the default radius, reduced where they do not fit), or <b>From LandXML…</b>: an alignment from Civil 3D or OpenRoads (its PIs, radii and spirals are recovered from the tangents) or a <b>feature line or breakline</b>, whose levels become the design profile when you save. The list shows the alignments first, then the feature lines and breaklines, with a filter; a file with no alignment (a corridor or Road Furniture Designer feature-line export) says so. The design is also kept as two map layers in a <i>Plan Editor</i> group (the elements and the PIs, with radii and spirals), updated after each edit. The checks list compares the fit with the chosen design criteria: minimum radius, curves that need transitions, spiral parameter A, short and long tangents. They are advisory.</p>
+<p><b>Save LandXML…</b> writes the alignment in the axis order you choose (Civil 3D writes northing first), with the EPSG code of the project CRS. A DEM chosen as <b>Ground</b> adds a ground profile. <b>Design the profile →</b> then opens the alignment on the Profile Viewer's Design tab with a design profile started from the ground (drag PVIs, set curve lengths or K, check grades and K against the standard), and <b>Design the sections →</b> loads it in the Section Editor. An alignment can carry several profiles (the design, a ditch invert, alternatives): the Section Editor chooses the design profile, and a side drain's invert can follow another profile (<i>Invert follows profile</i>).</p>
 
-<h2 id="section-editor"><span class="sec">F2</span>Corridor Section Editor</h2>
-<p>The Section Editor designs the cross-section by station, on the real ground, and builds the corridor. Open it from the toolbar. Choose the LandXML with the alignment and its design profile (Civil 3D, OpenRoads, the Plan Editor or the Profile Viewer), the <b>axis order</b> of the file (never guessed), the <b>ground</b> and the <b>file CRS</b>, then <b>Load</b>. The ground is a TIN surface in the same file, a surface in <b>another</b> LandXML (a Civil 3D or OpenRoads survey), a DEM in the same CRS, or none.</p>
+<h2 id="section-editor"><span class="sec">E2</span>Corridor Section Editor</h2>
+<p>The Section Editor designs the cross-section by station, on the real ground, and builds the corridor. Open it from the toolbar. Choose the LandXML with the alignment and its design profile (Civil 3D, OpenRoads, the Plan Editor or the Profile Viewer), the <b>axis order</b> of the file (never guessed), the elevation unit when the file does not declare it, the <b>design CRS</b> (filled from the file when it declares one that fits), and the <b>ground</b>, then <b>Load</b>. The ground is a TIN surface in the same file, a DEM or raster <b>layer already in the project</b> in any CRS (resampled into the design CRS), a surface in <b>another</b> LandXML (a Civil 3D or OpenRoads survey), a DEM file, or none; a surface named like existing ground is chosen first. The standard and the elevation unit are remembered. <b>Edit profile…</b> opens the alignment on the Profile Viewer's Design tab.</p>
 <p>The centre of the dock is the <b>live section</b> at the current station: the ground, cut and fill shaded to the datum, every pavement course, kerbs, linings and walls, and the points with their codes. Click an element to select it, drag its <b>square handle</b> to change its width (Shift: no 50 mm snapping) or its <b>round handle</b> to change its crossfall, and click any point for <b>Why this point</b>: the element and parameter that made it, the region or transition in force, the superelevation and its source, the widening and the daylight case. Below it, the <b>timeline</b> shows the regions and transitions, the superelevation and widening bands and the features, and the station slider follows the map (<b>Pick on map</b>).</p>
 <h3>Elements and assemblies</h3>
 <p>An assembly is a list of elements on each side of the baseline (the left side can mirror the right), with an optional median. Double-click an element in the palette to add it after the selected one. Every parameter is editable in the <b>Element</b> tab:</p>
@@ -878,12 +882,12 @@ a { color: var(--accent); }
 <h3>Project files, undo and the other editors</h3>
 <p>A section project (JSON) holds the source file and its SHA-256, the alignment, profile, ground, standard, build-ups, assemblies, regions, features and settings. Every edit and every drag is one undo step. When you save a design profile in the Profile Viewer for the same alignment, an open Section Editor switches to it and keeps the assemblies.</p>
 
-<h2 id="corridor-build"><span class="sec">F3</span>Building the corridor and the bill of quantities</h2>
+<h2 id="corridor-build"><span class="sec">E3</span>Building the corridor and the bill of quantities</h2>
 <p><b>Build…</b> in the Section Editor, or <b>Build Corridor from Section Project</b> in <b>9. Corridor design</b>, writes a new LandXML: the source alignment copied unchanged, its profile and a ground profile along the centreline, <b>CrossSects</b> at every station (ground, finished surface, a closed shape for every course, kerb, lining and wall, the datum and the coded points), the <b>finished and datum TINs</b>, and <b>feature lines by code</b>. Stations are the interval plus the key stations: element ends, superelevation and widening stations, region and transition ends, feature tapers and PVIs.</p>
 <p>The quantities are average end areas between sections, as <b>Corridor Section Quantities</b> computes them on the written cross-sections (the tests check that the two agree): cut and fill to the datum, the footprint, the <b>topsoil strip</b> (depth × footprint) and <b>unsuitable material</b> (depth × the fill width or the whole footprint), every course by build-up as a volume and as a top area, kerbs, channels, drains, barriers and walls by length along their feature lines, culverts at junction mouths and accesses, and arrester bed material. The HTML report lists the regions, superelevation, widening, features, quantities, advisory departures and warnings.</p>
 <p>The <b>bill of quantities</b> (Excel, written without any extra library) uses your item list: CSV or JSON with the columns <code>item, description, unit, rate, quantity</code>, where <code>quantity</code> is a key from the Quantities sheet (several joined with <code>+</code>, and a key ending in <code>*</code> sums every key that starts with it). No rate is ever assumed; without a list, every computed quantity is listed for you to price. A <b>variant project</b> builds a second assembly or standard on the same road and adds a side-by-side comparison of quantities and cost to the report and the workbook.</p>
 
-<h2 id="export-stage"><span class="sec">F4</span>Civil 3D and OpenRoads: export by stage, start from theirs</h2>
+<h2 id="export-stage"><span class="sec">E4</span>Civil 3D and OpenRoads: export by stage, start from theirs</h2>
 <p><b>Export Design for Civil 3D or OpenRoads (by Stage)</b>, or <b>Export stage…</b> in the Section Editor, writes the concept at the stage you need: the horizontal alignment only; with its profiles; with the finished and datum surfaces and the feature lines; or everything with the cross-sections. The ground over the corridor footprint can be included.</p>
 <ul>
   <li><b>Civil 3D</b>: feature lines are PlanFeatures with straight segments and three-point curves (the middle point on the arc) and their levels as elevation points, the form Civil 3D imports as feature lines without hanging on thousands of PIs.</li>
@@ -891,11 +895,28 @@ a { color: var(--accent); }
 </ul>
 <p>Going the other way, the editors start from either: Civil 3D and OpenRoads alignments and profiles (PIs recovered from the tangents), feature lines and breaklines (PIs and a profile from their levels), surfaces as the ground (from the same or another file, read only over the corridor), and the test scenarios.</p>
 
-<h2 id="export-roads"><span class="sec">F5</span>Export Roads to LandXML</h2>
+<h2 id="export-roads"><span class="sec">E5</span>Export Roads to LandXML</h2>
 <p><b>Export Roads to LandXML (Lines to Alignments and Profiles)</b> writes each line of a layer as an alignment: every vertex a PI, curves of the <code>radius</code> field (or the default) with spirals from <code>spiral_in</code>/<code>spiral_out</code>, reduced where they do not fit (and reported). Lines with Z get a design profile with a PVI at each vertex and vertical curves of <code>vc_length</code>; a DEM adds a ground profile. The name comes from the <code>name</code> field; coordinates are written in the layer's CRS with its EPSG code, in the axis order you choose.</p>
 
+<h2 id="export-dxf"><span class="sec">E6</span>Export LandXML to DXF</h2>
+<p><b>Export LandXML to DXF (Alignments, Feature Lines, Surfaces)</b> writes any LandXML (a built corridor, a Grading Editor build, a Civil 3D or OpenRoads export) as an ASCII DXF (AutoCAD R12) that Civil 3D, AutoCAD, BricsCAD and QGIS open without add-ons: each alignment as a polyline with station ticks and labels, each feature line and breakline as a 3D polyline (daylight lines and outlines on their own layers) and, optionally, each TIN surface as 3D faces. Layers are named by kind and object (<code>ALIGNMENT-…</code>, <code>FEATURE-…</code>, <code>DAYLIGHT-…</code>, <code>TIN-…</code>). Choose the file's axis order (Civil 3D writes northing first); coordinates, CRS and unit are the file's. For surfaces going on into design, LandXML remains the better route into Civil 3D; the DXF is for drawings, checking and CAD users.</p>
+
+<h2 id="grading-editor"><span class="sec">E7</span>Grading Editor (pads and graded lines)</h2>
+<p>The <b>Grading Editor</b> draws and edits grading objects on the map like feature lines in Civil 3D, with a level at every vertex and the earthworks recomputed as you edit:</p>
+<ul>
+  <li><b>Pads</b>: a closed outline whose vertices each have a level, so a platform can be level, fall one way or be twisted; inside it the surface is linear on the pad's own triangles. Cut and fill batters (with optional benches every given height) run from the nearest edge, at that edge's level, out to the ground, optionally limited to a maximum width.</li>
+  <li><b>Graded lines</b>: a ramp, haul road, bund crest, swale or channel invert, each vertex at its level, with a top width (falling a crossfall to each side) and the same batters. <i>Earthworks</i> set to cut only excavates (a swale); fill only builds up (a bund).</li>
+</ul>
+<p><b>Draw pad</b> or <b>Draw line</b>, click the vertices, right-click or double-click to finish (Esc cancels). The first vertex takes the ground level there and the next ones the level of the one before, so a new pad starts level and the editor switches to <b>Edit on map</b>: drag a vertex, Ctrl/Shift+click an edge to insert one, right-click a vertex to delete it. The vertex table edits X, Y and Z and shows the ground and the cut or fill at each vertex; the level tools set all vertices to a level, raise them, put them on the ground plus an offset, or grade them along from the selected vertex. Objects apply in list order, each on the result of those before it. Every change is one undo step.</p>
+<p>The ground is a DEM layer in the project, in any CRS (it is resampled into the design CRS). After each edit a preview shows the cut (red) and fill (green), the daylight line and the running cut, fill and net. <b>Build…</b> writes the LandXML (the existing ground and the design as TINs on one adaptive mesh within 2 cm, so they match exactly where nothing changed; each outline and line with its vertex levels and the daylight lines as feature lines; northing first, as Civil 3D writes, with the design CRS), the design GeoTIFF, a DXF, a quantities report and the objects (JSON, to open again). The LandXML goes into Civil 3D with <span class="kbd">Insert → LandXML</span> and into the site-grading tools in group 8. Design Surface from Shapes builds the same pads and lines from layers (PolygonZ and LineStringZ with a <code>shape</code> of <code>pad</code> or <code>line</code>).</p>
+
+<h2 id="workflow"><span class="sec">E8</span>The Workflow panel, docks and coordinate systems</h2>
+<p>The toolbar has one button; its menu lists every tool with its own icon. <b>Workflow</b> opens a panel with the road steps (ground, plan, profile, sections and corridor, reports and 3D, export) and the site steps (ground, pads and graded lines, reports and 3D, export). Each step opens the right tool on the result of the step before it: a saved alignment opens on the Profile Viewer's Design tab with a profile started from the ground (<b>Design the profile →</b> in the Plan Editor), a saved profile goes into an open Section Editor, and a built corridor feeds the reports, the DXF and the Road Furniture Designer, which reads the corridor's alignment, profile and edges directly.</p>
+<p>The large panels dock at the bottom of the QGIS window and scroll when space is short. <b>Pop out</b> moves a panel into its own window, to maximise or move to a second display; closing that window docks it back.</p>
+<p><b>Design CRS.</b> The editors design in a projected CRS (metres or feet): the one a file declares when it fits its coordinates, the projected project CRS, or one you choose; it is never guessed. The map can be in any CRS, including degrees: the design is drawn over it with a transformation, and a DEM in another CRS (for example FABDEM in EPSG:4326 under an Arc 1960 / UTM design) is resampled into the design CRS. A file that declares a geographic CRS for coordinates in metres is not trusted: you are asked. Civil 3D metric exports usually omit the elevation unit; state it in the Section Editor (<i>Elevations in metres</i>) and the built corridor declares it, so the report, section, review and 3D tools take the file directly.</p>
+
 <!-- ============================== PART E ============================== -->
-<h1 class="part"><span class="num">Part E</span>Technical reference</h1>
+<h1 class="part"><span class="num">Part F</span>Technical reference</h1>
 <p class="part-intro">How results are computed, what each output contains, what LandXML content is supported, and how the plugin has been validated.</p>
 
 <h2 id="methods"><span class="sec">26</span>Computation methods</h2>

@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 import os
+import re
 
 import numpy as np
 
@@ -220,6 +221,58 @@ def load_profile(alignment_node, name=""):
     return VerticalProfile(node.attrib.get("name") or "Design", pvis), [c["station"] for c in controls]
 
 
+def _element_profiles(alignment_node, assemblies, warnings):
+    """Profiles on the alignment that elements follow (a side drain's invert), by name."""
+    out = {}
+    for a in assemblies.values():
+        for side in ("right", "left"):
+            items = a.get(side) if isinstance(a.get(side), list) else []
+            for e in items:
+                name = e.get("invert_profile")
+                if name and name not in out:
+                    try:
+                        out[name] = load_profile(alignment_node, name)[0]
+                    except ValueError as exc:
+                        warnings.append(f"{e.get('name') or e['type']}: {exc}")
+    return out
+
+
+def _dem_in_design_crs(ds, spec, extent):
+    """The DEM resampled (bilinear) into the design CRS over the corridor window, when the two CRSs differ.
+
+    ``spec["crs"]`` is the DEM's CRS and ``spec["design_crs"]`` the design's (EPSG codes or WKT, given by the
+    user or the files, never guessed). Without both, the DEM must already be in the design CRS.
+    """
+    src, dst = spec.get("crs"), spec.get("design_crs")
+    if not src or not dst or extent is None:
+        return ds
+    from osgeo import gdal, osr
+
+    a, b = osr.SpatialReference(), osr.SpatialReference()
+    for ref, text in ((a, src), (b, dst)):
+        if ref.SetFromUserInput(str(text)) != 0:
+            raise ValueError(f"Unknown CRS {text}.")
+    if a.IsSame(b):
+        return ds
+    x0, y0, x1, y1 = extent
+    # cell size: the DEM's pixel carried into the design CRS (degrees -> metres near the window)
+    gt = ds.GetGeoTransform()
+    a.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    b.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    back = osr.CoordinateTransformation(b, a)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    p0 = back.TransformPoint(cx, cy)
+    p1 = back.TransformPoint(cx + 100.0, cy)
+    span = math.hypot(p1[0] - p0[0], p1[1] - p0[1]) or 1.0
+    cell = max(abs(gt[1]) * 100.0 / span, 0.1)
+    out = gdal.Warp("", ds, format="MEM", srcSRS=a.ExportToWkt(), dstSRS=b.ExportToWkt(),
+                    outputBounds=(x0, y0, x1, y1), xRes=cell, yRes=cell, resampleAlg="bilinear",
+                    dstNodata=-99999.0)
+    if out is None:
+        raise ValueError("The DEM could not be transformed into the design CRS.")
+    return out
+
+
 class Ground:
     """Ground levels at map points: a TIN (from a LandXML surface) or a DEM raster (GDAL), or none."""
 
@@ -248,6 +301,7 @@ class Ground:
             ds = gdal.Open(spec["path"])
             if ds is None:
                 raise ValueError(f"Cannot open the DEM {spec['path']}.")
+            ds = _dem_in_design_crs(ds, spec, extent)
             gt = ds.GetGeoTransform()
             band = ds.GetRasterBand(int(spec.get("band", 1)))
             nodata = band.GetNoDataValue()
@@ -608,6 +662,8 @@ def prepare(project, progress=None):
     gspec = dict(project.get("ground") or {"type": "none"})
     if gspec.get("type") == "tin" and not gspec.get("path"):
         gspec["path"] = path
+    if gspec.get("type") == "dem" and project.get("crs"):
+        gspec.setdefault("design_crs", project["crs"])
     try:
         ground = Ground(gspec, project.get("northing_first", True), (x0, y0, x1, y1)) if gspec.get("type") != "none" \
             else Ground({"type": "none"}, False)
@@ -618,7 +674,8 @@ def prepare(project, progress=None):
         if r["assembly"] not in assemblies:
             raise ValueError(f"Region {r['start']:.1f}-{r['end']:.1f} uses an unknown assembly '{r['assembly']}'.")
     features = cf.resolve(project.get("features"), frame, profile, project.get("traffic_keeps", "left"))
-    return {"features": features,"project": project, "document": document, "frame": frame, "profile": profile, "pvis": pvi_stations,
+    element_profiles = _element_profiles(node, assemblies, warnings)
+    return {"features": features, "element_profiles": element_profiles, "project": project, "document": document, "frame": frame, "profile": profile, "pvis": pvi_stations,
             "standard": std, "criteria": criteria, "assemblies": assemblies, "schedules": schedules,
             "ground": ground, "regions": regions, "reach": reach, "warnings": warnings, "unit": project["linear_unit"],
             "alignment_node": node}
@@ -647,6 +704,7 @@ def refresh_context(context):
     context["regions"] = resolve_regions(project, context["frame"].start, context["frame"].end)
     context["features"] = cf.resolve(project.get("features"), context["frame"], context["profile"],
                                      project.get("traffic_keeps", "left"))
+    context["element_profiles"] = _element_profiles(context["alignment_node"], context["assemblies"], warnings)
     for r in context["regions"]:
         if r["assembly"] not in context["assemblies"]:
             raise ValueError(f"Region {r['start']:.1f}-{r['end']:.1f} uses an unknown assembly '{r['assembly']}'.")
@@ -702,7 +760,8 @@ def section_at(context, station, ground_offsets=None, ground_z=None):
     options = {"unit": "m" if context["unit"] == "meter" else "ft", "rotation": sup.get("rotation", "centreline"),
                "normal_crown": float(sup.get("normal_crown", 2.5)), "shoulder_rule": sup.get("shoulder_rule", "own"),
                "breakover_max": float(sup.get("breakover_max", 8.0)),
-               "course_daylight": project.get("course_daylight", True)}
+               "course_daylight": project.get("course_daylight", True),
+               "profiles": {n: p.elevation(station) for n, p in (context.get("element_profiles") or {}).items()}}
     grade = profile.elevation(station)
     ground = (ground_offsets, ground_z) if ground_z is not None and np.isfinite(ground_z).any() else None
     section = asm.build_section(assembly, grade, states, ground, context["standard"], project.get("buildups"), options)
@@ -1034,20 +1093,33 @@ STAGE_LABELS = {"alignment": "Horizontal alignment only", "profile": "Alignment 
 
 
 def _near_alignment(points, frame, distance):
-    """Mask of map points within ``distance`` of the alignment (chunked, no spatial index needed)."""
-    st = np.arange(frame.start, frame.end + 5.0, 5.0)
+    """Mask of map points within about ``distance`` of the alignment.
+
+    Cells of a quarter of ``distance`` are marked around the alignment (sampled densely), and each point takes its
+    cell's mark, so the cost is linear in the points; the footprint is exact to a cell (at most a third of
+    ``distance`` generous), which suits a margin around a corridor."""
+    points = np.asarray(points, float)
+    if not len(points):
+        return np.zeros(0, bool)
+    cell = max(float(distance) / 4.0, 0.5)
+    step = min(cell, 5.0)
+    st = np.arange(frame.start, frame.end + step, step)
     line, _t, _n = frame.at(st)
-    a, b = line[:-1], line[1:]
-    ab = b - a
-    l2 = np.maximum((ab ** 2).sum(1), 1e-12)
-    out = np.zeros(len(points), bool)
-    step = max(1, 2_000_000 // max(len(a), 1))
-    for k in range(0, len(points), step):
-        p = points[k:k + step, None, :]
-        t = np.clip(((p - a) * ab).sum(2) / l2, 0, 1)
-        d = np.sqrt(((a + t[..., None] * ab - p) ** 2).sum(2)).min(1)
-        out[k:k + step] = d <= distance
-    return out
+    x0, y0 = min(points[:, 0].min(), line[:, 0].min()) - distance, min(points[:, 1].min(), line[:, 1].min()) - distance
+    reach = int(np.ceil(distance / cell))
+    oy, ox = np.mgrid[-reach:reach + 1, -reach:reach + 1]
+    disk = (np.hypot(ox, oy) * cell <= distance + cell * 0.71)
+    ox, oy = ox[disk], oy[disk]
+    ci = np.floor((line[:, 0] - x0) / cell).astype(np.int64)
+    cj = np.floor((line[:, 1] - y0) / cell).astype(np.int64)
+    pi = np.floor((points[:, 0] - x0) / cell).astype(np.int64)
+    pj = np.floor((points[:, 1] - y0) / cell).astype(np.int64)
+    width = int(max(pi.max(), ci.max() + reach)) + reach + 2
+    marked = np.unique(((ci[:, None] + ox[None, :]) + (cj[:, None] + oy[None, :]) * width).ravel())
+    keys = pi + pj * width
+    found = np.searchsorted(marked, keys)
+    found = np.clip(found, 0, len(marked) - 1)
+    return marked[found] == keys
 
 
 def ground_footprint_tin(result, margin=20.0):
@@ -1148,13 +1220,19 @@ def write_corridor_landxml(result, path, include_ground_surface=False, target="c
     node = alignment_element(src, project["alignment"])
     top_name = out.get("top_surface", "Corridor Top")
     datum_name = out.get("datum_surface", "Corridor Datum")
-    ground_name = context["ground"].name or "EG"
+    ground_name = out.get("ground_name") or "EG"
     from datetime import datetime
     now = datetime.now()
     text = [f'<?xml version="1.0" encoding="UTF-8"?>\n<LandXML xmlns="http://www.landxml.org/schema/LandXML-1.2" '
             f'version="1.2" date="{now:%Y-%m-%d}" time="{now:%H:%M:%S}">']
     if units is not None:
-        text.append(_xml(units))
+        units_xml = _xml(units)
+        vertical = project.get("vertical_unit")
+        if vertical and "elevationUnit" not in units_xml:
+            # the elevation unit the user stated for an export that did not declare it (never inferred)
+            units_xml = re.sub(r"<(Metric|Imperial)\b", lambda m: f'<{m.group(1)} elevationUnit={quoteattr(vertical)}',
+                               units_xml, count=1)
+        text.append(units_xml)
     if crs is not None:
         text.append(_xml(crs))
     text.append('<Application name="LandXML Road &amp; Terrain GIS Tools" desc="Corridor Section Editor" '

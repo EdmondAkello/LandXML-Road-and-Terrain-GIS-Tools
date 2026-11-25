@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import os
+
+import numpy as np
 from pathlib import Path
 import sys
 import tempfile
@@ -381,10 +384,22 @@ class PluginGuiTests(unittest.TestCase):
         iface = Interface()
         plugin = LandXMLTinToGeoTIFFPlugin(iface)
         plugin.initGui()
-        self.assertEqual(len(iface.menus), 6)                  # viewer, pick, plan and section editors, locator, guide
+        self.assertEqual(len(iface.menus), 8)          # workflow, viewer, pick, plan, section, grading, locator, guide
         self.assertIn("User Guide", [a.text() for a in iface.menus])
-        self.assertEqual([a.text() for a in iface.icons], ["LandXML Profile Viewer and Designer", "Pick Alignment Profile on Map",
-                                                           "Plan Editor (Horizontal Alignment)", "Corridor Section Editor"])
+        self.assertEqual([a.text() for a in iface.icons], ["LandXML Road && Terrain"])      # one button with a menu
+        self.assertEqual([a.text() for a in plugin.toolbar_menu.actions() if not a.isSeparator()],
+                         [a.text() for a in iface.menus])
+        self.assertFalse(any(a.icon().isNull() for a in iface.menus))
+        editor = plugin.show_section_editor()
+        window = editor.pop_out()                                           # own window, content moved
+        self.assertTrue(editor.popped_out)
+        self.assertIs(editor._content.parent(), window)
+        window.close()                                                      # closing it docks back
+        self.assertFalse(editor.popped_out)
+        self.assertIs(editor.widget(), editor._content)
+        from qgis.PyQt.QtWidgets import QDockWidget
+        self.assertFalse(editor.features() & QDockWidget.DockWidgetFeature.DockWidgetFloatable)
+        editor.pop_out()                                                    # left popped out: unload docks it back
         from qgis.core import QgsSettings
         from landxml_plugin.project_settings import plugin_version
         self.assertEqual(QgsSettings().value("LandXMLRoadTerrain/welcomed_version"), plugin_version())   # shown once
@@ -402,11 +417,18 @@ class PluginGuiTests(unittest.TestCase):
         self.assertIsNotNone(plugin.locator)
         self.assertIsNotNone(plugin.show_section_editor())
         self.assertIsNotNone(plugin.show_plan_editor())
+        self.assertIsNotNone(plugin.show_grading_editor())
+        plugin._record("plan", "/tmp/plan.xml", "Road A")
+        workflow = plugin.show_workflow()
+        self.assertIn("plan.xml", workflow.labels["plan"].text())               # results replayed into the panel
+        plugin._record("corridor", "/tmp/corridor.xml", "Road A")
+        self.assertEqual(workflow.latest_road(), ("/tmp/corridor.xml", "Road A"))
         plugin.pick_on_map()
         self.assertIs(iface.canvas.mapTool(), plugin.viewer.tool)
         plugin.unload()
         self.assertEqual(iface.menus, [])
         self.assertEqual(iface.docks, [])
+        self.assertEqual(iface.icons, [])
         self.assertIsNone(plugin.provider)
 
 
@@ -438,6 +460,39 @@ class SectionEditorTests(unittest.TestCase):
     def tearDown(self):
         self.dock.cleanup()
         self.dock.deleteLater()
+
+    def test_ground_from_a_project_raster_layer_and_remembered_standard(self):
+        from osgeo import gdal, osr
+        from qgis.core import QgsProject, QgsRasterLayer
+
+        dem = os.path.join(self.tmp.name, "dem4326.tif")
+        ds = gdal.GetDriverByName("GTiff").Create(dem, 10, 10, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((38.99, 0.002, 0, -0.88, 0, -0.002))
+        ref = osr.SpatialReference()
+        ref.ImportFromEPSG(4326)
+        ds.SetProjection(ref.ExportToWkt())
+        ds = None
+        layer = QgsRasterLayer(dem, "Kenya DEM")
+        QgsProject.instance().addMapLayer(layer)
+        try:
+            dock = self.Dock(None)
+            self.assertEqual(dock.standard_combo.currentData(), "kenya_rdm13_2025_sections")   # remembered
+            dock.set_file(self.path)
+            kinds = [dock.ground_combo.itemData(i)[0] for i in range(dock.ground_combo.count())]
+            self.assertEqual(kinds[:2], ["tin", "layer"])
+            self.assertEqual(dock.ground_combo.currentData()[0], "tin")       # the file's EG surface first
+            dock.ground_combo.setCurrentIndex(1)
+            spec = dock._ground_spec()
+            self.assertEqual(spec["type"], "dem")
+            self.assertEqual(spec["crs"], "EPSG:4326")
+            dock.axis_combo.setCurrentIndex(1)
+            dock.crs_widget.setCrs(QgsCoordinateReferenceSystem())
+            dock.load_context()                                              # a DEM in another CRS needs the design CRS
+            self.assertIsNone(dock.context)
+            self.assertIn("design CRS", dock.status.text())
+            dock.deleteLater()
+        finally:
+            QgsProject.instance().removeMapLayer(layer.id())
 
     def test_axis_order_must_be_chosen(self):
         dock = self.Dock(None)
@@ -541,6 +596,106 @@ class SectionEditorTests(unittest.TestCase):
         self.assertEqual(dock.project["features"], [])
 
 
+class GradingEditorTests(unittest.TestCase):
+    """The Grading Editor: draw a pad and a line on the map, set levels, preview, build (offscreen canvas)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = application()
+
+    def test_draw_edit_preview_and_build(self):
+        from osgeo import gdal, osr
+        from qgis.core import QgsProject, QgsRasterLayer
+        from qgis.gui import QgsMapMouseEvent
+        from qgis.PyQt.QtCore import QEvent, QPoint, Qt
+        from landxml_plugin.gui.grading_editor import GradingEditorDock
+
+        class Iface:
+            def __init__(self):
+                self.canvas = QgsMapCanvas()
+                self.canvas.resize(800, 600)
+                self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:32737"))
+                self.canvas.setExtent(QgsRectangle(500000, 9900000, 500200, 9900150))
+
+            def mapCanvas(self):
+                return self.canvas
+
+            def mainWindow(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            tif = os.path.join(directory, "eg.tif")
+            out = gdal.GetDriverByName("GTiff").Create(tif, 300, 300, 1, gdal.GDT_Float32)
+            out.SetGeoTransform((499950, 1, 0, 9900200, 0, -1))
+            ref = osr.SpatialReference()
+            ref.ImportFromEPSG(32737)
+            out.SetProjection(ref.ExportToWkt())
+            cols = np.arange(300)[None, :].repeat(300, 0)
+            out.GetRasterBand(1).WriteArray(100.0 + 0.03 * cols)
+            out = None
+            layer = QgsRasterLayer(tif, "EG")
+            QgsProject.instance().addMapLayer(layer)
+            iface = Iface()
+            dock = GradingEditorDock(iface)
+            try:
+                dock.ground.setLayer(layer)
+                dock.pad_button.setChecked(True)
+                self.assertEqual(dock.design_crs.authid(), "EPSG:32737")      # the projected project CRS
+                tool = iface.canvas.mapTool()
+
+                def event(x, y, button=Qt.MouseButton.LeftButton, kind=QEvent.Type.MouseButtonPress,
+                          modifiers=Qt.KeyboardModifier.NoModifier):
+                    pixel = iface.canvas.getCoordinateTransform().transform(QgsPointXY(x, y))
+                    return QgsMapMouseEvent(iface.canvas, kind, QPoint(round(pixel.x()), round(pixel.y())), button, button,
+                                            modifiers)
+
+                for x, y in ((500050, 9900050), (500110, 9900050), (500110, 9900100), (500050, 9900100)):
+                    tool.canvasPressEvent(event(x, y))
+                tool.canvasPressEvent(event(500050, 9900100, Qt.MouseButton.RightButton))   # finish
+                self.assertEqual(len(dock.objects), 1)
+                pad = dock.objects[0]
+                self.assertEqual(len(pad["vertices"]), 4)
+                self.assertAlmostEqual(pad["vertices"][0][2], 103.0, delta=0.1)          # first vertex: the ground
+                self.assertEqual({v[2] for v in pad["vertices"]}, {pad["vertices"][0][2]})  # a level pad to start
+                self.assertTrue(dock.edit_button.isChecked())                            # straight into editing
+                # type a level in the table: vertex 3 raised
+                dock.table.item(2, 2).setText("105.5")
+                self.assertEqual(pad["vertices"][2][2], 105.5)
+                self.assertIn("+", dock.table.item(2, 4).text())
+                # drag vertex 2 east by 10 m: one undo step
+                tool.canvasPressEvent(event(500110, 9900050))
+                tool.canvasMoveEvent(event(500120, 9900050, kind=QEvent.Type.MouseMove))
+                tool.canvasReleaseEvent(event(500120, 9900050, kind=QEvent.Type.MouseButtonRelease))
+                self.assertAlmostEqual(pad["vertices"][1][0], 500120, delta=0.5)
+                dock.undo()
+                self.assertAlmostEqual(dock.objects[0]["vertices"][1][0], 500110, delta=0.5)
+                # insert a vertex on an edge with Ctrl+click
+                tool.canvasPressEvent(event(500080, 9900050, modifiers=Qt.KeyboardModifier.ControlModifier))
+                self.assertEqual(len(dock.objects[0]["vertices"]), 5)
+                # a graded line (ramp) up to the pad
+                dock.line_button.setChecked(True)
+                for x, y in ((500010, 9900075), (500050, 9900075)):
+                    tool.canvasPressEvent(event(x, y))
+                tool.canvasDoubleClickEvent(event(500050, 9900075, kind=QEvent.Type.MouseButtonDblClick))
+                self.assertEqual([o["kind"] for o in dock.objects], ["pad", "line"])
+                dock.update_preview()
+                self.assertIsNotNone(dock.result)
+                self.assertIn("Cut", dock.totals.text())
+                xml = os.path.join(directory, "site.xml")
+                self.assertEqual(dock.build(xml), xml)
+                self.assertTrue(os.path.isfile(os.path.join(directory, "site_quantities.html")))
+                from landxml_plugin.landxml.catalog import read_catalog
+                self.assertEqual(read_catalog(xml).surfaces, ["Existing ground", "Design"])
+                # reopen the objects
+                again = GradingEditorDock(iface)
+                again.open_objects(os.path.join(directory, "site_objects.json"))
+                self.assertEqual(len(again.objects), 2)
+                again.cleanup()
+            finally:
+                dock.cleanup()
+                QgsProject.instance().removeMapLayer(layer.id())
+
+
 class PlanEditorTests(unittest.TestCase):
     """The plan editor dock and its map tool on an offscreen canvas."""
 
@@ -615,6 +770,103 @@ class PlanEditorTests(unittest.TestCase):
             records, _bad = read_alignments(path, 1.0)
             self.assertAlmostEqual(records[0]["vertex_distances"][-1], design.alignment.length, places=3)
         dock.cleanup()
+
+    def test_profile_viewer_opens_ready_to_design(self):
+        """Plan Editor → 'Design the profile': the viewer opens on the Design tab with a profile from the ground."""
+        from landxml_plugin.gui.profile_viewer import ProfileViewerDock
+        from landxml_plugin.landxml.writer import GroundProfile, HorizontalAlignment, Line, write_landxml
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "plan.xml")
+            road = HorizontalAlignment("New road", start=(1000.0, 5000.0), bearing=30.0, elements=[Line(600.0)])
+            ground = GroundProfile("New road ground", [(s, 100 + 5 * math.sin(s / 80)) for s in range(0, 601, 10)])
+            write_landxml(path, [(road, [ground])], northing_first=False)
+            viewer = ProfileViewerDock(None)
+            self.assertTrue(viewer.design(path, "New road"))
+            self.assertIs(viewer.tabs.currentWidget(), viewer.design_panel)
+            self.assertIsNotNone(viewer.design_panel.design)
+            self.assertTrue(viewer.design_panel.edit_button.isChecked())
+            viewer.cleanup()
+
+    def test_design_crs_over_a_geographic_map_and_layers(self):
+        """A map in degrees: the design keeps its projected CRS, clicks are transformed, the saved file declares it."""
+        from qgis.core import QgsProject
+        from qgis.gui import QgsMapMouseEvent
+        from qgis.PyQt.QtCore import QEvent, QPoint, Qt
+        from landxml_plugin.gui import plan_editor
+        from landxml_plugin.gui.plan_editor import PlanEditorDock
+
+        utm = QgsCoordinateReferenceSystem("EPSG:32737")
+        wgs = QgsCoordinateReferenceSystem("EPSG:4326")
+
+        class Iface:
+            def __init__(self):
+                self.canvas = QgsMapCanvas()
+                self.canvas.resize(800, 600)
+                self.canvas.setDestinationCrs(wgs)
+                self.canvas.setExtent(QgsRectangle(36.28, -0.92, 36.32, -0.89))
+
+            def mapCanvas(self):
+                return self.canvas
+
+            def mainWindow(self):
+                return None
+
+            def activeLayer(self):
+                return None
+
+        iface = Iface()
+        dock = PlanEditorDock(iface)
+        asked = []
+        original = plan_editor.ask_crs
+        plan_editor.ask_crs = lambda *a, **k: asked.append(1) or utm      # the user's choice
+        try:
+            dock.draw_button.setChecked(True)                               # geographic map: asks once
+            self.assertEqual(asked, [1])
+            self.assertEqual(dock.design_crs.authid(), "EPSG:32737")
+            tool = iface.canvas.mapTool()
+
+            def click(lon, lat):
+                pixel = iface.canvas.getCoordinateTransform().transform(QgsPointXY(lon, lat))
+                return QgsMapMouseEvent(iface.canvas, QEvent.Type.MouseButtonPress, QPoint(round(pixel.x()), round(pixel.y())),
+                                        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+
+            for lon, lat in ((36.285, -0.915), (36.30, -0.90), (36.315, -0.912)):
+                tool.canvasPressEvent(click(lon, lat))
+            design = dock.design
+            self.assertEqual(len(design.pis), 3)
+            self.assertGreater(design.pis[0][0], 100000)                    # stored in metres (UTM), not degrees
+            back = dock.to_map(*design.pis[1])
+            self.assertAlmostEqual(back.x(), 36.30, delta=1e-4)
+            # map layers in the design CRS, kept in sync
+            layers = [QgsProject.instance().mapLayer(i) for i in dock.layers.values()]
+            self.assertEqual(len(layers), 2)
+            self.assertTrue(all(layer.crs() == utm for layer in layers))
+            pis = QgsProject.instance().mapLayer(dock.layers["pi"])
+            self.assertEqual(pis.featureCount(), 3)
+            # a declared geographic CRS that contradicts metre coordinates is not trusted: the user is asked
+            with tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "plan.xml")
+                dock.axis.setCurrentIndex(2)
+                self.assertEqual(dock.save(path), path)
+                with open(path, encoding="utf-8") as handle:
+                    self.assertIn('epsgCode="32737"', handle.read())
+                bad = os.path.join(directory, "bad.xml")
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read().replace('epsgCode="32737"', 'epsgCode="4326"')
+                with open(bad, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+                asked.clear()
+                self.assertTrue(dock._crs_for_file(bad, [design.pis[0][0]], [design.pis[0][1]]))
+                self.assertEqual(asked, [1])
+                asked.clear()
+                self.assertTrue(dock._crs_for_file(path, [design.pis[0][0]], [design.pis[0][1]]))
+                self.assertEqual(asked, [])                                 # a fitting declared CRS is used
+        finally:
+            plan_editor.ask_crs = original
+            for layer_id in dock.layers.values():
+                QgsProject.instance().removeMapLayer(layer_id)
+            dock.cleanup()
 
 
 if __name__ == "__main__":
